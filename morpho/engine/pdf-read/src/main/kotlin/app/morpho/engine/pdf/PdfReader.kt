@@ -9,10 +9,14 @@ import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.text.PDFTextStripper
 
 /**
- * v0 PDF reader: text extraction routed through [PlainTextImporter], with
- * tagged-PDF detection. This is the seed of the plan's §5.3 pipeline — the
- * tagged fast path (reading structure from the tag tree) and the untagged
- * layout heuristics replace the plain-text routing during milestone M1.
+ * PDF reader: position-aware extraction with layout reconstruction — the
+ * first real slice of the plan's §5.3 untagged-PDF pipeline. Glyph positions
+ * are captured line-by-line ([PositionTextStripper]) and clustered into
+ * paragraphs with heading detection ([PdfLayout]). When position capture
+ * yields nothing (empty page, exotic PDF), extraction falls back to plain
+ * text routed through [PlainTextImporter], so it never regresses below the
+ * naive path. The tagged fast path (reading the structure tree directly)
+ * is still to come.
  *
  * Confidence encodes honesty about the current stage: blocks from a tagged
  * PDF get 0.9, untagged extraction gets 0.6, and the Fidelity Report surfaces
@@ -36,21 +40,30 @@ class PdfReader {
 
     fun extract(bytes: ByteArray): DocumentModel =
         PDDocument.load(bytes).use { doc ->
-            val stripper = PDFTextStripper()
-            stripper.sortByPosition = true
-            val text = stripper.getText(doc)
             val tagged = doc.documentCatalog.structureTreeRoot != null
             val confidence = if (tagged) 0.9f else 0.6f
 
-            val base = PlainTextImporter.import(text)
-            base.copy(
-                blocks = base.blocks.map { block ->
-                    when (block) {
-                        is Paragraph -> block.copy(confidence = confidence)
-                        is Table -> block.copy(confidence = confidence)
-                        is ImageBlock -> block
-                    }
-                }
-            )
+            val lines = runCatching { PositionTextStripper().capture(doc) }
+                .getOrDefault(emptyList())
+            if (lines.isNotEmpty()) {
+                PdfLayout.reconstruct(lines, confidence)
+            } else {
+                plainTextFallback(doc, confidence)
+            }
         }
+
+    private fun plainTextFallback(doc: PDDocument, confidence: Float): DocumentModel {
+        val stripper = PDFTextStripper()
+        stripper.sortByPosition = true
+        val base = PlainTextImporter.import(stripper.getText(doc))
+        return base.copy(
+            blocks = base.blocks.map { block ->
+                when (block) {
+                    is Paragraph -> block.copy(confidence = confidence)
+                    is Table -> block.copy(confidence = confidence)
+                    is ImageBlock -> block
+                }
+            }
+        )
+    }
 }

@@ -14,6 +14,7 @@ import app.morpho.engine.layout.TextRun
 import java.io.ByteArrayOutputStream
 import java.io.OutputStream
 import java.nio.charset.StandardCharsets
+import java.util.IdentityHashMap
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -26,8 +27,10 @@ import java.util.zip.ZipOutputStream
  * subset of WordprocessingML the conversion engine emits and grows with it.
  *
  * Supported today: paragraphs and runs (bold/italic/underline), Title and
- * Heading 1–3 styles, bullet and numbered lists, simple tables, per-paragraph
- * and per-run right-to-left direction (`w:bidi`/`w:rtl`), and run languages.
+ * Heading 1–3 styles, bullet and numbered lists (each contiguous numbered
+ * list gets its own `w:num` instance so its numbering restarts at 1), simple
+ * tables, per-paragraph and per-run right-to-left direction
+ * (`w:bidi`/`w:rtl`), and run languages.
  * Images land with the M1 media-part work and are rejected loudly until then —
  * silently dropping content is never acceptable.
  */
@@ -45,13 +48,14 @@ object DocxWriter {
     }
 
     fun write(document: DocumentModel, output: OutputStream) {
+        val numbering = NumberingPlan(document)
         ZipOutputStream(output).use { zip ->
             zip.part("[Content_Types].xml", contentTypesXml())
             zip.part("_rels/.rels", packageRelsXml())
             zip.part("word/_rels/document.xml.rels", documentRelsXml())
-            zip.part("word/document.xml", documentXml(document))
+            zip.part("word/document.xml", documentXml(document, numbering))
             zip.part("word/styles.xml", stylesXml())
-            zip.part("word/numbering.xml", numberingXml())
+            zip.part("word/numbering.xml", numberingXml(numbering))
             zip.part("docProps/core.xml", corePropsXml())
             zip.part("docProps/app.xml", appPropsXml())
         }
@@ -64,25 +68,84 @@ object DocxWriter {
     }
 
     // ------------------------------------------------------------------
+    // Numbering assignment
+    // ------------------------------------------------------------------
+
+    private const val BULLET_NUM_ID = 1
+    private const val FIRST_NUMBERED_NUM_ID = 2
+
+    /**
+     * The num id of every list paragraph, computed in one pre-pass over the
+     * document so [DocxWriter] itself stays stateless: a plan lives for a
+     * single [write] call and is threaded through as a parameter.
+     *
+     * All bullet paragraphs share [BULLET_NUM_ID]. Each contiguous run of
+     * numbered paragraphs — uninterrupted by any other block among the same
+     * siblings, whether at body level or inside one table cell — gets its own
+     * id starting at [FIRST_NUMBERED_NUM_ID], in document order. Word restarts
+     * numbering per `w:num` instance, so a fresh id per list is what makes
+     * every numbered list start at 1. Paragraphs are keyed by identity:
+     * equal-valued paragraphs in different lists must not share an id.
+     */
+    private class NumberingPlan(document: DocumentModel) {
+        private val idByParagraph = IdentityHashMap<Paragraph, Int>()
+        private var nextNumberedId = FIRST_NUMBERED_NUM_ID
+
+        init {
+            assign(document.blocks)
+        }
+
+        val numberedListIds: List<Int>
+            get() = (FIRST_NUMBERED_NUM_ID until nextNumberedId).toList()
+
+        fun numIdFor(paragraph: Paragraph): Int? = idByParagraph[paragraph]
+
+        private fun assign(siblings: List<Block>) {
+            var currentListId: Int? = null
+            for (block in siblings) {
+                if (block is Paragraph && block.style.listMarker == ListMarker.NUMBERED) {
+                    if (currentListId == null) currentListId = nextNumberedId++
+                    idByParagraph[block] = currentListId
+                    continue
+                }
+                currentListId = null
+                if (block is Paragraph && block.style.listMarker == ListMarker.BULLET) {
+                    idByParagraph[block] = BULLET_NUM_ID
+                }
+                if (block is Table) {
+                    for (row in block.rows) {
+                        for (cell in row.cells) assign(cell.blocks)
+                    }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // word/document.xml
     // ------------------------------------------------------------------
 
-    private fun documentXml(document: DocumentModel): String {
+    private fun documentXml(document: DocumentModel, numbering: NumberingPlan): String {
         val sb = StringBuilder(16 * 1024)
         sb.append(XML_DECL)
         sb.append("""<w:document xmlns:w="$W"><w:body>""")
         for (block in document.blocks) {
-            appendBlock(sb, block, document)
+            appendBlock(sb, block, document, numbering)
         }
         sb.append(sectPr())
         sb.append("</w:body></w:document>")
         return sb.toString()
     }
 
-    private fun appendBlock(sb: StringBuilder, block: Block, document: DocumentModel) {
+    private fun appendBlock(
+        sb: StringBuilder,
+        block: Block,
+        document: DocumentModel,
+        numbering: NumberingPlan,
+    ) {
         when (block) {
-            is Paragraph -> appendParagraph(sb, block, document)
-            is Table -> appendTable(sb, block, document)
+            is Paragraph -> appendParagraph(sb, block, document, numbering)
+            is Table -> appendTable(sb, block, document, numbering)
             is ImageBlock -> throw UnsupportedOperationException(
                 "ImageBlock is not supported yet: the media part lands with milestone M1. " +
                     "Refusing to write a document that would silently lose content."
@@ -90,10 +153,15 @@ object DocxWriter {
         }
     }
 
-    private fun appendParagraph(sb: StringBuilder, paragraph: Paragraph, document: DocumentModel) {
+    private fun appendParagraph(
+        sb: StringBuilder,
+        paragraph: Paragraph,
+        document: DocumentModel,
+        numbering: NumberingPlan,
+    ) {
         val effectiveDirection = paragraph.style.direction ?: document.defaultDirection
         sb.append("<w:p>")
-        appendParagraphProperties(sb, paragraph.style, effectiveDirection)
+        appendParagraphProperties(sb, paragraph.style, effectiveDirection, numbering.numIdFor(paragraph))
         for (run in paragraph.runs) {
             appendRun(sb, run, effectiveDirection)
         }
@@ -105,6 +173,7 @@ object DocxWriter {
         sb: StringBuilder,
         style: app.morpho.engine.layout.ParagraphStyle,
         effectiveDirection: TextDirection,
+        numId: Int?,
     ) {
         val styleId = when {
             style.listMarker != null -> "ListParagraph"
@@ -115,11 +184,6 @@ object DocxWriter {
                 ParagraphKind.HEADING_3 -> "Heading3"
                 ParagraphKind.BODY -> null
             }
-        }
-        val numId = when (style.listMarker) {
-            ListMarker.BULLET -> 1
-            ListMarker.NUMBERED -> 2
-            null -> null
         }
         val jc = when (style.alignment) {
             Alignment.CENTER -> "center"
@@ -169,7 +233,12 @@ object DocxWriter {
         sb.append("</w:t></w:r>")
     }
 
-    private fun appendTable(sb: StringBuilder, table: Table, document: DocumentModel) {
+    private fun appendTable(
+        sb: StringBuilder,
+        table: Table,
+        document: DocumentModel,
+        numbering: NumberingPlan,
+    ) {
         if (table.rows.isEmpty()) return
         val columnCount = table.rows.maxOf { it.cells.size }.coerceAtLeast(1)
 
@@ -189,11 +258,11 @@ object DocxWriter {
         for (row in table.rows) {
             sb.append("<w:tr>")
             for (cell in row.cells) {
-                appendCell(sb, cell, document)
+                appendCell(sb, cell, document, numbering)
             }
             // Pad short rows so every row has the full column count.
             repeat(columnCount - row.cells.size) {
-                appendCell(sb, TableCell(emptyList()), document)
+                appendCell(sb, TableCell(emptyList()), document, numbering)
             }
             sb.append("</w:tr>")
         }
@@ -202,12 +271,17 @@ object DocxWriter {
         sb.append("<w:p/>")
     }
 
-    private fun appendCell(sb: StringBuilder, cell: TableCell, document: DocumentModel) {
+    private fun appendCell(
+        sb: StringBuilder,
+        cell: TableCell,
+        document: DocumentModel,
+        numbering: NumberingPlan,
+    ) {
         sb.append("<w:tc>")
         sb.append("""<w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>""")
         var wroteParagraph = false
         for (block in cell.blocks) {
-            appendBlock(sb, block, document)
+            appendBlock(sb, block, document, numbering)
             if (block is Paragraph) wroteParagraph = true
         }
         // Every table cell must end with a paragraph.
@@ -290,11 +364,23 @@ object DocxWriter {
             "</w:styles>"
     }
 
-    private fun numberingXml(): String {
+    // ------------------------------------------------------------------
+    // word/numbering.xml
+    // ------------------------------------------------------------------
+
+    private fun numberingXml(numbering: NumberingPlan): String {
         fun level(ilvl: Int, numFmt: String, lvlText: String): String =
             """<w:lvl w:ilvl="$ilvl"><w:start w:val="1"/><w:numFmt w:val="$numFmt"/>""" +
                 """<w:lvlText w:val="$lvlText"/><w:lvlJc w:val="left"/>""" +
                 """<w:pPr><w:ind w:left="${720 * (ilvl + 1)}" w:hanging="360"/></w:pPr></w:lvl>"""
+
+        val nums = StringBuilder()
+        nums.append("""<w:num w:numId="$BULLET_NUM_ID"><w:abstractNumId w:val="0"/></w:num>""")
+        // One w:num per numbered list: sharing the abstract definition keeps
+        // the look identical while each instance restarts its count at 1.
+        for (id in numbering.numberedListIds) {
+            nums.append("""<w:num w:numId="$id"><w:abstractNumId w:val="1"/></w:num>""")
+        }
 
         return XML_DECL +
             """<w:numbering xmlns:w="$W">""" +
@@ -304,8 +390,7 @@ object DocxWriter {
             """<w:abstractNum w:abstractNumId="1"><w:multiLevelType w:val="hybridMultilevel"/>""" +
             level(0, "decimal", "%1.") + level(1, "decimal", "%2.") + level(2, "decimal", "%3.") +
             "</w:abstractNum>" +
-            """<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>""" +
-            """<w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>""" +
+            nums +
             "</w:numbering>"
     }
 }

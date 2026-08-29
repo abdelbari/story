@@ -64,6 +64,16 @@ class DocxWriterTest {
 
     private fun cell(text: String) = TableCell(listOf(Paragraph(listOf(TextRun(text)))))
 
+    private fun numbered(text: String) = Paragraph(
+        runs = listOf(TextRun(text)),
+        style = ParagraphStyle(listMarker = ListMarker.NUMBERED),
+    )
+
+    private fun bullet(text: String) = Paragraph(
+        runs = listOf(TextRun(text)),
+        style = ParagraphStyle(listMarker = ListMarker.BULLET),
+    )
+
     private fun entries(docx: ByteArray): Map<String, ByteArray> {
         val result = mutableMapOf<String, ByteArray>()
         ZipInputStream(ByteArrayInputStream(docx)).use { zip ->
@@ -144,12 +154,138 @@ class DocxWriterTest {
     }
 
     @Test
-    fun `list paragraphs carry numbering with the right numId`() {
+    fun `bullets use numId 1 and the first numbered list uses numId 2`() {
         val doc = parse(entries(DocxWriter.toByteArray(fixture)).getValue("word/document.xml"))
         val bullet = findParagraphContaining(doc, "first bullet")
         val numbered = findParagraphContaining(doc, "first numbered")
         assertEquals("1", numIdOf(bullet))
         assertEquals("2", numIdOf(numbered))
+    }
+
+    @Test
+    fun `separate numbered lists get distinct numIds and numbering declares each exactly once`() {
+        val parts = entries(
+            DocxWriter.toByteArray(
+                DocumentModel(
+                    blocks = listOf(
+                        numbered("one a"),
+                        numbered("one b"),
+                        Paragraph(listOf(TextRun("interlude"))),
+                        numbered("two a"),
+                        numbered("two b"),
+                    ),
+                )
+            )
+        )
+        val doc = parse(parts.getValue("word/document.xml"))
+        val firstListId = numIdOf(findParagraphContaining(doc, "one a"))
+        val secondListId = numIdOf(findParagraphContaining(doc, "two a"))
+        assertEquals("2", firstListId)
+        assertEquals("3", secondListId)
+
+        val numMap = numToAbstractMap(parse(parts.getValue("word/numbering.xml")))
+        assertEquals("1", numMap[firstListId])
+        assertEquals("1", numMap[secondListId])
+        assertEquals(setOf("1", firstListId, secondListId), numMap.keys)
+    }
+
+    @Test
+    fun `items within one numbered list share the same numId`() {
+        val doc = parse(
+            entries(
+                DocxWriter.toByteArray(
+                    DocumentModel(
+                        blocks = listOf(numbered("alpha"), numbered("beta"), numbered("gamma")),
+                    )
+                )
+            ).getValue("word/document.xml")
+        )
+        val ids = listOf("alpha", "beta", "gamma").map { numIdOf(findParagraphContaining(doc, it)) }
+        assertEquals(listOf("2", "2", "2"), ids)
+    }
+
+    @Test
+    fun `bullet lists share numId 1 even when separated by other blocks`() {
+        val doc = parse(
+            entries(
+                DocxWriter.toByteArray(
+                    DocumentModel(
+                        blocks = listOf(
+                            bullet("north"),
+                            bullet("south"),
+                            Paragraph(listOf(TextRun("interlude"))),
+                            bullet("east"),
+                        ),
+                    )
+                )
+            ).getValue("word/document.xml")
+        )
+        val ids = listOf("north", "south", "east").map { numIdOf(findParagraphContaining(doc, it)) }
+        assertEquals(listOf("1", "1", "1"), ids)
+    }
+
+    @Test
+    fun `a numbered list inside a table cell restarts independently of body lists`() {
+        val parts = entries(
+            DocxWriter.toByteArray(
+                DocumentModel(
+                    blocks = listOf(
+                        numbered("body item"),
+                        Table(
+                            rows = listOf(
+                                TableRow(
+                                    listOf(
+                                        TableCell(listOf(numbered("cell item 1"), numbered("cell item 2"))),
+                                    )
+                                ),
+                            ),
+                        ),
+                        numbered("after table"),
+                    ),
+                )
+            )
+        )
+        val doc = parse(parts.getValue("word/document.xml"))
+        val bodyId = numIdOf(findParagraphContaining(doc, "body item"))
+        val cellId1 = numIdOf(findParagraphContaining(doc, "cell item 1"))
+        val cellId2 = numIdOf(findParagraphContaining(doc, "cell item 2"))
+        val afterId = numIdOf(findParagraphContaining(doc, "after table"))
+        assertEquals(cellId1, cellId2, "one cell list must share one numId")
+        assertEquals(3, setOf(bodyId, cellId1, afterId).size, "each list needs its own numId")
+
+        val numMap = numToAbstractMap(parse(parts.getValue("word/numbering.xml")))
+        assertEquals(setOf("1", bodyId, cellId1, afterId), numMap.keys)
+    }
+
+    @Test
+    fun `arabic numbered lists restart per list and keep their rtl direction`() {
+        val doc = parse(
+            entries(
+                DocxWriter.toByteArray(
+                    DocumentModel(
+                        blocks = listOf(
+                            numbered("البند الأول"),
+                            numbered("البند الثاني"),
+                            Paragraph(listOf(TextRun("فاصل"))),
+                            numbered("العنصر الأول"),
+                        ),
+                        defaultLanguage = "ar",
+                        defaultDirection = TextDirection.RTL,
+                    )
+                )
+            ).getValue("word/document.xml")
+        )
+        val first = findParagraphContaining(doc, "البند الأول")
+        val second = findParagraphContaining(doc, "البند الثاني")
+        val restarted = findParagraphContaining(doc, "العنصر الأول")
+        assertEquals(numIdOf(first), numIdOf(second))
+        assertTrue(numIdOf(first) != numIdOf(restarted), "second list must restart with its own numId")
+        for (paragraph in listOf(first, second, restarted)) {
+            assertNotNull(
+                firstChildNS(firstChildNS(paragraph, "pPr")!!, "bidi"),
+                "w:bidi missing on RTL list paragraph"
+            )
+        }
     }
 
     @Test
@@ -218,5 +354,18 @@ class DocxWriterTest {
         val pPr = firstChildNS(paragraph, "pPr")!!
         val numPr = firstChildNS(pPr, "numPr")!!
         return firstChildNS(numPr, "numId")!!.getAttributeNS(wNs, "val")
+    }
+
+    /** numId -> abstractNumId from numbering.xml, failing on duplicate w:num ids. */
+    private fun numToAbstractMap(numbering: Document): Map<String, String> {
+        val result = mutableMapOf<String, String>()
+        val nums = numbering.getElementsByTagNameNS(wNs, "num")
+        for (i in 0 until nums.length) {
+            val num = nums.item(i) as Element
+            val numId = num.getAttributeNS(wNs, "numId")
+            assertTrue(numId !in result, "duplicate w:num for numId $numId")
+            result[numId] = firstChildNS(num, "abstractNumId")!!.getAttributeNS(wNs, "val")
+        }
+        return result
     }
 }

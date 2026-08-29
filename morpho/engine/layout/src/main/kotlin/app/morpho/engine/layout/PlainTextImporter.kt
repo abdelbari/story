@@ -8,8 +8,12 @@ package app.morpho.engine.layout
  * the first strongly-directional character, so mixed Arabic/Latin documents
  * come out with each paragraph tagged correctly.
  *
- * Inline Markdown emphasis (**bold**, *italic*) is intentionally left verbatim
- * for now; run-level styling arrives with the M1 engine work.
+ * Inline Markdown emphasis — `**bold**`, `*italic*`, `***bold italic***` — is
+ * parsed by [InlineEmphasisParser] into styled [TextRun]s inside body
+ * paragraphs, headings and list items, with each run's direction detected from
+ * its own text. `\*` is a literal asterisk; unmatched or empty markers stay
+ * literal, and emphasis never spans a paragraph break. Underscore emphasis
+ * (`_text_`) is out of scope and left verbatim.
  */
 object PlainTextImporter {
 
@@ -71,7 +75,7 @@ object PlainTextImporter {
     private fun paragraph(text: String, kind: ParagraphKind, listMarker: ListMarker?): Paragraph {
         val direction = Bidi.firstStrongDirection(text)
         return Paragraph(
-            runs = listOf(TextRun(text = text, direction = direction)),
+            runs = InlineEmphasisParser.parse(text),
             style = ParagraphStyle(kind = kind, direction = direction, listMarker = listMarker),
         )
     }
