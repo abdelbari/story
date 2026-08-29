@@ -33,21 +33,21 @@ App (needs the Android SDK; open `morpho/android` in Android Studio, or):
 cd morpho/android && ./gradlew :app:assembleDebug
 ```
 
-## What works today (v0 vertical slice)
+## What works today
 
-- **Engine:** document model with per-block confidence (the Fidelity Report seed), first-strong BiDi detection, plain-text/Markdown import (headings, bullet + numbered lists, paragraph unwrapping, per-paragraph RTL tagging), a from-scratch OOXML writer producing valid .docx (styles, numbering, tables, `w:bidi`/`w:rtl`, run languages), and PDFBox-based extraction with tagged-PDF detection. 25 unit tests.
-- **App:** pick a text/Markdown file via SAF → convert on-device with the engine → save the .docx wherever the user chooses. UI localized in English, Arabic, French, Spanish, German with full RTL support, per-app language config, Material 3 dynamic color, and **no INTERNET permission in the manifest** — the Zero-Upload guarantee starts on day one.
+- **Engine (100+ tests):** document model with per-block confidence (the Fidelity Report seed); first-strong BiDi detection; text/Markdown import with inline `**bold**`/`*italic*` styling and per-run RTL direction; a from-scratch OOXML **writer** (styles, per-list restarting numbering, tables, `w:bidi`/`w:rtl`, run languages) and matching **reader** (.docx → model, numbering resolved through numbering.xml, tolerant of unknown content); a **Markdown writer** (model → .md); **position-aware PDF extraction** (glyph-line clustering into paragraphs, font-size heading detection, plain-text fallback) with tagged-PDF detection; and a **FidelityScorer** (text + structure similarity) enforcing the multilingual corpus gate — 8 real documents (EN/FR/ES/DE/AR with tashkeel, Arabic headings, mixed Arabic-French) must survive import → write → read-back with exact text and ≥ 0.95 structure similarity. Adding a file to `ooxml/src/test/resources/corpus/` automatically extends the gate.
+- **App:** two conversion paths, both fully on-device — text/Markdown → Word (.docx) and Word (.docx) → Markdown — via SAF pick-and-save. UI localized in English, Arabic, French, Spanish, German with full RTL support, per-app language config, Material 3 dynamic color, and **no INTERNET permission in the manifest** — the Zero-Upload guarantee starts on day one.
 
 ## Decisions log
 
-- **Custom OOXML writer** instead of Apache POI/docx4j: 10–20 MB and desktop startup costs avoided; we grow a writer that covers exactly what the engine emits (plan §5.2).
-- **PDF library strategy:** the engine's `pdf-read` uses desktop PDFBox (Apache-2.0) for JVM development and tests. On Android it swaps to the API-compatible tom-roush `pdfbox-android` port behind the same `PdfReader` interface when the M1 extraction pipeline lands. The app does not include `pdf-read` yet.
-- **Numbered lists** currently share one numbering instance (continuous numbering across separate lists); per-list restart needs distinct `w:num` instances — queued for M1.
-- **Inline Markdown emphasis** (`**bold**`) is imported verbatim for now; run-level styling is M1 scope.
-- **Images** are rejected loudly by the writer (never silently dropped) until the media-part work in M1.
+- **Custom OOXML writer/reader** instead of Apache POI/docx4j: 10–20 MB and desktop startup costs avoided; we grow exactly the WordprocessingML subset the engine speaks (plan §5.2).
+- **PDF library strategy:** the engine's `pdf-read` uses desktop PDFBox (Apache-2.0) for JVM development and tests. On Android it swaps to the API-compatible tom-roush `pdfbox-android` port behind the same `PdfReader` interface. The app does not include `pdf-read` yet; the tagged-PDF fast path (reading the structure tree) is still to come.
+- **DocxReader** skips empty spacer paragraphs and drops runs with no text — deliberate v0 choices documented in its KDoc.
+- **MarkdownWriter losses are stated, not hidden:** Markdown has no underline, no direction markup, no run languages; RTL survives in the characters themselves.
+- **Images** are rejected loudly by both writers (never silently dropped) until the media-part work lands.
 - **No Hilt yet** — one ViewModel doesn't justify it; it arrives with the multi-feature module split (plan §5.1).
-- **Confidence field** on every block from day one, so the Fidelity heatmap needs no engine rework later.
+- **Confidence field** on every block from day one: tagged-PDF extraction scores 0.9, untagged 0.6, native formats 1.0 — the Fidelity heatmap needs no engine rework later.
 
 ## Next (per the plan's roadmap)
 
-M1: real PDF→DOCX (tagged fast path + layout heuristics), DOCX reading, share-sheet targets. M2: DOCX→PDF print pipeline + full BiDi run analysis. M3: OCR (ML Kit + Tesseract). M4: Google Docs sync + Review Mode.
+M1 remainder: tagged-PDF structure-tree fast path, PDF table detection, DOCX/PDF share-sheet targets, image extraction + media parts. M2: DOCX→PDF print pipeline + full BiDi run analysis (UAX #9). M3: OCR (ML Kit + Tesseract). M4: Google Docs sync + Review Mode.

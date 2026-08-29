@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="tagline">حوِّل مستنداتك بخصوصية على جهازك — وبلغتك.</string>
-    <string name="empty_hint">اختر ملفًا نصيًا أو ملف Markdown لتحويله. محركا PDF وWord في الطريق.</string>
+    <string name="empty_hint">اختر ملفًا نصيًا أو Markdown أو ملف Word لتحويله. محرك PDF في الطريق.</string>
     <string name="pick_document">اختر مستندًا</string>
     <string name="pick_other">اختر ملفًا آخر</string>
     <string name="convert_to_docx">حوِّل إلى Word ‏(.docx)</string>
+    <string name="convert_to_markdown">حوِّل إلى Markdown ‏(.md)</string>
     <string name="convert_another">حوِّل ملفًا آخر</string>
     <string name="converting">جارٍ التحويل…</string>
     <string name="saved_ok">تم — حُفظ ملف Word.</string>

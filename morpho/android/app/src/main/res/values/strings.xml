@@ -2,10 +2,11 @@
 <resources>
     <string name="app_name" translatable="false">Morpho</string>
     <string name="tagline">Convert documents privately, on your device — in your language.</string>
-    <string name="empty_hint">Pick a text or Markdown file to convert. The PDF and Word engines are on the way.</string>
+    <string name="empty_hint">Pick a text, Markdown or Word file to convert. The PDF engine is on the way.</string>
     <string name="pick_document">Choose a document</string>
     <string name="pick_other">Choose a different file</string>
     <string name="convert_to_docx">Convert to Word (.docx)</string>
+    <string name="convert_to_markdown">Convert to Markdown (.md)</string>
     <string name="convert_another">Convert another</string>
     <string name="converting">Converting…</string>
     <string name="saved_ok">Done — your Word file is saved.</string>

@@ -29,6 +29,7 @@ private val inputMimeTypes = arrayOf(
     "text/plain",
     "text/markdown",
     "text/*",
+    DocxWriter.MIME_TYPE,
     "application/pdf",
 )
 
@@ -40,13 +41,20 @@ fun HomeScreen(viewModel: ConvertViewModel) {
         ActivityResultContracts.OpenDocument()
     ) { uri -> if (uri != null) viewModel.onPicked(uri) }
 
-    val saveLauncher = rememberLauncherForActivityResult(
+    val saveDocxLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument(DocxWriter.MIME_TYPE)
+    ) { uri -> viewModel.onSaveTarget(uri) }
+
+    val saveMarkdownLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(ConvertViewModel.MARKDOWN_MIME)
     ) { uri -> viewModel.onSaveTarget(uri) }
 
     LaunchedEffect(state) {
         val ready = state as? ConvertUiState.ReadyToSave ?: return@LaunchedEffect
-        saveLauncher.launch(ready.suggestedName)
+        val launcher =
+            if (ready.mimeType == ConvertViewModel.MARKDOWN_MIME) saveMarkdownLauncher
+            else saveDocxLauncher
+        launcher.launch(ready.suggestedName)
     }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -139,7 +147,12 @@ private fun StateActions(
 
         is ConvertUiState.Picked -> {
             Button(onClick = onConvert, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.convert_to_docx))
+                Text(
+                    stringResource(
+                        if (state.isWordDocument) R.string.convert_to_markdown
+                        else R.string.convert_to_docx
+                    )
+                )
             }
             TextButton(onClick = onPick, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.pick_other))

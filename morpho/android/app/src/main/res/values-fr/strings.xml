@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="tagline">Convertissez vos documents en toute confidentialité, sur votre appareil — dans votre langue.</string>
-    <string name="empty_hint">Choisissez un fichier texte ou Markdown à convertir. Les moteurs PDF et Word arrivent bientôt.</string>
+    <string name="empty_hint">Choisissez un fichier texte, Markdown ou Word à convertir. Le moteur PDF arrive bientôt.</string>
     <string name="pick_document">Choisir un document</string>
     <string name="pick_other">Choisir un autre fichier</string>
     <string name="convert_to_docx">Convertir en Word (.docx)</string>
+    <string name="convert_to_markdown">Convertir en Markdown (.md)</string>
     <string name="convert_another">Convertir un autre</string>
     <string name="converting">Conversion en cours…</string>
     <string name="saved_ok">Terminé — votre fichier Word est enregistré.</string>

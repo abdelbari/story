@@ -5,7 +5,9 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.morpho.engine.layout.MarkdownWriter
 import app.morpho.engine.layout.PlainTextImporter
+import app.morpho.engine.ooxml.DocxReader
 import app.morpho.engine.ooxml.DocxWriter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,9 +17,15 @@ import kotlinx.coroutines.launch
 
 sealed interface ConvertUiState {
     data object Idle : ConvertUiState
-    data class Picked(val fileName: String, val mime: String?) : ConvertUiState
+    data class Picked(
+        val fileName: String,
+        val mime: String?,
+        /** True when the input is a Word document, so conversion targets Markdown. */
+        val isWordDocument: Boolean,
+    ) : ConvertUiState
+
     data object Converting : ConvertUiState
-    data class ReadyToSave(val suggestedName: String) : ConvertUiState
+    data class ReadyToSave(val suggestedName: String, val mimeType: String) : ConvertUiState
     data class Saved(val fileName: String) : ConvertUiState
     data class Failed(val reason: FailReason) : ConvertUiState
 }
@@ -25,9 +33,9 @@ sealed interface ConvertUiState {
 enum class FailReason { UNSUPPORTED_TYPE, PDF_NOT_YET, READ_ERROR, WRITE_ERROR }
 
 /**
- * Drives the v0 vertical slice: pick a text/Markdown document, convert it with
- * the on-device engine, save the .docx wherever the user chooses. Everything
- * runs locally; this process has no network permission at all.
+ * Drives the v0 conversion slices, both fully on-device: text/Markdown →
+ * Word (.docx), and Word (.docx) → Markdown. This process has no network
+ * permission at all.
  */
 class ConvertViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -36,7 +44,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
 
     private var pickedUri: Uri? = null
     private var picked: ConvertUiState.Picked? = null
-    private var docxBytes: ByteArray? = null
+    private var outputBytes: ByteArray? = null
     private var outputName: String = ""
 
     fun onPicked(uri: Uri) {
@@ -45,8 +53,14 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst() && !cursor.isNull(0)) name = cursor.getString(0)
         }
+        val mime = resolver.getType(uri)
         pickedUri = uri
-        val state = ConvertUiState.Picked(fileName = name, mime = resolver.getType(uri))
+        val state = ConvertUiState.Picked(
+            fileName = name,
+            mime = mime,
+            isWordDocument = mime == DocxWriter.MIME_TYPE ||
+                name.lowercase().endsWith(".docx"),
+        )
         picked = state
         _state.value = state
     }
@@ -64,28 +78,45 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
 
             when {
                 isPdf -> _state.value = ConvertUiState.Failed(FailReason.PDF_NOT_YET)
-                !looksTextual -> _state.value = ConvertUiState.Failed(FailReason.UNSUPPORTED_TYPE)
-                else -> {
-                    val text = runCatching {
-                        getApplication<Application>().contentResolver.openInputStream(uri)
-                            ?.use { it.readBytes().toString(Charsets.UTF_8) }
-                    }.getOrNull()
-                    if (text == null) {
-                        _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
-                    } else {
-                        docxBytes = DocxWriter.toByteArray(PlainTextImporter.import(text))
-                        val base = source.fileName.substringBeforeLast('.').ifEmpty { "converted" }
-                        outputName = "$base.docx"
-                        _state.value = ConvertUiState.ReadyToSave(outputName)
-                    }
+                source.isWordDocument -> convertPicked(uri, source, "md", MARKDOWN_MIME) { bytes ->
+                    MarkdownWriter.write(DocxReader.read(bytes)).toByteArray(Charsets.UTF_8)
                 }
+                looksTextual -> convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
+                    DocxWriter.toByteArray(PlainTextImporter.import(bytes.toString(Charsets.UTF_8)))
+                }
+                else -> _state.value = ConvertUiState.Failed(FailReason.UNSUPPORTED_TYPE)
             }
         }
     }
 
+    private fun convertPicked(
+        uri: Uri,
+        source: ConvertUiState.Picked,
+        extension: String,
+        mimeType: String,
+        transform: (ByteArray) -> ByteArray,
+    ) {
+        val input = runCatching {
+            getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        }.getOrNull()
+        if (input == null) {
+            _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
+            return
+        }
+        val output = runCatching { transform(input) }.getOrNull()
+        if (output == null) {
+            _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
+            return
+        }
+        outputBytes = output
+        val base = source.fileName.substringBeforeLast('.').ifEmpty { "converted" }
+        outputName = "$base.$extension"
+        _state.value = ConvertUiState.ReadyToSave(outputName, mimeType)
+    }
+
     /** Result of the system "create document" dialog; null = user cancelled. */
     fun onSaveTarget(target: Uri?) {
-        val bytes = docxBytes
+        val bytes = outputBytes
         if (target == null || bytes == null) {
             _state.value = picked ?: ConvertUiState.Idle
             return
@@ -101,5 +132,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                 ConvertUiState.Failed(FailReason.WRITE_ERROR)
             }
         }
+    }
+
+    companion object {
+        const val MARKDOWN_MIME = "text/markdown"
     }
 }
