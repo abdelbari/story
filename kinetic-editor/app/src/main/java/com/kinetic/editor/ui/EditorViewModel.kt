@@ -43,9 +43,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     val store = EditorStore(viewModelScope) { prev, next -> route(prev, next) }
 
     private fun route(prev: TimelineState, next: TimelineState) {
+        // Read the position BEFORE updateCosmetics: it swaps in segments built
+        // from `next`, and mapping the old player position through new segments
+        // would land the preserved playhead on the wrong frame.
+        val keepTimelineMs = preview.timelinePositionMs()
         preview.updateCosmetics(next)
         if (prev.videoStructureHash() != next.videoStructureHash()) {
-            preview.setTimeline(next, keepTimelineMs = preview.timelinePositionMs())
+            preview.setTimeline(next, keepTimelineMs = keepTimelineMs)
         }
         if (prev.audioStructureHash() != next.audioStructureHash()) {
             preview.rescheduleAudio(next)
@@ -57,6 +61,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun addMedia(uri: Uri) {
         viewModelScope.launch {
             val ref = MediaProbe.probe(getApplication(), uri)
+            if (ref.durationMs <= 0) return@launch // unreadable/streaming media
             val state = store.timeline.value
             if (ref.hasVideo) {
                 store.dispatch(EditorIntent.AddClip(trackId = state.mainTrack.id, media = ref))

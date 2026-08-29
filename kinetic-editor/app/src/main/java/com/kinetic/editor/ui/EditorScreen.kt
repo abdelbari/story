@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -24,7 +25,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
@@ -33,11 +33,17 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -213,20 +219,39 @@ private fun TransportBar(
         TextButton(onClick = onUndo, enabled = canUndo) { Text("↺") }
         TextButton(onClick = onRedo, enabled = canRedo) { Text("↻") }
         Spacer(Modifier.weight(1f))
-        // derivedStateOf: only this Text recomposes as the playhead advances.
-        val positionText by remember(durationMs) {
-            derivedStateOf { "${formatMs(viewport.playheadMs)} / ${formatMs(durationMs)}" }
-        }
-        Text(
-            positionText,
-            color = Color(0xFFEDEDF2),
-            fontSize = 13.sp,
-            fontFamily = FontFamily.Monospace,
-        )
+        PlayheadReadout(viewport, durationMs)
         Spacer(Modifier.weight(1f))
         TextButton(onClick = onTogglePlay) {
             Text(if (isPlaying) "❚❚" else "▶", fontSize = 18.sp, color = Color.White)
         }
+    }
+}
+
+/**
+ * Position/duration counter rendered entirely in the DRAW phase: the hot
+ * playhead value is read inside the Canvas lambda, so a 120Hz scrub or playback
+ * repaints this node without ever invalidating a composition scope.
+ */
+@Composable
+private fun PlayheadReadout(viewport: TimelineViewportState, durationMs: Long) {
+    val measurer = rememberTextMeasurer()
+    val style = remember {
+        TextStyle(color = Color(0xFFEDEDF2), fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+    }
+    val cache = remember { HashMap<String, TextLayoutResult>() }
+    androidx.compose.foundation.Canvas(Modifier.width(160.dp).height(20.dp)) {
+        val text = "${formatMs(viewport.playheadMs)} / ${formatMs(durationMs)}"
+        val layout = cache.getOrPut(text) {
+            if (cache.size > 256) cache.clear()
+            measurer.measure(AnnotatedString(text), style)
+        }
+        drawText(
+            layout,
+            topLeft = Offset(
+                (size.width - layout.size.width) / 2f,
+                (size.height - layout.size.height) / 2f,
+            ),
+        )
     }
 }
 

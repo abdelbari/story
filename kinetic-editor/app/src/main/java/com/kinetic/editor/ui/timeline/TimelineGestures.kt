@@ -19,7 +19,6 @@ import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.snapToFrame
 import kotlinx.coroutines.CoroutineScope
 import kotlin.math.abs
-import kotlin.math.max
 import kotlin.math.roundToLong
 
 /**
@@ -181,8 +180,11 @@ private suspend fun AwaitPointerEventScope.trimGesture(
 ) {
     val (track, placed) = state.findPlaced(hit.clipId) ?: return
     val clip = placed.clip
-    val fps = max(clip.media.fps, 1f)
-    val frameMs = (1000f / fps).roundToLong().coerceAtLeast(1L)
+    // fps <= 0 = audio-only media: no frame grid (snapToFrame passes through),
+    // just a small minimum span. Clamping fps up to 1 would snap audio trims
+    // onto a 1000ms grid.
+    val fps = clip.media.fps
+    val frameMs = if (fps > 0f) (1000f / fps).roundToLong().coerceAtLeast(1L) else 33L
 
     callbacks.onEditStart()
     viewport.trimming = TrimGhost(clip.id, hit.edge, clip.trimInMs, clip.trimOutMs, placed.startMs)

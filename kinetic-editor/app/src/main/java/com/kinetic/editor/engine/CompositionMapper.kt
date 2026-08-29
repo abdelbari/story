@@ -159,14 +159,28 @@ object CompositionMapper {
         var cursorMs = 0L
         for (placed in state.placements(track).sortedBy { it.startMs }) {
             val clip = placed.clip
-            val gapMs = placed.startMs - cursorMs
+
+            // A sequence is strictly serial: an overlap with the previous clip
+            // cannot be mixed here (that needs a second track). Cut the head of
+            // the later clip instead, so the audio that DOES play stays exactly
+            // time-aligned with the preview rather than silently shifting right.
+            var trimInMs = clip.trimInMs
+            var startMs = placed.startMs
+            val overlapMs = cursorMs - startMs
+            if (overlapMs > 0) {
+                trimInMs += (overlapMs * clip.speed.toDouble()).roundToLong()
+                startMs = cursorMs
+                if (trimInMs >= clip.trimOutMs) continue // fully covered
+            }
+
+            val gapMs = startMs - cursorMs
             if (gapMs > 0) builder.addGap(gapMs * 1_000L)
 
             val mediaItem = MediaItem.Builder()
                 .setUri(clip.media.uri)
                 .setClippingConfiguration(
                     MediaItem.ClippingConfiguration.Builder()
-                        .setStartPositionMs(clip.trimInMs)
+                        .setStartPositionMs(trimInMs)
                         .setEndPositionMs(clip.trimOutMs)
                         .build(),
                 )
@@ -183,7 +197,8 @@ object CompositionMapper {
                     .setRemoveVideo(true) // music sourced from mp4 stays audio-only
                     .build(),
             )
-            cursorMs = placed.endMs
+            cursorMs = startMs +
+                ((clip.trimOutMs - trimInMs) / clip.speed.toDouble()).roundToLong()
         }
         return builder.build()
     }

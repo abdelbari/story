@@ -23,10 +23,14 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
     }
     is EditorIntent.MoveClip -> reduceMove(state, intent)
     is EditorIntent.TrimClip -> replaceClip(state, intent.clipId) { c ->
-        val fps = c.media.fps.takeIf { it > 0f } ?: 30f
-        val minSpan = (1000f / fps).roundToLong().coerceAtLeast(1L)
-        val tin = intent.trimInMs.snapToFrame(fps).coerceIn(0L, c.media.durationMs - minSpan)
-        val tout = intent.trimOutMs.snapToFrame(fps).coerceIn(tin + minSpan, c.media.durationMs)
+        // fps <= 0 (audio-only media, voiceovers): no frame grid to snap to —
+        // snapToFrame passes through and a small fixed minimum span applies.
+        val fps = c.media.fps
+        val minSpan = if (fps > 0f) (1000f / fps).roundToLong().coerceAtLeast(1L) else 33L
+        val tin = intent.trimInMs.snapToFrame(fps)
+            .coerceIn(0L, (c.media.durationMs - minSpan).coerceAtLeast(0L))
+        val tout = intent.trimOutMs.snapToFrame(fps)
+            .coerceIn(tin + minSpan, maxOf(c.media.durationMs, tin + minSpan))
         c.copy(
             trimInMs = tin,
             trimOutMs = tout,
@@ -60,13 +64,18 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
 }
 
 private fun reduceAdd(state: TimelineState, intent: EditorIntent.AddClip): TimelineState {
+    val tin = intent.trimInMs.coerceAtLeast(0L)
+    val tout = intent.trimOutMs.coerceAtMost(
+        if (intent.media.durationMs > 0) intent.media.durationMs else intent.trimOutMs,
+    )
+    // Zero/unknown-duration media (failed probe, some ADTS/webm streams) must
+    // never become a clip: ClipModel's invariants would throw inside dispatch.
+    if (tout <= tin) return state
     val clip = ClipModel(
         id = ClipId.random(),
         media = intent.media,
-        trimInMs = intent.trimInMs.coerceAtLeast(0L),
-        trimOutMs = intent.trimOutMs.coerceAtMost(
-            if (intent.media.durationMs > 0) intent.media.durationMs else intent.trimOutMs,
-        ),
+        trimInMs = tin,
+        trimOutMs = tout,
         startMs = intent.startMs,
         text = intent.text,
         sticker = intent.sticker,
@@ -114,6 +123,11 @@ private fun reduceSplit(state: TimelineState, intent: EditorIntent.SplitClip): T
     val fps = clip.media.fps.takeIf { it > 0f } ?: 30f
     val frameMs = (1000f / fps).roundToLong().coerceAtLeast(1L)
 
+    // Both guards are required: the timeline guard keeps the split point away
+    // from the clip's visual edges, the SOURCE guard guarantees the clamp below
+    // has room for one frame on each side (a 0.5x clip can pass the first
+    // while violating the second).
+    if (clip.sourceSpanMs < 2 * frameMs) return state
     val offsetTimelineMs = intent.atTimelineMs - placed.startMs
     if (offsetTimelineMs < frameMs || offsetTimelineMs > clip.durationMs - frameMs) return state
 

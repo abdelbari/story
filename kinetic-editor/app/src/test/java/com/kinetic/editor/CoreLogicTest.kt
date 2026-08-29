@@ -139,6 +139,29 @@ class CoreLogicTest {
     }
 
     @Test
+    fun addRejectsZeroDurationMedia() {
+        val s0 = stateWith(emptyList())
+        val bad = MediaRef("uri://bad", 0, true, true, 30f, 0, 0)
+        assertTrue(reduce(s0, EditorIntent.AddClip(s0.mainTrack.id, bad)) === s0)
+    }
+
+    @Test
+    fun splitRejectsSourceSpanUnderTwoFrames() {
+        val c = clip("s", 1_000, 0, 50, speed = 0.5f) // timeline 100ms, source 50ms
+        val s0 = stateWith(listOf(c))
+        assertTrue(reduce(s0, EditorIntent.SplitClip(c.id, 50)) === s0)
+    }
+
+    @Test
+    fun audioTrimIsNotSnappedToSeconds() {
+        val audioRef = MediaRef("uri://voice", 10_000, false, true, 0f, 0, 0)
+        val c = ClipModel(ClipId("v"), audioRef, 0, 10_000)
+        val s0 = stateWith(emptyList(), audio = listOf(c))
+        val s1 = reduce(s0, EditorIntent.TrimClip(c.id, 0, 1_234))
+        assertEquals(1_234L, s1.tracks.first { it.type == TrackType.AUDIO }.clips[0].trimOutMs)
+    }
+
+    @Test
     fun moveReordersMainAndResortsFreeTracks() {
         val a = clip("a", 1_000); val b = clip("b", 1_000); val c = clip("c", 1_000)
         val s0 = stateWith(listOf(a, b, c))
