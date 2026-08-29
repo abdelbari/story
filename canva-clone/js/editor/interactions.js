@@ -516,19 +516,22 @@ export class Interactions {
       const sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
-      const onInput = () => {
-        const el = store.elementById(id);
-        if (!el) return;
-        store.applyTransient(() => { el.text = node.innerText.replace(/\n$/, ''); });
-      };
-      const onPaste = ev => {
-        ev.preventDefault();
-        const text = ev.clipboardData.getData('text/plain');
-        document.execCommand('insertText', false, text);
-      };
-      node.addEventListener('input', onInput);
-      node.addEventListener('paste', onPaste);
-      node.dataset.editListeners = '1';
+      // The node is reused across edit sessions (keyed reconciliation), so
+      // attach the listeners only once per node.
+      if (!node.dataset.editListeners) {
+        node.dataset.editListeners = '1';
+        node.addEventListener('input', () => {
+          const elId = this.store.editingTextId;
+          const el = elId && this.store.elementById(elId);
+          if (!el) return;
+          this.store.applyTransient(() => { el.text = node.innerText.replace(/\n$/, ''); });
+        });
+        node.addEventListener('paste', ev => {
+          ev.preventDefault();
+          const text = ev.clipboardData.getData('text/plain');
+          document.execCommand('insertText', false, text);
+        });
+      }
     });
   }
 

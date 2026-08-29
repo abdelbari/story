@@ -31,6 +31,11 @@ const sessionUploads = [];
 let replaceMode = false;
 const templateThumbs = new Map();
 
+// Single listener; the uploads panel swaps in its current re-render (a
+// per-render closure would leak one listener per panel open).
+let uploadsRerender = null;
+window.addEventListener('canvia:uploads-changed', () => uploadsRerender?.());
+
 export function initSidebar({ store, railEl, panelEl, app }) {
   let activeTab = null;
 
@@ -341,7 +346,7 @@ function uploadsPanel(body, store, app) {
   const grid = h('div', { class: 'tile-grid wide', style: { marginTop: '12px' } });
   body.appendChild(grid);
 
-  const renderGrid = () => {
+  uploadsRerender = () => {
     grid.innerHTML = '';
     const seen = new Set(sessionUploads);
     for (const page of store.doc.pages) {
@@ -357,8 +362,7 @@ function uploadsPanel(body, store, app) {
     }
     if (!seen.size) grid.appendChild(h('div', { class: 'empty-state', style: { gridColumn: '1 / -1' } }, 'Your uploads will appear here'));
   };
-  renderGrid();
-  window.addEventListener('canvia:uploads-changed', renderGrid, { once: false });
+  uploadsRerender();
 }
 
 export async function handleUploadFiles(store, files, dropPoint) {

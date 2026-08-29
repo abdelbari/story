@@ -114,7 +114,7 @@ function renderTemplates(app) {
   const gallery = document.getElementById('template-gallery');
   gallery.innerHTML = '';
   for (const template of TEMPLATES) {
-    const img = h('img', { class: 'thumb', alt: template.name, style: { aspectRatio: `${template.width} / ${template.height}`, objectFit: 'cover' } });
+    const img = h('img', { class: 'thumb', alt: template.name });
     thumbFor(template).then(uri => { img.src = uri; });
     gallery.appendChild(h('div', {
       class: 'design-card', 'data-testid': `home-template-${template.id}`,
