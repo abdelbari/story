@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Two mirrored butterfly wings around a body — the Morpho mark. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M50,54 C50,40 40,28 26,28 C31,41 31,67 26,80 C40,80 50,68 50,54 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M58,54 C58,40 68,28 82,28 C77,41 77,67 82,80 C68,80 58,68 58,54 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M52,32 L56,32 L56,76 L52,76 Z" />
+</vector>
