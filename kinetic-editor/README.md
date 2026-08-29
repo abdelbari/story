@@ -8,9 +8,16 @@ under a strict MVI contract.
 This is a complete Gradle project: open the `kinetic-editor/` folder in Android
 Studio, run `gradle wrapper --gradle-version 8.13` once (the wrapper JAR is not
 committed), sync, and deploy. Code targets **media3 1.8.0** (see
-[API drift notes](#api-drift-notes)). It was authored against the 1.8.0 API
-surface but has not been compiled in this repo's CI — expect only minor
-signature drift if your media3 version differs.
+[API drift notes](#api-drift-notes)).
+
+**Verification status.** The full source tree parses and front-end-checks clean
+under the real Kotlin 2.1.0 compiler (androidx symbols excluded — Google's Maven
+was unreachable in the authoring environment, so androidx-facing call sites are
+reviewed, not compiled). The pure-logic core — models, reducer, store with
+coalescing undo, timeline<->preview segment mapping, transition-window math —
+compiles verbatim on the JVM and passes the executable test suite included at
+`app/src/test/java/com/kinetic/editor/CoreLogicTest.kt` (run with
+`./gradlew :app:testDebugUnitTest`).
 
 ---
 

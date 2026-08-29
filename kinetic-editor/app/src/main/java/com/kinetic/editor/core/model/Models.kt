@@ -2,6 +2,7 @@ package com.kinetic.editor.core.model
 
 import androidx.compose.runtime.Immutable
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
 import java.util.UUID
@@ -130,7 +131,8 @@ data class ClipModel(
 data class Track(
     val id: TrackId,
     val type: TrackType,
-    val clips: ImmutableList<ClipModel>,
+    // PersistentList (not just ImmutableList) so the reducer can use mutate {}.
+    val clips: PersistentList<ClipModel>,
     val muted: Boolean = false,
     val volume: Float = 1f,
 )

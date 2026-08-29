@@ -170,5 +170,5 @@ private inline fun replaceClip(
 ): TimelineState = mapTracks(state) { t ->
     val idx = t.clips.indexOfFirst { it.id == id }
     if (idx < 0) t
-    else t.copy(clips = t.clips.toPersistentList().mutate { it[idx] = transform(it[idx]) })
+    else t.copy(clips = t.clips.mutate { it[idx] = transform(it[idx]) })
 }

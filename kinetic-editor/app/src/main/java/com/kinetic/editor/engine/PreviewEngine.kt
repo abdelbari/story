@@ -447,7 +447,7 @@ class PreviewEngine(
 
 /* --------------------------- timeline <-> preview --------------------------- */
 
-private class Segment(
+internal class Segment(
     val timelineStartMs: Long,
     val timelineEndMs: Long,
     val previewStartMs: Long,
@@ -456,7 +456,7 @@ private class Segment(
     val clip: com.kinetic.editor.core.model.ClipModel,
 )
 
-private class PreviewSegments(private val list: List<Segment>) {
+internal class PreviewSegments(private val list: List<Segment>) {
 
     val timelineDurationMs: Long get() = list.lastOrNull()?.timelineEndMs ?: 0L
 
