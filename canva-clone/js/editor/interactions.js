@@ -4,7 +4,7 @@
 
 import {
   resizeElement, angleFromCenter, snapAngle, computeSnap,
-  elementAABB, unionBounds, rectIntersectsElement, clamp,
+  elementAABB, unionBounds, rectIntersectsElement, clamp, pointInElement,
 } from '../core/geometry.js';
 import { expandToGroup } from './commands.js';
 
@@ -72,9 +72,13 @@ export class Interactions {
 
     const elNode = e.target.closest?.('.cc-el');
     if (elNode) {
-      const id = elNode.dataset.id;
+      let id = elNode.dataset.id;
       if (this.store.editingTextId === id) return; // native text caret handling
       this.commitTextEditIfAny();
+      if (e.altKey) {
+        const behind = this.pickBehind(e, id);
+        if (behind) id = behind;
+      }
       this.startElementGesture(e, id);
       e.preventDefault();
       return;
@@ -107,6 +111,35 @@ export class Interactions {
       this.store.select(expandToGroup(this.store, elNode.dataset.id));
     }
     this.onContextMenu?.(e);
+  }
+
+  // Alt-click digs below overlapping elements: cycle through everything
+  // under the pointer, top to bottom, starting from the current selection.
+  pickBehind(e, topId) {
+    const p = this.toPage(e.clientX, e.clientY);
+    const hits = [];
+    const elements = this.store.page.elements;
+    for (let i = elements.length - 1; i >= 0; i--) {
+      if (pointInElement(p.x, p.y, elements[i])) hits.push(elements[i].id);
+    }
+    if (hits.length < 2) return topId;
+    const current = hits.findIndex(hid => this.store.selection.includes(hid));
+    return hits[(Math.max(current, 0) + 1) % hits.length];
+  }
+
+  // Scroll the workspace when a gesture drags the pointer near its edges.
+  autoPan(e) {
+    const rect = this.workspace.getBoundingClientRect();
+    const margin = 28, speed = 14;
+    let dx = 0, dy = 0;
+    if (e.clientX < rect.left + margin) dx = -speed;
+    else if (e.clientX > rect.right - margin) dx = speed;
+    if (e.clientY < rect.top + margin) dy = -speed;
+    else if (e.clientY > rect.bottom - margin) dy = speed;
+    if (dx || dy) {
+      this.workspace.scrollLeft += dx;
+      this.workspace.scrollTop += dy;
+    }
   }
 
   // ---- element drag / select ----
@@ -395,6 +428,7 @@ export class Interactions {
   onGestureMove(e) {
     const g = this.gesture;
     if (!g) return;
+    if (g.kind === 'drag' || g.kind === 'marquee' || g.kind === 'resize') this.autoPan(e);
     switch (g.kind) {
       case 'drag': this.moveDrag(e, g); break;
       case 'resize': this.moveResize(e, g); break;

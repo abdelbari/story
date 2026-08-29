@@ -73,15 +73,21 @@ export class Store extends Emitter {
   }
 
   // ---- history ----
+  // Entries are {doc, pageIndex} so undo/redo can jump back to the page the
+  // change happened on instead of silently mutating an off-screen page.
   snapshot() {
     return deepClone(this.doc);
   }
 
   commit() {
-    this.past.push(this._pending || this._lastCommitted || this.snapshot());
+    this.past.push({
+      doc: this._pending || this._lastCommitted || this.snapshot(),
+      pageIndex: this._pendingPage ?? this.pageIndex,
+    });
     if (this.past.length > HISTORY_LIMIT) this.past.shift();
     this.future = [];
     this._pending = null;
+    this._pendingPage = null;
     this._lastCommitted = this.snapshot();
     this.doc.updatedAt = Date.now();
     this.emit('history');
@@ -92,18 +98,23 @@ export class Store extends Emitter {
   // doc. If a gesture is already open (e.g. a toolbar apply lands mid text
   // edit), keep the outer snapshot so both fold into one undo step.
   beginGesture() {
-    if (!this._pending) this._pending = this.snapshot();
+    if (!this._pending) {
+      this._pending = this.snapshot();
+      this._pendingPage = this.pageIndex;
+    }
   }
 
   // End a gesture that produced no change, without recording history.
   endGesture() {
     this._pending = null;
+    this._pendingPage = null;
   }
 
   cancelGesture() {
     if (this._pending) {
       this.doc = this._pending;
       this._pending = null;
+      this._pendingPage = null;
       this.emit('doc');
       this.emit('selection');
     }
@@ -123,16 +134,20 @@ export class Store extends Emitter {
 
   undo() {
     if (!this.past.length) return;
-    this.future.push(this.snapshot());
-    this.doc = this.past.pop();
+    this.future.push({ doc: this.snapshot(), pageIndex: this.pageIndex });
+    const entry = this.past.pop();
+    this.doc = entry.doc;
+    this.pageIndex = entry.pageIndex;
     this._lastCommitted = this.snapshot();
     this._afterTimeTravel();
   }
 
   redo() {
     if (!this.future.length) return;
-    this.past.push(this.snapshot());
-    this.doc = this.future.pop();
+    this.past.push({ doc: this.snapshot(), pageIndex: this.pageIndex });
+    const entry = this.future.pop();
+    this.doc = entry.doc;
+    this.pageIndex = entry.pageIndex;
     this._lastCommitted = this.snapshot();
     this._afterTimeTravel();
   }

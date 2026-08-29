@@ -238,9 +238,18 @@ export class PageRenderer {
       img.dataset.src = src;
     }
     img.style.filter = filterCss(el);
-    img.style.borderRadius = (el.radius || 0) + 'px';
+    // Cover-crop focus + zoom: object-position keeps the focus fraction of
+    // the image aligned with the same fraction of the box; scaling about
+    // that origin zooms while pinning the focus point (mirrors the
+    // exporter's source-window math exactly).
+    const cx = (el.cropX ?? 0.5) * 100, cy = (el.cropY ?? 0.5) * 100;
+    img.style.objectPosition = `${cx}% ${cy}%`;
+    const cs = el.cropScale || 1;
+    img.style.transform = cs !== 1 ? `scale(${cs})` : '';
+    img.style.transformOrigin = `${cx}% ${cy}%`;
+    node.style.overflow = 'hidden';
     node.style.borderRadius = (el.radius || 0) + 'px';
-    img.style.border = el.stroke && el.strokeWidth > 0 ? `${el.strokeWidth}px solid ${el.stroke}` : 'none';
+    node.style.border = el.stroke && el.strokeWidth > 0 ? `${el.strokeWidth}px solid ${el.stroke}` : 'none';
   }
 
   updateSticker(node, el) {

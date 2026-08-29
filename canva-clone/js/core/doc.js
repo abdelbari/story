@@ -103,6 +103,9 @@ export function createImage(props = {}) {
     radius: 0,
     stroke: null,
     strokeWidth: 0,
+    cropScale: 1,           // cover-crop zoom (>= 1)
+    cropX: 0.5,             // focus point within the source image (0..1)
+    cropY: 0.5,
     ...props,
   });
 }

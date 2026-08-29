@@ -252,11 +252,11 @@ function roundedRectPath(w, h, r) {
   return path;
 }
 
-function drawCover(ctx, img, x, y, w, h) {
-  const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
+function drawCover(ctx, img, x, y, w, h, cropScale = 1, cropX = 0.5, cropY = 0.5) {
+  const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight) * (cropScale || 1);
   const sw = w / scale, sh = h / scale;
-  const sx = (img.naturalWidth - sw) / 2;
-  const sy = (img.naturalHeight - sh) / 2;
+  const sx = (img.naturalWidth - sw) * cropX;
+  const sy = (img.naturalHeight - sh) * cropY;
   ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
 }
 
@@ -267,7 +267,7 @@ async function drawImage(ctx, el) {
   if (el.radius > 0) ctx.clip(roundedRectPath(el.w, el.h, el.radius));
   const css = filterCss(el);
   if (css && css !== 'none') ctx.filter = css;
-  drawCover(ctx, img, 0, 0, el.w, el.h);
+  drawCover(ctx, img, 0, 0, el.w, el.h, el.cropScale, el.cropX ?? 0.5, el.cropY ?? 0.5);
   ctx.filter = 'none';
   ctx.restore();
   if (el.stroke && el.strokeWidth > 0) {

@@ -78,15 +78,14 @@ def('geo-triangles', 'Triangle Mosaic', 'Patterns', 1200, 900, () => {
   return wrap(w, h, body);
 });
 
-def('geo-waves', 'Layered Waves', 'Patterns', 1200, 900, () => {
+function layeredWaves(colors) {
   const w = 1200, h = 900;
-  const colors = ['#03045e', '#0077b6', '#00b4d8', '#90e0ef', '#caf0f8'];
   let body = `<rect width="${w}" height="${h}" fill="${colors[0]}"/>`;
   colors.slice(1).forEach((c, i) => {
-    const baseY = 300 + i * 150;
+    const baseY = 300 + i * (450 / Math.max(1, colors.length - 2));
     const amp = 70 - i * 10;
     let d = `M0,${baseY}`;
-    for (let x = 0; x <= w; x += 100) {
+    for (let x = 0; x <= w; x += 50) {
       const y = baseY + Math.sin((x / w) * Math.PI * 3 + i * 1.4) * amp;
       d += ` L${x},${Math.round(y)}`;
     }
@@ -94,7 +93,25 @@ def('geo-waves', 'Layered Waves', 'Patterns', 1200, 900, () => {
     body += `<path d="${d}" fill="${c}"/>`;
   });
   return wrap(w, h, body);
-});
+}
+
+function diagonalStripes(colors, angle) {
+  const w = 1200, h = 900;
+  const stripeW = 140;
+  const span = Math.hypot(w, h) + stripeW * colors.length;
+  let stripes = '';
+  let i = 0;
+  for (let x = -span; x < span; x += stripeW) {
+    stripes += `<rect x="${x}" y="${-span}" width="${stripeW}" height="${span * 2}" fill="${colors[i % colors.length]}"/>`;
+    i++;
+  }
+  const body = `<rect width="${w}" height="${h}" fill="${colors[0]}"/>` +
+    `<g transform="rotate(${angle} ${w / 2} ${h / 2})">${stripes}</g>`;
+  return wrap(w, h, body);
+}
+
+def('geo-waves', 'Layered Waves', 'Patterns', 1200, 900,
+  () => layeredWaves(['#03045e', '#0077b6', '#00b4d8', '#90e0ef', '#caf0f8']));
 
 def('geo-dots', 'Dot Grid', 'Patterns', 1200, 900, () => {
   const w = 1200, h = 900;
@@ -180,4 +197,18 @@ export function resolveImageSrc(src) {
 
 export function registerPhoto(id, name, category, build) {
   def(id, name, category, 1200, 900, build);
+}
+
+// Register generated photo specs: parameterized meshes, waves and stripes.
+export function registerPhotoSpecs(specs) {
+  if (!specs) return;
+  for (const m of specs.meshes || []) {
+    if (!generators[m.id]) def(m.id, m.name, 'Gradients', 1200, 900, () => meshGradient(m.id, m.colors, m.seed));
+  }
+  for (const wv of specs.waves || []) {
+    if (!generators[wv.id]) def(wv.id, wv.name, 'Patterns', 1200, 900, () => layeredWaves(wv.colors));
+  }
+  for (const st of specs.stripes || []) {
+    if (!generators[st.id]) def(st.id, st.name, 'Patterns', 1200, 900, () => diagonalStripes(st.colors, st.angle));
+  }
 }
