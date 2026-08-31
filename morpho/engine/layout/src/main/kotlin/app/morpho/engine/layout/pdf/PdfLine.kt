@@ -17,4 +17,18 @@ data class PdfLine(
     val maxFontSize: Float,
     /** 1-based page number. */
     val page: Int,
+    /**
+     * The line's text chunks with their horizontal extents, in reading order.
+     * Strippers emit one segment per extracted word/chunk; [PdfTableDetector]
+     * merges them into cells by gap analysis. Empty means "no geometry
+     * captured" and the line is treated as a single cell.
+     */
+    val segments: List<PdfSegment> = emptyList(),
+)
+
+/** One extracted chunk of a line: its text and horizontal extent in points. */
+data class PdfSegment(
+    val text: String,
+    val xStart: Float,
+    val xEnd: Float,
 )

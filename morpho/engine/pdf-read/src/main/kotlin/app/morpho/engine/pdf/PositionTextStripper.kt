@@ -1,6 +1,7 @@
 package app.morpho.engine.pdf
 
 import app.morpho.engine.layout.pdf.PdfLine
+import app.morpho.engine.layout.pdf.PdfSegment
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.text.PDFTextStripper
 import org.apache.pdfbox.text.TextPosition
@@ -23,6 +24,7 @@ internal class PositionTextStripper : PDFTextStripper() {
 
     private val captured = mutableListOf<PdfLine>()
     private val lineText = StringBuilder()
+    private val lineSegments = mutableListOf<PdfSegment>()
     private var lineX = Float.MAX_VALUE
     private var lineY = 0f
     private var lineFontSize = 0f
@@ -52,6 +54,11 @@ internal class PositionTextStripper : PDFTextStripper() {
         lineText.append(text)
         lineX = min(lineX, textPositions.minOf { it.xDirAdj })
         lineFontSize = max(lineFontSize, textPositions.maxOf { it.fontSizeInPt })
+        lineSegments += PdfSegment(
+            text = text,
+            xStart = textPositions.minOf { it.xDirAdj },
+            xEnd = textPositions.maxOf { it.xDirAdj + it.widthDirAdj },
+        )
     }
 
     override fun writeWordSeparator() {
@@ -73,6 +80,7 @@ internal class PositionTextStripper : PDFTextStripper() {
                 baselineY = lineY,
                 maxFontSize = lineFontSize,
                 page = linePage,
+                segments = lineSegments.toList(),
             )
         }
         resetLine()
@@ -80,6 +88,7 @@ internal class PositionTextStripper : PDFTextStripper() {
 
     private fun resetLine() {
         lineText.setLength(0)
+        lineSegments.clear()
         lineX = Float.MAX_VALUE
         lineY = 0f
         lineFontSize = 0f
