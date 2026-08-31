@@ -28,4 +28,6 @@ includeBuild("../engine")
 
 include(":app")
 include(":core:design")
-include(":engine:pdf")
+// Path is :pdf (not :engine:pdf): a project named "engine" would collide
+// with the included engine build, whose name comes from its directory.
+include(":pdf")

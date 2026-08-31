@@ -48,7 +48,7 @@ dependencies {
     implementation("app.morpho.engine:ooxml")
 
     implementation(project(":core:design"))
-    implementation(project(":engine:pdf"))
+    implementation(project(":pdf"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)

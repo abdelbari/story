@@ -15,7 +15,7 @@ morpho/
 └── android/    Android Gradle build — the app.
     ├── app/            Compose UI, conversion flow, SAF integration
     ├── core/design/    Theme (Material 3, dynamic color, Morpho palette)
-    └── engine/pdf/     On-device PDF reader (tom-roush PDFBox port)
+    └── pdf/            On-device PDF reader (tom-roush PDFBox port)
 ```
 
 The engine is a **separate build with no Android dependency, enforced by construction**: it cannot even resolve Android APIs. The app composite-includes it (`includeBuild("../engine")`) and depends on `app.morpho.engine:layout` / `app.morpho.engine:ooxml`. This is the plan's §5.1 module architecture — engine modules must stay platform-independent so they can be developed, tested, and fuzzed on the JVM at full speed.
@@ -42,7 +42,7 @@ cd morpho/android && ./gradlew :app:assembleDebug
 ## Decisions log
 
 - **Custom OOXML writer/reader** instead of Apache POI/docx4j: 10–20 MB and desktop startup costs avoided; we grow exactly the WordprocessingML subset the engine speaks (plan §5.2).
-- **PDF library strategy:** the layout heuristics (`PdfLine`/`PdfLayout`) live in `:engine:layout`, library-agnostic. The engine's `pdf-read` uses desktop PDFBox (Apache-2.0) for JVM development and tests; the app uses the API-compatible tom-roush `pdfbox-android` port in `android/engine/pdf`, whose ~100-line position stripper deliberately mirrors the JVM one (kept in sync by hand until a shared-source split). The tagged-PDF fast path (reading the structure tree) is still to come.
+- **PDF library strategy:** the layout heuristics (`PdfLine`/`PdfLayout`) live in `:engine:layout`, library-agnostic. The engine's `pdf-read` uses desktop PDFBox (Apache-2.0) for JVM development and tests; the app uses the API-compatible tom-roush `pdfbox-android` port in `android/pdf`, whose ~100-line position stripper deliberately mirrors the JVM one (kept in sync by hand until a shared-source split). The tagged-PDF fast path (reading the structure tree) is still to come.
 - **DocxReader** skips empty spacer paragraphs and drops runs with no text — deliberate v0 choices documented in its KDoc.
 - **MarkdownWriter losses are stated, not hidden:** Markdown has no underline, no direction markup, no run languages; RTL survives in the characters themselves.
 - **Images** are rejected loudly by both writers (never silently dropped) until the media-part work lands.
