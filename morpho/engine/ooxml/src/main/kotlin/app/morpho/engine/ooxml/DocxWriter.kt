@@ -188,9 +188,10 @@ object DocxWriter {
         val jc = when (style.alignment) {
             Alignment.CENTER -> "center"
             Alignment.JUSTIFY -> "both"
-            // START/END follow the paragraph direction by default in Word;
-            // omitting w:jc keeps the correct behavior for both LTR and RTL.
-            Alignment.START, Alignment.END, null -> null
+            // START is Word's default, so w:jc is omitted; END uses the
+            // logical "end" value, correct in both LTR and RTL paragraphs.
+            Alignment.END -> "end"
+            Alignment.START, null -> null
         }
         val rtl = effectiveDirection == TextDirection.RTL
 
@@ -279,13 +280,13 @@ object DocxWriter {
     ) {
         sb.append("<w:tc>")
         sb.append("""<w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>""")
-        var wroteParagraph = false
         for (block in cell.blocks) {
             appendBlock(sb, block, document, numbering)
-            if (block is Paragraph) wroteParagraph = true
         }
-        // Every table cell must end with a paragraph.
-        if (!wroteParagraph || cell.blocks.lastOrNull() !is Paragraph) sb.append("<w:p/>")
+        // Every table cell must end with a paragraph. A trailing nested table
+        // already appended its own spacer paragraph after </w:tbl>.
+        val last = cell.blocks.lastOrNull()
+        if (last !is Paragraph && last !is Table) sb.append("<w:p/>")
         sb.append("</w:tc>")
     }
 
@@ -376,10 +377,15 @@ object DocxWriter {
 
         val nums = StringBuilder()
         nums.append("""<w:num w:numId="$BULLET_NUM_ID"><w:abstractNumId w:val="0"/></w:num>""")
-        // One w:num per numbered list: sharing the abstract definition keeps
-        // the look identical while each instance restarts its count at 1.
+        // One w:num per numbered list, each with a level-0 startOverride.
+        // Word keeps a single running count per abstractNum, so a fresh
+        // instance alone does NOT restart numbering — the override does.
         for (id in numbering.numberedListIds) {
-            nums.append("""<w:num w:numId="$id"><w:abstractNumId w:val="1"/></w:num>""")
+            nums.append(
+                """<w:num w:numId="$id"><w:abstractNumId w:val="1"/>""" +
+                    """<w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride>""" +
+                    "</w:num>"
+            )
         }
 
         return XML_DECL +

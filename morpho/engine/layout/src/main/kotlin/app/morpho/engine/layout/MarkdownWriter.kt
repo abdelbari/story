@@ -72,13 +72,26 @@ object MarkdownWriter {
     private fun runsToMarkdown(runs: List<TextRun>): String {
         val sb = StringBuilder()
         for (run in runs) {
-            val text = escape(run.text)
-            when {
-                run.bold && run.italic -> sb.append("***").append(text).append("***")
-                run.bold -> sb.append("**").append(text).append("**")
-                run.italic -> sb.append("*").append(text).append("*")
-                else -> sb.append(text)
+            val marker = when {
+                run.bold && run.italic -> "***"
+                run.bold -> "**"
+                run.italic -> "*"
+                else -> ""
             }
+            val core = run.text.trim()
+            if (marker.isEmpty() || core.isEmpty()) {
+                // Unstyled text, or a whitespace-only styled run that no
+                // marker could legally wrap, is written as-is.
+                sb.append(escape(run.text))
+                continue
+            }
+            // Word routinely splits runs so styled text carries boundary
+            // whitespace; markers must hug non-whitespace or they will not
+            // re-parse (here or in CommonMark), so whitespace is hoisted
+            // outside the span.
+            sb.append(run.text.takeWhile { it.isWhitespace() })
+            sb.append(marker).append(escape(core)).append(marker)
+            sb.append(run.text.takeLastWhile { it.isWhitespace() })
         }
         return sb.toString()
     }

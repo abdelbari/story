@@ -8,7 +8,7 @@
     <string name="convert_to_markdown">حوِّل إلى Markdown ‏(.md)</string>
     <string name="convert_another">حوِّل ملفًا آخر</string>
     <string name="converting">جارٍ التحويل…</string>
-    <string name="saved_ok">تم — حُفظ ملف Word.</string>
+    <string name="saved_ok">تم — حُفظ الملف.</string>
     <string name="retry">أعد المحاولة</string>
     <string name="pdf_not_yet">تحويل PDF يصل مع مرحلة المحرك M1. ملفات النص وMarkdown تعمل اليوم.</string>
     <string name="unsupported_type">نوع الملف هذا غير مدعوم بعد.</string>

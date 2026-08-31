@@ -38,7 +38,9 @@ object FidelityScorer {
     fun structureSimilarity(expected: DocumentModel, actual: DocumentModel): Double =
         similarity(signatures(expected), signatures(actual))
 
-    private val whitespaceRun = Regex("""\s+""")
+    // \s alone is ASCII-only in Java regexes; \p{Z} adds Unicode spaces
+    // (NBSP before French punctuation, narrow/thin and ideographic spaces).
+    private val whitespaceRun = Regex("""[\s\p{Z}]+""")
 
     private fun canonicalText(text: String): String =
         Normalizer.normalize(text, Normalizer.Form.NFC)

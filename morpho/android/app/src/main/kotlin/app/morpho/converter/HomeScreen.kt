@@ -55,6 +55,9 @@ fun HomeScreen(viewModel: ConvertViewModel) {
             if (ready.mimeType == ConvertViewModel.MARKDOWN_MIME) saveMarkdownLauncher
             else saveDocxLauncher
         launcher.launch(ready.suggestedName)
+        // Leave ReadyToSave immediately: recreation (rotation, process
+        // restore) must not launch a second save dialog over the open one.
+        viewModel.onSaveDialogLaunched()
     }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -111,7 +114,8 @@ private fun StateContent(state: ConvertUiState) {
         is ConvertUiState.Picked ->
             Text(state.fileName, style = MaterialTheme.typography.titleMedium)
 
-        is ConvertUiState.Converting, is ConvertUiState.ReadyToSave -> {
+        is ConvertUiState.Converting, is ConvertUiState.ReadyToSave,
+        is ConvertUiState.AwaitingSave -> {
             LinearProgressIndicator(Modifier.fillMaxWidth())
             Text(stringResource(R.string.converting))
         }

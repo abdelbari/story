@@ -9,7 +9,7 @@
     <string name="convert_to_markdown">Convert to Markdown (.md)</string>
     <string name="convert_another">Convert another</string>
     <string name="converting">Converting…</string>
-    <string name="saved_ok">Done — your Word file is saved.</string>
+    <string name="saved_ok">Done — your file is saved.</string>
     <string name="retry">Try again</string>
     <string name="pdf_not_yet">PDF conversion arrives with the engine milestone M1. Text and Markdown files work today.</string>
     <string name="unsupported_type">That file type isn’t supported yet.</string>

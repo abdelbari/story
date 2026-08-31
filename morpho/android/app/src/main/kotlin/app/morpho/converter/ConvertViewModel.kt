@@ -2,6 +2,7 @@ package app.morpho.converter
 
 import android.app.Application
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -25,6 +26,9 @@ sealed interface ConvertUiState {
     ) : ConvertUiState
 
     data object Converting : ConvertUiState
+
+    /** Conversion done and the system save dialog is on screen. */
+    data object AwaitingSave : ConvertUiState
     data class ReadyToSave(val suggestedName: String, val mimeType: String) : ConvertUiState
     data class Saved(val fileName: String) : ConvertUiState
     data class Failed(val reason: FailReason) : ConvertUiState
@@ -48,21 +52,28 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     private var outputName: String = ""
 
     fun onPicked(uri: Uri) {
-        val resolver = getApplication<Application>().contentResolver
-        var name = "document"
-        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst() && !cursor.isNull(0)) name = cursor.getString(0)
+        viewModelScope.launch(Dispatchers.IO) {
+            // DocumentsProviders can be slow (cloud providers, network
+            // shares); never query them on the main thread.
+            val resolver = getApplication<Application>().contentResolver
+            var name = "document"
+            runCatching {
+                resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                    ?.use { cursor ->
+                        if (cursor.moveToFirst() && !cursor.isNull(0)) name = cursor.getString(0)
+                    }
+            }
+            val mime = runCatching { resolver.getType(uri) }.getOrNull()
+            pickedUri = uri
+            val state = ConvertUiState.Picked(
+                fileName = name,
+                mime = mime,
+                isWordDocument = mime == DocxWriter.MIME_TYPE ||
+                    name.lowercase().endsWith(".docx"),
+            )
+            picked = state
+            _state.value = state
         }
-        val mime = resolver.getType(uri)
-        pickedUri = uri
-        val state = ConvertUiState.Picked(
-            fileName = name,
-            mime = mime,
-            isWordDocument = mime == DocxWriter.MIME_TYPE ||
-                name.lowercase().endsWith(".docx"),
-        )
-        picked = state
-        _state.value = state
     }
 
     fun convert() {
@@ -73,7 +84,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             val mime = source.mime.orEmpty()
             val lowerName = source.fileName.lowercase()
             val isPdf = mime == "application/pdf" || lowerName.endsWith(".pdf")
-            val looksTextual = mime.startsWith("text/") || mime.isEmpty() ||
+            // A null or blank provider MIME alone is no evidence of text — an
+            // unknown binary would convert to garbage. Extensions decide.
+            val looksTextual = mime.startsWith("text/") ||
                 listOf(".txt", ".md", ".markdown").any { lowerName.endsWith(it) }
 
             when {
@@ -114,16 +127,39 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         _state.value = ConvertUiState.ReadyToSave(outputName, mimeType)
     }
 
+    /** The UI has launched the system save dialog for the current result. */
+    fun onSaveDialogLaunched() {
+        if (_state.value is ConvertUiState.ReadyToSave) {
+            _state.value = ConvertUiState.AwaitingSave
+        }
+    }
+
     /** Result of the system "create document" dialog; null = user cancelled. */
     fun onSaveTarget(target: Uri?) {
         val bytes = outputBytes
         if (target == null || bytes == null) {
+            if (target != null) {
+                // The dialog created a document but the conversion is gone
+                // (e.g. process death behind the dialog): remove the stub
+                // instead of leaving a 0-byte file behind.
+                viewModelScope.launch(Dispatchers.IO) {
+                    runCatching {
+                        DocumentsContract.deleteDocument(
+                            getApplication<Application>().contentResolver, target
+                        )
+                    }
+                }
+            }
             _state.value = picked ?: ConvertUiState.Idle
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
             val ok = runCatching {
-                getApplication<Application>().contentResolver.openOutputStream(target)
+                // "wt" truncates; the default "w" may keep the tail of a
+                // longer pre-existing file on some DocumentsProviders,
+                // corrupting the output.
+                getApplication<Application>().contentResolver
+                    .openOutputStream(target, "wt")
                     ?.use { it.write(bytes) } != null
             }.getOrDefault(false)
             _state.value = if (ok) {

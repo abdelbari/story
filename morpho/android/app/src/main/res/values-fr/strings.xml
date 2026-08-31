@@ -8,7 +8,7 @@
     <string name="convert_to_markdown">Convertir en Markdown (.md)</string>
     <string name="convert_another">Convertir un autre</string>
     <string name="converting">Conversion en cours…</string>
-    <string name="saved_ok">Terminé — votre fichier Word est enregistré.</string>
+    <string name="saved_ok">Terminé — votre fichier est enregistré.</string>
     <string name="retry">Réessayer</string>
     <string name="pdf_not_yet">La conversion PDF arrive avec le jalon M1 du moteur. Les fichiers texte et Markdown fonctionnent dès aujourd’hui.</string>
     <string name="unsupported_type">Ce type de fichier n’est pas encore pris en charge.</string>

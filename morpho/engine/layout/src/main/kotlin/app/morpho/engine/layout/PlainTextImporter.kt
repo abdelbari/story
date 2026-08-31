@@ -18,7 +18,8 @@ package app.morpho.engine.layout
 object PlainTextImporter {
 
     // 1–2 digits only: "3. item" is a list, "2024. That year…" is a sentence.
-    private val numberedItem = Regex("""^\d{1,2}[.)]\s+""")
+    // Western, Arabic-Indic (٠-٩) and Eastern Arabic-Indic (۰-۹) digits count.
+    private val numberedItem = Regex("""^[0-9\u0660-\u0669\u06F0-\u06F9]{1,2}[.)]\s+""")
 
     fun import(text: String): DocumentModel {
         val lines = text.replace("\r\n", "\n").replace('\r', '\n').split("\n")

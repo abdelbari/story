@@ -7,8 +7,9 @@ package app.morpho.engine.layout
  *
  * - Only asterisk markers are recognized. Underscore emphasis (`_text_`) is
  *   out of scope and left verbatim.
- * - `\*` is a literal asterisk; a backslash before any other character stays
- *   a literal backslash.
+ * - `\*`, `\\` and `\|` are literal `*`, `\` and `|` — exactly the set
+ *   [MarkdownWriter] escapes, so write→import round-trips; a backslash before
+ *   any other character stays a literal backslash.
  * - A marker opens only when immediately followed by non-whitespace and closes
  *   only when immediately preceded by non-whitespace (a simplified flanking
  *   rule), so `a * b` and `2 * 3 * 4` stay literal.
@@ -61,8 +62,8 @@ internal object InlineEmphasisParser {
         var i = 0
         while (i < text.length) {
             when {
-                text[i] == '\\' && i + 1 < text.length && text[i + 1] == '*' -> {
-                    literal.append('*')
+                text[i] == '\\' && i + 1 < text.length && text[i + 1] in "*\\|" -> {
+                    literal.append(text[i + 1])
                     i += 2
                 }
                 text[i] == '*' -> {
@@ -90,6 +91,10 @@ internal object InlineEmphasisParser {
         italic: Boolean,
         out: MutableList<Span>,
     ) {
+        // Marker lengths already known to have no closer before [to]: failed
+        // closer scans are monotonic within one frame, so a single full failed
+        // scan per length keeps stray-asterisk floods linear, not quadratic.
+        val exhausted = HashSet<Int>()
         var i = from
         while (i < to) {
             when (val token = tokens[i]) {
@@ -100,8 +105,11 @@ internal object InlineEmphasisParser {
                 is Stars -> {
                     val n = token.count
                     val closer =
-                        if (n in 1..3 && canOpen(tokens, i, to)) findCloser(tokens, i + 1, to, n)
-                        else -1
+                        if (n in 1..3 && canOpen(tokens, i, to) && n !in exhausted) {
+                            findCloser(tokens, i + 1, to, n).also { if (it == -1) exhausted.add(n) }
+                        } else {
+                            -1
+                        }
                     if (closer == -1) {
                         out += Span("*".repeat(n), bold, italic)
                         i++
@@ -133,16 +141,30 @@ internal object InlineEmphasisParser {
         return -1
     }
 
+    /** Buffer-based so a flood of tiny same-style spans merges in linear time. */
     private fun merge(spans: List<Span>): List<Span> {
         val merged = mutableListOf<Span>()
-        for (span in spans) {
-            val last = merged.lastOrNull()
-            if (last != null && last.bold == span.bold && last.italic == span.italic) {
-                merged[merged.size - 1] = last.copy(text = last.text + span.text)
-            } else {
-                merged += span
+        val buffer = StringBuilder()
+        var bold = false
+        var italic = false
+        var open = false
+        fun flush() {
+            if (open) {
+                merged += Span(buffer.toString(), bold, italic)
+                buffer.setLength(0)
+                open = false
             }
         }
+        for (span in spans) {
+            if (!open || span.bold != bold || span.italic != italic) {
+                flush()
+                bold = span.bold
+                italic = span.italic
+                open = true
+            }
+            buffer.append(span.text)
+        }
+        flush()
         return merged
     }
 }

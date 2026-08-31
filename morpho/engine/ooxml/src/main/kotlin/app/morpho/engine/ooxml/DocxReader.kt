@@ -15,6 +15,7 @@ import app.morpho.engine.layout.TextRun
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.util.zip.ZipInputStream
 import javax.xml.parsers.DocumentBuilderFactory
@@ -25,66 +26,115 @@ import javax.xml.parsers.DocumentBuilderFactory
  * is the inverse of [DocxWriter] and the start of DOCX→PDF conversion and
  * Google-Docs round-tripping.
  *
- * Supported today mirrors what [DocxWriter] emits: paragraphs and runs
- * (bold/italic/underline), Title and Heading 1–3 paragraph styles, bullet and
- * numbered lists, simple tables with nested block content, per-paragraph
- * (`w:bidi`) and per-run (`w:rtl`) right-to-left direction, run languages
- * (`w:lang` `w:val`/`w:bidi`), and center/justify alignment (`w:jc`).
+ * Supported today mirrors what [DocxWriter] emits, plus what real-world Word
+ * files wrap around it: paragraphs and runs (bold/italic/underline) —
+ * including runs inside `w:hyperlink`, `w:ins`, `w:smartTag` and `w:sdt`
+ * containers — Title and Heading 1–3 paragraph styles, bullet and numbered
+ * lists, simple tables with nested block content, per-paragraph (`w:bidi`)
+ * and per-run (`w:rtl`) direction, run languages (`w:lang` `w:val`/`w:bidi`),
+ * and alignment (`w:jc`). Runs inside `w:del` are deliberately skipped:
+ * deleted text is not document content.
  *
  * List markers are resolved through word/numbering.xml: a paragraph's
  * `w:numPr` numId is followed to its `w:num` instance and on to that
  * abstractNum's level-0 `w:numFmt` — "bullet" becomes [ListMarker.BULLET],
  * "decimal" becomes [ListMarker.NUMBERED]. Concrete numId values are never
- * assumed, so the mapping stays correct as the writer gains num instances.
+ * assumed.
+ *
+ * Untrusted-input hardening: only the parts the reader needs are inflated,
+ * each capped at [MAX_PART_BYTES] (decompression bombs are rejected), block
+ * and run-container nesting is capped at [MAX_NESTING_DEPTH], and DOCTYPE
+ * declarations are refused. Anything that is not a readable package —
+ * garbage bytes, truncated zip, malformed XML, exceeded caps — throws
+ * [IllegalArgumentException] (wrapping the parser's own error where there is
+ * one); no other exception type escapes.
  *
  * Deliberate v0 choices:
+ * - The main part is located at the fixed OPC path word/document.xml; the
+ *   officeDocument relationship is not followed yet (Word can, rarely, name
+ *   the part differently — a known limitation).
  * - Paragraphs with no runs and no text are skipped ([DocxWriter] emits an
- *   empty spacer paragraph after each table; empty paragraphs carry no
- *   content worth round-tripping).
- * - Unknown elements, attributes, and namespaces are ignored — extra content
- *   never makes the reader throw. A missing or malformed word/numbering.xml
- *   (or an absent styles.xml) merely loses list markers; only a package
- *   without word/document.xml is rejected, with [IllegalArgumentException].
+ *   empty spacer paragraph after each table).
+ * - Inside a `w:bidi` paragraph, a run without `w:rtl` reads back as
+ *   explicitly LTR — in OOXML the absence of `w:rtl` means left-to-right,
+ *   while the IR's null means "inherit", which there would mean RTL.
+ * - A missing or malformed word/numbering.xml merely loses list markers.
  * - Non-text run content (drawings, breaks, fields) is dropped; images land
  *   with the M1 media-part work.
- * - Every block gets confidence 1: this is a native-format read, not an
- *   extraction guess.
+ * - Every block gets confidence 1: this is a native-format read.
  */
 object DocxReader {
 
     private const val W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    private const val MAX_NESTING_DEPTH = 64
+    private const val MAX_PART_BYTES = 32 * 1024 * 1024
+    private val NEEDED_PARTS = setOf("word/document.xml", "word/numbering.xml")
+    private val RUN_CONTAINERS = setOf("hyperlink", "ins", "smartTag", "sdt", "sdtContent")
 
     fun read(bytes: ByteArray): DocumentModel = read(ByteArrayInputStream(bytes))
 
     /** Reads the package and closes [input]. */
     fun read(input: InputStream): DocumentModel {
+        try {
+            val parts = readNeededParts(input)
+            val documentPart = parts["word/document.xml"]
+                ?: throw IllegalArgumentException("Not a .docx package: word/document.xml is missing.")
+            val numbering = parts["word/numbering.xml"]?.let(::parseNumbering).orEmpty()
+            val body = firstChild(parseXml(documentPart).documentElement, "body")
+                ?: return DocumentModel(blocks = emptyList())
+            return DocumentModel(blocks = parseBlocks(body, numbering, depth = 0))
+        } catch (e: IllegalArgumentException) {
+            throw e
+        } catch (e: Exception) {
+            throw IllegalArgumentException("Not a readable .docx package.", e)
+        }
+    }
+
+    private fun readNeededParts(input: InputStream): Map<String, ByteArray> {
         val parts = mutableMapOf<String, ByteArray>()
         ZipInputStream(input).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory) parts[entry.name] = zip.readBytes()
+                if (!entry.isDirectory && entry.name in NEEDED_PARTS) {
+                    parts[entry.name] = readBounded(zip, entry.name)
+                }
                 zip.closeEntry()
             }
         }
-        val documentPart = requireNotNull(parts["word/document.xml"]) {
-            "Not a .docx package: word/document.xml is missing."
+        return parts
+    }
+
+    private fun readBounded(zip: ZipInputStream, name: String): ByteArray {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val n = zip.read(buffer)
+            if (n < 0) break
+            out.write(buffer, 0, n)
+            require(out.size() <= MAX_PART_BYTES) {
+                "Part $name inflates beyond $MAX_PART_BYTES bytes; refusing to read it."
+            }
         }
-        val numbering = parts["word/numbering.xml"]?.let(::parseNumbering).orEmpty()
-        val body = firstChild(parseXml(documentPart).documentElement, "body")
-            ?: return DocumentModel(blocks = emptyList())
-        return DocumentModel(blocks = parseBlocks(body, numbering))
+        return out.toByteArray()
     }
 
     // ------------------------------------------------------------------
     // word/document.xml
     // ------------------------------------------------------------------
 
-    private fun parseBlocks(parent: Element, numbering: Map<String, ListMarker>): List<Block> {
+    private fun parseBlocks(
+        parent: Element,
+        numbering: Map<String, ListMarker>,
+        depth: Int,
+    ): List<Block> {
+        require(depth <= MAX_NESTING_DEPTH) {
+            "Block nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
+        }
         val blocks = mutableListOf<Block>()
         for (child in children(parent)) {
             when (child.localName) {
                 "p" -> parseParagraph(child, numbering)?.let(blocks::add)
-                "tbl" -> parseTable(child, numbering)?.let(blocks::add)
+                "tbl" -> parseTable(child, numbering, depth)?.let(blocks::add)
                 else -> {} // sectPr, bookmarks, anything the reader does not know
             }
         }
@@ -92,13 +142,26 @@ object DocxReader {
     }
 
     private fun parseParagraph(p: Element, numbering: Map<String, ListMarker>): Paragraph? {
-        val runs = children(p, "r").mapNotNull(::parseRun)
+        val style = parseParagraphStyle(firstChild(p, "pPr"), numbering)
+        val runs = collectRuns(p, paragraphRtl = style.direction == TextDirection.RTL, depth = 0)
         if (runs.isEmpty()) return null
-        return Paragraph(
-            runs = runs,
-            style = parseParagraphStyle(firstChild(p, "pPr"), numbering),
-            confidence = 1f,
-        )
+        return Paragraph(runs = runs, style = style, confidence = 1f)
+    }
+
+    /** Runs directly in [parent] plus those inside run containers. */
+    private fun collectRuns(parent: Element, paragraphRtl: Boolean, depth: Int): List<TextRun> {
+        require(depth <= MAX_NESTING_DEPTH) {
+            "Run-container nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
+        }
+        val runs = mutableListOf<TextRun>()
+        for (child in children(parent)) {
+            when (child.localName) {
+                "r" -> parseRun(child, paragraphRtl)?.let(runs::add)
+                in RUN_CONTAINERS -> runs += collectRuns(child, paragraphRtl, depth + 1)
+                else -> {}
+            }
+        }
+        return runs
     }
 
     private fun parseParagraphStyle(
@@ -133,11 +196,15 @@ object DocxReader {
     }
 
     /** A run with no w:t at all (drawings, breaks) carries nothing to keep. */
-    private fun parseRun(r: Element): TextRun? {
+    private fun parseRun(r: Element, paragraphRtl: Boolean): TextRun? {
         val textElements = children(r, "t")
         if (textElements.isEmpty()) return null
         val text = textElements.joinToString(separator = "") { it.textContent }
-        val rPr = firstChild(r, "rPr") ?: return TextRun(text)
+        // In OOXML the absence of w:rtl means a left-to-right run even inside
+        // a bidi paragraph, while the IR's null means "inherit" — so inside an
+        // RTL paragraph, LTR is recorded explicitly to keep round-trips true.
+        val inherited: TextDirection? = if (paragraphRtl) TextDirection.LTR else null
+        val rPr = firstChild(r, "rPr") ?: return TextRun(text, direction = inherited)
         val underline = firstChild(rPr, "u")?.let { attr(it, "val") ?: "single" }
         return TextRun(
             text = text,
@@ -145,13 +212,21 @@ object DocxReader {
             italic = isOn(firstChild(rPr, "i")),
             underline = underline != null && underline != "none",
             language = firstChild(rPr, "lang")?.let { attr(it, "val") ?: attr(it, "bidi") },
-            direction = if (isOn(firstChild(rPr, "rtl"))) TextDirection.RTL else null,
+            direction = if (isOn(firstChild(rPr, "rtl"))) TextDirection.RTL else inherited,
         )
     }
 
-    private fun parseTable(tbl: Element, numbering: Map<String, ListMarker>): Table? {
+    private fun parseTable(
+        tbl: Element,
+        numbering: Map<String, ListMarker>,
+        depth: Int,
+    ): Table? {
         val rows = children(tbl, "tr").map { tr ->
-            TableRow(children(tr, "tc").map { tc -> TableCell(parseBlocks(tc, numbering)) })
+            TableRow(
+                children(tr, "tc").map { tc ->
+                    TableCell(parseBlocks(tc, numbering, depth + 1))
+                }
+            )
         }
         if (rows.isEmpty()) return null
         return Table(rows = rows, confidence = 1f)
