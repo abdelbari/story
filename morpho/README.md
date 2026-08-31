@@ -14,7 +14,8 @@ morpho/
 │   └── pdf-read/   PDF inspection + extraction (tagged-PDF detection)
 └── android/    Android Gradle build — the app.
     ├── app/            Compose UI, conversion flow, SAF integration
-    └── core/design/    Theme (Material 3, dynamic color, Morpho palette)
+    ├── core/design/    Theme (Material 3, dynamic color, Morpho palette)
+    └── engine/pdf/     On-device PDF reader (tom-roush PDFBox port)
 ```
 
 The engine is a **separate build with no Android dependency, enforced by construction**: it cannot even resolve Android APIs. The app composite-includes it (`includeBuild("../engine")`) and depends on `app.morpho.engine:layout` / `app.morpho.engine:ooxml`. This is the plan's §5.1 module architecture — engine modules must stay platform-independent so they can be developed, tested, and fuzzed on the JVM at full speed.
@@ -36,12 +37,12 @@ cd morpho/android && ./gradlew :app:assembleDebug
 ## What works today
 
 - **Engine (100+ tests):** document model with per-block confidence (the Fidelity Report seed); first-strong BiDi detection; text/Markdown import with inline `**bold**`/`*italic*` styling and per-run RTL direction; a from-scratch OOXML **writer** (styles, per-list restarting numbering, tables, `w:bidi`/`w:rtl`, run languages) and matching **reader** (.docx → model, numbering resolved through numbering.xml, tolerant of unknown content); a **Markdown writer** (model → .md); **position-aware PDF extraction** (glyph-line clustering into paragraphs, font-size heading detection, plain-text fallback) with tagged-PDF detection; and a **FidelityScorer** (text + structure similarity) enforcing the multilingual corpus gate — 8 real documents (EN/FR/ES/DE/AR with tashkeel, Arabic headings, mixed Arabic-French) must survive import → write → read-back with exact text and ≥ 0.95 structure similarity. Adding a file to `ooxml/src/test/resources/corpus/` automatically extends the gate.
-- **App:** two conversion paths, both fully on-device — text/Markdown → Word (.docx) and Word (.docx) → Markdown — via SAF pick-and-save. UI localized in English, Arabic, French, Spanish, German with full RTL support, per-app language config, Material 3 dynamic color, and **no INTERNET permission in the manifest** — the Zero-Upload guarantee starts on day one.
+- **App:** three conversion paths, all fully on-device — text/Markdown → Word (.docx), Word (.docx) → Markdown, and **PDF → Word** (text PDFs via the position-aware layout heuristics; scanned PDFs get an honest "OCR arrives with M3" message) — via SAF pick-and-save. UI localized in English, Arabic, French, Spanish, German with full RTL support, per-app language config, Material 3 dynamic color, and **no INTERNET permission in the manifest** — the Zero-Upload guarantee starts on day one.
 
 ## Decisions log
 
 - **Custom OOXML writer/reader** instead of Apache POI/docx4j: 10–20 MB and desktop startup costs avoided; we grow exactly the WordprocessingML subset the engine speaks (plan §5.2).
-- **PDF library strategy:** the engine's `pdf-read` uses desktop PDFBox (Apache-2.0) for JVM development and tests. On Android it swaps to the API-compatible tom-roush `pdfbox-android` port behind the same `PdfReader` interface. The app does not include `pdf-read` yet; the tagged-PDF fast path (reading the structure tree) is still to come.
+- **PDF library strategy:** the layout heuristics (`PdfLine`/`PdfLayout`) live in `:engine:layout`, library-agnostic. The engine's `pdf-read` uses desktop PDFBox (Apache-2.0) for JVM development and tests; the app uses the API-compatible tom-roush `pdfbox-android` port in `android/engine/pdf`, whose ~100-line position stripper deliberately mirrors the JVM one (kept in sync by hand until a shared-source split). The tagged-PDF fast path (reading the structure tree) is still to come.
 - **DocxReader** skips empty spacer paragraphs and drops runs with no text — deliberate v0 choices documented in its KDoc.
 - **MarkdownWriter losses are stated, not hidden:** Markdown has no underline, no direction markup, no run languages; RTL survives in the characters themselves.
 - **Images** are rejected loudly by both writers (never silently dropped) until the media-part work lands.
@@ -51,4 +52,4 @@ cd morpho/android && ./gradlew :app:assembleDebug
 
 ## Next (per the plan's roadmap)
 
-M1 remainder: tagged-PDF structure-tree fast path, PDF table detection, DOCX/PDF share-sheet targets, image extraction + media parts. M2: DOCX→PDF print pipeline + full BiDi run analysis (UAX #9). M3: OCR (ML Kit + Tesseract). M4: Google Docs sync + Review Mode.
+M1 remainder: tagged-PDF structure-tree fast path, PDF table detection, share-sheet targets, image extraction + media parts. M2: DOCX→PDF print pipeline + full BiDi run analysis (UAX #9). M3: OCR (ML Kit + Tesseract). M4: Google Docs sync + Review Mode.

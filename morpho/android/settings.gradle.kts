@@ -28,3 +28,4 @@ includeBuild("../engine")
 
 include(":app")
 include(":core:design")
+include(":engine:pdf")

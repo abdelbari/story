@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="tagline">Wandeln Sie Dokumente privat auf Ihrem Gerät um — in Ihrer Sprache.</string>
-    <string name="empty_hint">Wählen Sie eine Text-, Markdown- oder Word-Datei zum Umwandeln. Die PDF-Engine ist unterwegs.</string>
+    <string name="empty_hint">Wählen Sie eine Text-, Markdown-, Word- oder PDF-Datei zum Umwandeln — alles geschieht auf diesem Gerät.</string>
     <string name="pick_document">Dokument auswählen</string>
     <string name="pick_other">Andere Datei auswählen</string>
     <string name="convert_to_docx">In Word (.docx) umwandeln</string>
@@ -10,7 +10,7 @@
     <string name="converting">Wird umgewandelt…</string>
     <string name="saved_ok">Fertig — Ihre Datei ist gespeichert.</string>
     <string name="retry">Erneut versuchen</string>
-    <string name="pdf_not_yet">Die PDF-Umwandlung kommt mit Meilenstein M1. Text- und Markdown-Dateien funktionieren schon heute.</string>
+    <string name="scanned_pdf">Dieses PDF scheint gescannt zu sein, ohne Textebene. Die OCR auf dem Gerät kommt mit Meilenstein M3.</string>
     <string name="unsupported_type">Dieser Dateityp wird noch nicht unterstützt.</string>
     <string name="read_error">Die Datei konnte nicht gelesen werden. Bitte erneut auswählen.</string>
     <string name="write_error">Die umgewandelte Datei konnte nicht gespeichert werden.</string>

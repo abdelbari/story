@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="tagline">Convertissez vos documents en toute confidentialité, sur votre appareil — dans votre langue.</string>
-    <string name="empty_hint">Choisissez un fichier texte, Markdown ou Word à convertir. Le moteur PDF arrive bientôt.</string>
+    <string name="empty_hint">Choisissez un fichier texte, Markdown, Word ou PDF à convertir — tout se passe sur cet appareil.</string>
     <string name="pick_document">Choisir un document</string>
     <string name="pick_other">Choisir un autre fichier</string>
     <string name="convert_to_docx">Convertir en Word (.docx)</string>
@@ -10,7 +10,7 @@
     <string name="converting">Conversion en cours…</string>
     <string name="saved_ok">Terminé — votre fichier est enregistré.</string>
     <string name="retry">Réessayer</string>
-    <string name="pdf_not_yet">La conversion PDF arrive avec le jalon M1 du moteur. Les fichiers texte et Markdown fonctionnent dès aujourd’hui.</string>
+    <string name="scanned_pdf">Ce PDF semble numérisé, sans couche de texte. L’OCR sur l’appareil arrive avec le jalon M3.</string>
     <string name="unsupported_type">Ce type de fichier n’est pas encore pris en charge.</string>
     <string name="read_error">Impossible de lire ce fichier. Réessayez de le choisir.</string>
     <string name="write_error">Impossible d’enregistrer le fichier converti.</string>

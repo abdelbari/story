@@ -1,4 +1,4 @@
-package app.morpho.engine.pdf
+package app.morpho.engine.layout.pdf
 
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.DocumentModel
@@ -35,7 +35,7 @@ import kotlin.math.roundToInt
  * Paragraph direction comes from the first strongly-directional character,
  * exactly like [app.morpho.engine.layout.PlainTextImporter].
  */
-internal object PdfLayout {
+object PdfLayout {
 
     private const val PARAGRAPH_GAP_FACTOR = 1.6f
     private const val FONT_CHANGE_FACTOR = 1.2f

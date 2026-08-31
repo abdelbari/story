@@ -1,25 +1,22 @@
-package app.morpho.engine.pdf
+package app.morpho.pdf
 
 import app.morpho.engine.layout.pdf.PdfLine
-import org.apache.pdfbox.pdmodel.PDDocument
-import org.apache.pdfbox.text.PDFTextStripper
-import org.apache.pdfbox.text.TextPosition
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.text.TextPosition
 import java.io.Writer
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * A [PDFTextStripper] that captures positioned lines instead of emitting
- * text: [capture] returns every output line with its left edge, baseline,
- * largest font size, and page number, in reading order (sort-by-position is
- * always on). Nothing is ever written to the stripper's output.
- *
- * The word text PDFBox hands to [writeString] has already been through the
- * stripper's own BiDi normalisation, so captured lines are logical-order
- * Unicode and can go straight into the IR.
+ * Android twin of the engine's PositionTextStripper (:engine:pdf-read),
+ * built on the tom-roush PDFBox port instead of desktop PDFBox. The two
+ * mirror each other line for line — change both together until the
+ * shared-source split lands. java.io.Writer.nullWriter() is API 33+, hence
+ * the explicit no-op writer.
  */
-internal class PositionTextStripper : PDFTextStripper() {
+internal class AndroidPositionTextStripper : PDFTextStripper() {
 
     private val captured = mutableListOf<PdfLine>()
     private val lineText = StringBuilder()
@@ -36,7 +33,7 @@ internal class PositionTextStripper : PDFTextStripper() {
     fun capture(document: PDDocument): List<PdfLine> {
         captured.clear()
         resetLine()
-        writeText(document, Writer.nullWriter())
+        writeText(document, NoOpWriter)
         flushLine()
         return captured.toList()
     }
@@ -83,6 +80,12 @@ internal class PositionTextStripper : PDFTextStripper() {
         lineX = Float.MAX_VALUE
         lineY = 0f
         lineFontSize = 0f
+    }
+
+    private object NoOpWriter : Writer() {
+        override fun write(cbuf: CharArray, off: Int, len: Int) {}
+        override fun flush() {}
+        override fun close() {}
     }
 
     private companion object {

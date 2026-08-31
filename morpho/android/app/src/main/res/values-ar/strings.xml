@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="tagline">حوِّل مستنداتك بخصوصية على جهازك — وبلغتك.</string>
-    <string name="empty_hint">اختر ملفًا نصيًا أو Markdown أو ملف Word لتحويله. محرك PDF في الطريق.</string>
+    <string name="empty_hint">اختر ملفًا نصيًا أو Markdown أو Word أو PDF لتحويله — كل شيء يتم على هذا الجهاز.</string>
     <string name="pick_document">اختر مستندًا</string>
     <string name="pick_other">اختر ملفًا آخر</string>
     <string name="convert_to_docx">حوِّل إلى Word ‏(.docx)</string>
@@ -10,7 +10,7 @@
     <string name="converting">جارٍ التحويل…</string>
     <string name="saved_ok">تم — حُفظ الملف.</string>
     <string name="retry">أعد المحاولة</string>
-    <string name="pdf_not_yet">تحويل PDF يصل مع مرحلة المحرك M1. ملفات النص وMarkdown تعمل اليوم.</string>
+    <string name="scanned_pdf">يبدو هذا ملف PDF ممسوحًا ضوئيًا دون طبقة نصية. التعرف الضوئي على الجهاز يصل مع المرحلة M3.</string>
     <string name="unsupported_type">نوع الملف هذا غير مدعوم بعد.</string>
     <string name="read_error">تعذّرت قراءة الملف. جرّب اختياره مجددًا.</string>
     <string name="write_error">تعذّر حفظ الملف المحوَّل.</string>

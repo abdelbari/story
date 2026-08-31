@@ -185,7 +185,7 @@ private fun StateActions(
 
 private fun FailReason.messageRes(): Int = when (this) {
     FailReason.UNSUPPORTED_TYPE -> R.string.unsupported_type
-    FailReason.PDF_NOT_YET -> R.string.pdf_not_yet
+    FailReason.SCANNED_PDF -> R.string.scanned_pdf
     FailReason.READ_ERROR -> R.string.read_error
     FailReason.WRITE_ERROR -> R.string.write_error
 }

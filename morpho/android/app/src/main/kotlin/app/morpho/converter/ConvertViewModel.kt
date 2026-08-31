@@ -9,7 +9,9 @@ import androidx.lifecycle.viewModelScope
 import app.morpho.engine.layout.MarkdownWriter
 import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.ooxml.DocxReader
+import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.ooxml.DocxWriter
+import app.morpho.pdf.AndroidPdfReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,12 +36,15 @@ sealed interface ConvertUiState {
     data class Failed(val reason: FailReason) : ConvertUiState
 }
 
-enum class FailReason { UNSUPPORTED_TYPE, PDF_NOT_YET, READ_ERROR, WRITE_ERROR }
+enum class FailReason { UNSUPPORTED_TYPE, SCANNED_PDF, READ_ERROR, WRITE_ERROR }
+
+/** Thrown inside a conversion to surface a specific, honest failure reason. */
+private class UnconvertibleContent(val reason: FailReason) : Exception()
 
 /**
- * Drives the v0 conversion slices, both fully on-device: text/Markdown →
- * Word (.docx), and Word (.docx) → Markdown. This process has no network
- * permission at all.
+ * Drives the conversion slices, all fully on-device: text/Markdown → Word,
+ * Word → Markdown, and PDF → Word (text PDFs; scanned ones await the M3 OCR
+ * milestone). This process has no network permission at all.
  */
 class ConvertViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -90,7 +95,13 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                 listOf(".txt", ".md", ".markdown").any { lowerName.endsWith(it) }
 
             when {
-                isPdf -> _state.value = ConvertUiState.Failed(FailReason.PDF_NOT_YET)
+                isPdf -> convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
+                    val model = AndroidPdfReader(getApplication()).extract(bytes)
+                    val hasText = model.blocks.filterIsInstance<Paragraph>()
+                        .any { it.text.isNotBlank() }
+                    if (!hasText) throw UnconvertibleContent(FailReason.SCANNED_PDF)
+                    DocxWriter.toByteArray(model)
+                }
                 source.isWordDocument -> convertPicked(uri, source, "md", MARKDOWN_MIME) { bytes ->
                     MarkdownWriter.write(DocxReader.read(bytes)).toByteArray(Charsets.UTF_8)
                 }
@@ -116,8 +127,12 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
             return
         }
-        val output = runCatching { transform(input) }.getOrNull()
-        if (output == null) {
+        val output = try {
+            transform(input)
+        } catch (e: UnconvertibleContent) {
+            _state.value = ConvertUiState.Failed(e.reason)
+            return
+        } catch (e: Exception) {
             _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
             return
         }

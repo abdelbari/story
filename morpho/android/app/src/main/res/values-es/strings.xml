@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="tagline">Convierte tus documentos con privacidad, en tu dispositivo — en tu idioma.</string>
-    <string name="empty_hint">Elige un archivo de texto, Markdown o Word para convertirlo. El motor de PDF está en camino.</string>
+    <string name="empty_hint">Elige un archivo de texto, Markdown, Word o PDF para convertirlo: todo ocurre en este dispositivo.</string>
     <string name="pick_document">Elegir un documento</string>
     <string name="pick_other">Elegir otro archivo</string>
     <string name="convert_to_docx">Convertir a Word (.docx)</string>
@@ -10,7 +10,7 @@
     <string name="converting">Convirtiendo…</string>
     <string name="saved_ok">Listo — tu archivo está guardado.</string>
     <string name="retry">Reintentar</string>
-    <string name="pdf_not_yet">La conversión de PDF llega con el hito M1 del motor. Los archivos de texto y Markdown funcionan hoy.</string>
+    <string name="scanned_pdf">Este PDF parece escaneado, sin capa de texto. El OCR en el dispositivo llega con el hito M3.</string>
     <string name="unsupported_type">Ese tipo de archivo aún no es compatible.</string>
     <string name="read_error">No se pudo leer el archivo. Intenta elegirlo de nuevo.</string>
     <string name="write_error">No se pudo guardar el archivo convertido.</string>

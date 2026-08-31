@@ -5,6 +5,7 @@ import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.layout.Table
+import app.morpho.engine.layout.pdf.PdfLayout
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.text.PDFTextStripper
 
