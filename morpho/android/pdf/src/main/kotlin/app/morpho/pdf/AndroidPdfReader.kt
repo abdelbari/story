@@ -33,6 +33,11 @@ class AndroidPdfReader(context: Context) {
             val tagged = doc.documentCatalog.structureTreeRoot != null
             val confidence = if (tagged) 0.9f else 0.6f
 
+            // Fast path: read structure straight from the tags when present.
+            val fromTags =
+                if (tagged) runCatching { AndroidStructureTreeReader.read(doc) }.getOrNull() else null
+            if (fromTags != null) return fromTags
+
             val lines = runCatching { AndroidPositionTextStripper().capture(doc) }
                 .getOrDefault(emptyList())
             if (lines.isNotEmpty()) {
