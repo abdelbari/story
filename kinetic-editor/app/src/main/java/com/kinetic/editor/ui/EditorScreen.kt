@@ -72,6 +72,7 @@ import com.kinetic.editor.ui.timeline.TimelineGestureCallbacks
 import com.kinetic.editor.ui.timeline.TimelineViewportState
 import com.kinetic.editor.ui.timeline.TrimGhost
 import com.kinetic.editor.ui.timeline.DragGhost
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 /**
@@ -93,6 +94,14 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
     val canRedo by vm.store.canRedo.collectAsState()
     val recording by vm.recorder.isRecording.collectAsState()
     val playbackError by vm.preview.error.collectAsState()
+    val notice by vm.notice.collectAsState()
+    // A notice clears itself; a playback error stays until the pipeline is rebuilt.
+    LaunchedEffect(notice) {
+        if (notice != null) {
+            delay(NOTICE_MS)
+            vm.clearNotice()
+        }
+    }
 
     val viewport = remember { TimelineViewportState() }
     val haptics = LocalHapticFeedback.current
@@ -166,7 +175,7 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
     ) {
         PreviewSurface(vm.preview, state, viewport, Modifier.fillMaxWidth().weight(1f))
 
-        playbackError?.let { message ->
+        (playbackError ?: notice)?.let { message ->
             Text(
                 message,
                 color = Color(0xFFFF5C7A),
@@ -585,6 +594,7 @@ private fun androidx.compose.foundation.layout.RowScope.InspectorSlider(
 }
 
 /** Ships in app/src/main/assets — a 64-cube teal/orange film LUT. */
+private const val NOTICE_MS = 4_000L
 private const val FILM_LUT_ASSET = "luts/teal_orange.png"
 
 /** Bundled sticker assets; the "+ Sticker" button cycles through them. */

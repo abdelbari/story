@@ -6,11 +6,11 @@ import android.graphics.BitmapFactory
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.VideoCompositorSettings
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.SpeedChangeEffect
-import androidx.media3.effect.VideoCompositorSettings
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
@@ -50,7 +50,11 @@ data class ExportSpec(
  *  - AUDIO tracks      -> one audio-only sequence each; placement gaps become
  *    addGap() silences. Composition mixes all sequences sample-accurately.
  *  - VIDEO_OVERLAY     -> one extra video sequence each, placed in time by gaps
- *    and in space by PipCompositorSettings (input id 0 is the main track).
+ *    (blank frames) and in space by PipCompositorSettings (input id 0 is the
+ *    main track), padded to the main track's end so the compositor never runs
+ *    out of overlay frames and freezes on the last one.
+ *  - Sequences opening with a gap, or with an item lacking a track that later
+ *    items carry, need the force-audio/video flags or Transformer fails.
  *  - TEXT/STICKER      -> composition-level OverlayEffect windows (timeline time).
  *  - Canvas size       -> Presentation.createForWidthAndHeight at composition level.
  */
@@ -59,6 +63,7 @@ object CompositionMapper {
     fun build(context: Context, state: TimelineState, spec: ExportSpec): Composition {
         val mainPlacements = state.placements(state.mainTrack)
         require(mainPlacements.isNotEmpty()) { "Export requires at least one clip on the main track" }
+        val mainDurationMs = mainPlacements.last().endMs
 
         val lutCache = HashMap<String, Bitmap?>()
         val sequences = ArrayList<EditedMediaItemSequence>()
@@ -71,7 +76,10 @@ object CompositionMapper {
             )
             previousTransition = placed.clip.transitionOut
         }
-        sequences += mainBuilder.build()
+        sequences += mainBuilder
+            // A video-only first clip must not leave the later clips' audio unmixed.
+            .experimentalSetForceAudioTrack(true)
+            .build()
 
         // Secondary VIDEO sequences come first so their input ids (1..n) line up
         // with the placement list handed to the compositor; audio sequences carry
@@ -79,7 +87,7 @@ object CompositionMapper {
         val overlayWindows = ArrayList<List<PipWindow>>()
         for (track in state.tracks) {
             if (track.type != TrackType.VIDEO_OVERLAY || track.clips.isEmpty()) continue
-            sequences += overlaySequence(context, state, track, lutCache)
+            sequences += overlaySequence(context, state, track, mainDurationMs, lutCache)
             // Placement is per clip and resolved by time, so two PiP clips on one
             // track can sit in different corners.
             overlayWindows += pipWindows(state.placements(track))
@@ -92,7 +100,7 @@ object CompositionMapper {
 
         val compositionVideoEffects = buildList<Effect> {
             add(Presentation.createForWidthAndHeight(spec.width, spec.height, Presentation.LAYOUT_SCALE_TO_FIT))
-            com.kinetic.editor.effects.OverlayFactory.build(context, state)?.let(::add)
+            com.kinetic.editor.effects.OverlayFactory.build(context, state, spec.width)?.let(::add)
         }
 
         return Composition.Builder(sequences)
@@ -101,13 +109,9 @@ object CompositionMapper {
                 if (overlayWindows.isEmpty()) {
                     VideoCompositorSettings.DEFAULT
                 } else {
-                    PipCompositorSettings(spec.width, spec.height, overlayWindows)
+                    PipCompositorSettings(overlayWindows)
                 },
             )
-            // Audio sequences may lead with gaps and main clips may be muted or
-            // video-only; force a (possibly silent) audio track so mixing always
-            // has a primary stream to align to.
-            .experimentalSetForceAudioTrack(true)
             .build()
     }
 
@@ -175,20 +179,23 @@ object CompositionMapper {
 
     /**
      * A VIDEO_OVERLAY track becomes its own video sequence, positioned in time by
-     * leading gaps and in space by the compositor. Grade/LUT apply per clip just
-     * as on the main track; transitions do not, because a transition is a cut
-     * between neighbours on one track and a PiP has no cut to sit on.
+     * gaps and in space by the compositor. Grade/LUT apply per clip just as on
+     * the main track; transitions do not, because a transition is a cut between
+     * neighbours on one track and a PiP has no cut to sit on.
      */
     private fun overlaySequence(
         context: Context,
         state: TimelineState,
         track: Track,
+        padToMs: Long,
         lutCache: MutableMap<String, Bitmap?>,
     ): EditedMediaItemSequence {
         val builder = EditedMediaItemSequence.Builder()
+        var coveredMs = 0L
         for (plan in planSequence(state.placements(track))) {
             val clip = plan.clip
             if (plan.gapBeforeMs > 0) builder.addGap(plan.gapBeforeMs * 1_000L)
+            coveredMs = plan.startMs + plan.timelineDurationMs
 
             val mediaItem = MediaItem.Builder()
                 .setUri(clip.media.uri)
@@ -238,7 +245,15 @@ object CompositionMapper {
                     .build(),
             )
         }
-        return builder.build()
+        // Once a secondary sequence runs dry the compositor keeps re-drawing its
+        // final frame, so keep supplying (hidden, see PipCompositorSettings)
+        // frames until the main picture is over.
+        if (coveredMs < padToMs) builder.addGap((padToMs - coveredMs) * 1_000L)
+        return builder
+            // Gaps are blank video and silence; these let a sequence open with one.
+            .experimentalSetForceAudioTrack(true)
+            .experimentalSetForceVideoTrack(true)
+            .build()
     }
 
     private fun audioSequence(state: TimelineState, track: Track): EditedMediaItemSequence {
@@ -269,6 +284,9 @@ object CompositionMapper {
                     .build(),
             )
         }
-        return builder.build()
+        return builder
+            // A track whose first clip starts late opens with a gap of silence.
+            .experimentalSetForceAudioTrack(true)
+            .build()
     }
 }

@@ -169,19 +169,33 @@ fun readFades(keyframes: List<VolumeKeyframe>, clipDurationMs: Long): FadeSpec {
     return FadeSpec(inMs, outMs)
 }
 
-/** One PiP clip's placement over its span of composition (== timeline) time. */
-data class PipWindow(val startUs: Long, val endUs: Long, val pip: PipSpec)
-
-fun pipWindows(placements: List<PlacedClip>): List<PipWindow> =
-    placements.map { PipWindow(it.startMs * 1_000L, it.endMs * 1_000L, it.clip.pip ?: PipSpec()) }
+/**
+ * One PiP clip's placement over its span of composition (== timeline) time.
+ * [aspect] is the source's display width / height (0 when unknown) so preview
+ * and export can both size the box by width while keeping the picture's own
+ * proportions.
+ */
+data class PipWindow(val startUs: Long, val endUs: Long, val pip: PipSpec, val aspect: Float = 0f)
 
 /**
- * Placement in force at a composition timestamp. Between or outside windows —
- * a gap, or a rounding straggler at a boundary — the nearest known framing is
- * held rather than returning null, so a stray frame is never placed full-screen.
+ * Windows follow the sequence plan, not the raw placements: an overlap between
+ * two PiP clips is resolved the way the export sequence resolves it (head-trim
+ * of the later clip), so the windows never overlap and a time maps to at most
+ * one framing.
  */
-fun pipSpecAt(windows: List<PipWindow>, timeUs: Long): PipSpec? {
-    if (windows.isEmpty()) return null
+fun pipWindows(placements: List<PlacedClip>): List<PipWindow> =
+    planSequence(placements).map { plan ->
+        val m = plan.clip.media
+        PipWindow(
+            startUs = plan.startMs * 1_000L,
+            endUs = (plan.startMs + plan.timelineDurationMs) * 1_000L,
+            pip = plan.clip.pip ?: PipSpec(),
+            aspect = if (m.width > 0 && m.height > 0) m.width.toFloat() / m.height else 0f,
+        )
+    }
+
+/** The window in force at a composition timestamp, or null between and outside clips. */
+fun pipWindowAt(windows: List<PipWindow>, timeUs: Long): PipWindow? {
     var lo = 0
     var hi = windows.size - 1
     while (lo <= hi) {
@@ -190,8 +204,8 @@ fun pipSpecAt(windows: List<PipWindow>, timeUs: Long): PipSpec? {
         when {
             timeUs < w.startUs -> hi = mid - 1
             timeUs >= w.endUs -> lo = mid + 1
-            else -> return w.pip
+            else -> return w
         }
     }
-    return windows[lo.coerceIn(0, windows.size - 1)].pip
+    return null
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.view.SurfaceView
+import android.view.TextureView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
@@ -133,16 +134,18 @@ class PreviewEngine(
     fun detachSurface() = player.clearVideoSurface()
 
     /**
-     * PiP preview is a second player drawn into its own SurfaceView, laid out by
+     * PiP preview is a second player drawn into its own TextureView, laid out by
      * Compose from the same PipSpec the export compositor uses. Compositing two
      * decoded streams into one GL surface just to preview them would cost a full
-     * render pass per frame for no visual difference.
+     * render pass per frame for no visual difference. A TextureView rather than
+     * a SurfaceView because it is drawn as part of the view tree: Compose can
+     * rotate it, fade it out between clips and clip it like any other box.
      */
-    fun attachOverlaySurface(trackId: String, view: SurfaceView) {
-        slaves[trackId]?.player?.setVideoSurfaceView(view)
+    fun attachOverlayTexture(trackId: String, view: TextureView) {
+        slaves[trackId]?.player?.setVideoTextureView(view)
     }
 
-    fun detachOverlaySurface(trackId: String) {
+    fun detachOverlayTexture(trackId: String) {
         slaves[trackId]?.player?.clearVideoSurface()
     }
 

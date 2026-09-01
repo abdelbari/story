@@ -37,59 +37,79 @@ class VoiceRecorder(private val scope: CoroutineScope) {
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
     private var job: Job? = null
-    private var record: AudioRecord? = null
     private var outFile: File? = null
     private var bytesWritten = 0L
 
+    /**
+     * Starts capturing into [file]. Returns false, with nothing started, when
+     * the microphone cannot be opened — no such device, or another app holds it.
+     */
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
-    fun start(file: File) {
-        if (_isRecording.value) return
+    fun start(file: File): Boolean {
+        if (_isRecording.value) return true
         val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL, ENCODING)
-        val recorder = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION, // best noise handling for voice
-            SAMPLE_RATE, CHANNEL, ENCODING, minBuf * 2,
-        )
+        if (minBuf <= 0) return false // ERROR / ERROR_BAD_VALUE: format unsupported here
+        val recorder = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION, // best noise handling for voice
+                SAMPLE_RATE, CHANNEL, ENCODING, minBuf * 2,
+            )
+        } catch (_: IllegalArgumentException) {
+            return false
+        }
         if (recorder.state != AudioRecord.STATE_INITIALIZED) {
             recorder.release()
-            return
+            return false
         }
-        record = recorder
+        // A busy microphone does not throw: the record simply never starts.
+        val started = runCatching { recorder.startRecording() }.isSuccess &&
+            recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING
+        if (!started) {
+            recorder.release()
+            return false
+        }
+
         outFile = file
         bytesWritten = 0
         _isRecording.value = true
 
         job = scope.launch(Dispatchers.IO) {
-            RandomAccessFile(file, "rw").use { raf ->
-                raf.setLength(0)
-                raf.write(ByteArray(44)) // header placeholder, patched on stop
-                val buffer = ByteArray(minBuf)
-                recorder.startRecording()
-                try {
-                    while (isActive) {
-                        val n = recorder.read(buffer, 0, buffer.size)
-                        if (n <= 0) continue
-                        raf.write(buffer, 0, n)
-                        bytesWritten += n
-                        var peak = 0
-                        var i = 0
-                        while (i + 1 < n) {
-                            val s = (buffer[i].toInt() and 0xFF) or (buffer[i + 1].toInt() shl 8)
-                            val v = abs(s.toShort().toInt())
-                            if (v > peak) peak = v
-                            i += 2
+            try {
+                RandomAccessFile(file, "rw").use { raf ->
+                    raf.setLength(0)
+                    raf.write(ByteArray(44)) // header placeholder, patched on stop
+                    val buffer = ByteArray(minBuf)
+                    try {
+                        while (isActive) {
+                            val n = recorder.read(buffer, 0, buffer.size)
+                            if (n < 0) break // the stream died (mic taken away); keep what we have
+                            if (n == 0) continue
+                            raf.write(buffer, 0, n)
+                            bytesWritten += n
+                            var peak = 0
+                            var i = 0
+                            while (i + 1 < n) {
+                                val s = (buffer[i].toInt() and 0xFF) or (buffer[i + 1].toInt() shl 8)
+                                val v = abs(s.toShort().toInt())
+                                if (v > peak) peak = v
+                                i += 2
+                            }
+                            _peak.value = peak / 32767f
                         }
-                        _peak.value = peak / 32767f
+                    } finally {
+                        patchWavHeader(raf, bytesWritten)
                     }
-                } finally {
-                    recorder.stop()
-                    recorder.release()
-                    patchWavHeader(raf, bytesWritten)
                 }
+            } finally {
+                recorder.stop()
+                recorder.release()
+                _isRecording.value = false
             }
         }
+        return true
     }
 
-    /** Stops and returns the finished WAV, ready to add as an AUDIO clip. */
+    /** Stops and returns the finished WAV, ready to add as an AUDIO clip; null if too short to keep. */
     suspend fun stop(): Recording? {
         val j = job ?: return null
         job = null
@@ -97,11 +117,15 @@ class VoiceRecorder(private val scope: CoroutineScope) {
         j.join() // header patch happens in the reader's finally block
         _isRecording.value = false
         _peak.value = 0f
-        record = null
         val file = outFile ?: return null
         outFile = null
         val durationMs = bytesWritten * 1000L / (SAMPLE_RATE * 2L)
-        return if (durationMs > 200) Recording(file, durationMs) else null
+        return if (durationMs > 200) {
+            Recording(file, durationMs)
+        } else {
+            file.delete()
+            null
+        }
     }
 
     private fun patchWavHeader(raf: RandomAccessFile, dataBytes: Long) {

@@ -7,7 +7,7 @@ import com.kinetic.editor.core.model.MediaRef
 import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.FadeSpec
 import com.kinetic.editor.core.model.PipSpec
-import com.kinetic.editor.core.model.pipSpecAt
+import com.kinetic.editor.core.model.pipWindowAt
 import com.kinetic.editor.core.model.pipWindows
 import com.kinetic.editor.core.model.fadeKeyframes
 import com.kinetic.editor.core.model.readFades
@@ -373,20 +373,36 @@ class CoreLogicTest {
     }
 
     @Test
-    fun pipPlacementResolvesPerFrameNotPerTrack() {
+    fun pipWindowsResolvePerClipAndHideInGaps() {
         val a = clip("p1", 2_000, start = 1_000).copy(pip = PipSpec(anchorX = -0.5f, scale = 0.3f))
         val b = clip("p2", 2_000, start = 5_000).copy(pip = PipSpec(anchorX = 0.8f, scale = 0.5f))
         val ws = pipWindows(listOf(PlacedClip(a, 1_000), PlacedClip(b, 5_000)))
         assertEquals(2, ws.size)
         assertEquals(1_000_000L, ws[0].startUs)
         assertEquals(3_000_000L, ws[0].endUs)
+        assertEquals(1920f / 1080f, ws[0].aspect, 1e-4f) // from the source's display size
 
-        assertEquals(-0.5f, pipSpecAt(ws, 1_500_000)!!.anchorX, 1e-3f)
-        assertEquals(0.8f, pipSpecAt(ws, 5_500_000)!!.anchorX, 1e-3f)
-        assertEquals(0.5f, pipSpecAt(ws, 5_000_000)!!.scale, 1e-3f)   // boundary
-        assertTrue(pipSpecAt(ws, 4_000_000) != null)                  // gap holds framing
-        assertTrue(pipSpecAt(ws, 99_000_000) != null)                 // past end
-        assertNull(pipSpecAt(emptyList(), 0))
+        assertEquals(-0.5f, pipWindowAt(ws, 1_500_000)!!.pip.anchorX, 1e-3f)
+        assertEquals(0.8f, pipWindowAt(ws, 5_500_000)!!.pip.anchorX, 1e-3f)
+        assertEquals(0.5f, pipWindowAt(ws, 5_000_000)!!.pip.scale, 1e-3f) // start boundary is inclusive
+        assertNull(pipWindowAt(ws, 3_000_000))                             // end boundary is exclusive
+        assertNull(pipWindowAt(ws, 4_000_000))                             // gap: hidden
+        assertNull(pipWindowAt(ws, 99_000_000))                            // past the end: hidden
+        assertNull(pipWindowAt(emptyList(), 0))
+    }
+
+    @Test
+    fun overlappingPipClipsYieldDisjointWindows() {
+        // The later clip is head-trimmed exactly as the export sequence trims it,
+        // so a timestamp never maps to two framings.
+        val a = clip("p1", 4_000, start = 1_000).copy(pip = PipSpec(anchorX = -0.5f))
+        val b = clip("p2", 4_000, start = 3_000).copy(pip = PipSpec(anchorX = 0.8f))
+        val ws = pipWindows(listOf(PlacedClip(a, 1_000), PlacedClip(b, 3_000)))
+        assertEquals(5_000_000L, ws[0].endUs)
+        assertEquals(5_000_000L, ws[1].startUs)
+        assertEquals(7_000_000L, ws[1].endUs)
+        assertEquals(-0.5f, pipWindowAt(ws, 4_000_000)!!.pip.anchorX, 1e-3f)
+        assertEquals(0.8f, pipWindowAt(ws, 5_000_000)!!.pip.anchorX, 1e-3f)
     }
 
     @Test

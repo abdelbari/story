@@ -29,6 +29,9 @@ import com.kinetic.editor.engine.ThumbnailEngine
 import com.kinetic.editor.engine.WaveformEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -56,6 +59,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     val store = EditorStore(viewModelScope) { prev, next -> route(prev, next) }
 
     private val projectFile = File(app.filesDir, "project.json")
+
+    /**
+     * One transient line for the user: an import that could not be read, a
+     * microphone that would not open. Nothing here is an error of the document,
+     * so it lives beside the store rather than in it.
+     */
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice: StateFlow<String?> = _notice.asStateFlow()
+
+    fun clearNotice() {
+        _notice.value = null
+    }
 
     init {
         // Restore the last session, then autosave every commit (debounced so a
@@ -97,12 +112,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             persistReadAccess(uri)
             val ref = MediaProbe.probe(getApplication(), uri)
-            if (ref.durationMs <= 0) return@launch // unreadable/streaming media
             val state = store.timeline.value
-            if (ref.hasVideo) {
-                store.dispatch(EditorIntent.AddClip(trackId = state.mainTrack.id, media = ref))
-            } else if (ref.hasAudio) {
-                addToAudioTrack(ref, atMs = 0L)
+            when {
+                ref.durationMs <= 0 -> _notice.value = "Couldn't read that file"
+                ref.hasVideo -> store.dispatch(EditorIntent.AddClip(trackId = state.mainTrack.id, media = ref))
+                ref.hasAudio -> addToAudioTrack(ref, atMs = 0L)
+                else -> _notice.value = "That file has no video or audio"
             }
         }
     }
@@ -112,7 +127,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             persistReadAccess(uri)
             val ref = MediaProbe.probe(getApplication(), uri)
-            if (!ref.hasVideo || ref.durationMs <= 0) return@launch
+            if (!ref.hasVideo || ref.durationMs <= 0) {
+                _notice.value = "Picture-in-picture needs a readable video"
+                return@launch
+            }
             val track = store.timeline.value.tracks.first { it.type == TrackType.VIDEO_OVERLAY }
             store.dispatch(
                 EditorIntent.AddClip(
@@ -129,7 +147,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             persistReadAccess(uri)
             val ref = MediaProbe.probe(getApplication(), uri)
-            if (ref.hasAudio) addToAudioTrack(ref, atMs)
+            if (ref.hasAudio && ref.durationMs > 0) {
+                addToAudioTrack(ref, atMs)
+            } else {
+                _notice.value = "That file has no audio"
+            }
         }
     }
 
@@ -210,12 +232,16 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             getApplication<Application>().filesDir,
             "voiceover_${System.currentTimeMillis()}.wav",
         )
-        recorder.start(file)
+        if (!recorder.start(file)) _notice.value = "Microphone unavailable"
     }
 
     fun stopVoiceover(atMs: Long) {
         viewModelScope.launch {
-            val rec = recorder.stop() ?: return@launch
+            val rec = recorder.stop()
+            if (rec == null) {
+                _notice.value = "Recording too short to keep"
+                return@launch
+            }
             addToAudioTrack(
                 MediaRef(
                     uri = Uri.fromFile(rec.file).toString(),
@@ -234,11 +260,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun startExport() {
         preview.pause()
         val state = store.timeline.value
-        ExportWorker.enqueue(
-            getApplication(),
-            state,
-            ExportSpec(width = state.outputWidth, height = state.outputHeight),
-        )
+        // Enqueueing snapshots the document to disk first; not on the main thread.
+        viewModelScope.launch(Dispatchers.IO) {
+            ExportWorker.enqueue(
+                getApplication(),
+                state,
+                ExportSpec(width = state.outputWidth, height = state.outputHeight),
+            )
+        }
     }
 
     private companion object {

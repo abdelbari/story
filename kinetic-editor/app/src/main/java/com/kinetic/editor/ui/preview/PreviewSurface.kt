@@ -2,6 +2,7 @@ package com.kinetic.editor.ui.preview
 
 import android.graphics.BitmapFactory
 import android.view.SurfaceView
+import android.view.TextureView
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -17,6 +18,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.geometry.Offset
@@ -36,9 +38,10 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.kinetic.editor.core.model.PipSpec
+import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TrackType
-import com.kinetic.editor.core.model.pipSpecAt
+import com.kinetic.editor.core.model.pipWindowAt
 import com.kinetic.editor.engine.PreviewEngine
 import com.kinetic.editor.ui.timeline.TimelineViewportState
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +52,12 @@ import kotlinx.coroutines.withContext
  * an extra GPU composite per frame), with text/sticker previews drawn as a
  * Compose Canvas ABOVE the surface. Overlays in preview cost no GL work and
  * update live while typing; the export renders the same specs via OverlayEffect.
+ *
+ * Two nested frames, mirroring the export. The CANVAS (the output size) holds
+ * the PICTURE: the main clip letterboxed by its own proportions, which is the
+ * fit the export's Presentation applies. Picture-in-picture boxes are placed
+ * relative to the picture (the compositor's frame); text and stickers relative
+ * to the canvas (the composition-level overlay's frame).
  */
 @Composable
 fun PreviewSurface(
@@ -57,64 +66,92 @@ fun PreviewSurface(
     viewport: TimelineViewportState,
     modifier: Modifier = Modifier,
 ) {
+    val canvasAspect = state.outputWidth.toFloat() / state.outputHeight.toFloat()
+    val mainPlacements = remember(state) { state.placements(state.mainTrack) }
+    // Changes only when the playhead crosses into a clip of a different shape.
+    val pictureAspect by remember(mainPlacements, canvasAspect) {
+        derivedStateOf { pictureAspectAt(mainPlacements, viewport.playheadMs) ?: canvasAspect }
+    }
+
     Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         Box(
             Modifier
-                .aspectRatio(state.outputWidth.toFloat() / state.outputHeight.toFloat())
+                .aspectRatio(canvasAspect)
                 .align(Alignment.Center),
         ) {
-            AndroidView(
-                factory = { ctx -> SurfaceView(ctx).also(engine::attachSurface) },
-                onRelease = { engine.detachSurface() },
-                modifier = Modifier.fillMaxSize(),
-            )
-            PipLayer(engine, viewport)
+            Box(
+                Modifier
+                    .aspectRatio(pictureAspect)
+                    .align(Alignment.Center),
+            ) {
+                AndroidView(
+                    factory = { ctx -> SurfaceView(ctx).also(engine::attachSurface) },
+                    onRelease = { engine.detachSurface() },
+                    modifier = Modifier.fillMaxSize(),
+                )
+                PipLayer(engine, viewport)
+            }
             PreviewOverlayLayer(state, viewport, Modifier.fillMaxSize())
         }
     }
 }
 
+/** Display aspect of the main clip under the playhead; null when its size is unknown. */
+private fun pictureAspectAt(placements: List<PlacedClip>, timeMs: Long): Float? {
+    if (placements.isEmpty()) return null
+    val media = (placements.firstOrNull { timeMs in it } ?: placements.last()).clip.media
+    return if (media.width > 0 && media.height > 0) media.width.toFloat() / media.height else null
+}
+
 /**
- * Picture-in-picture preview: one surface per PiP track, laid out from the same
- * PipSpec the export compositor uses, so the box the user drags is the box that
- * renders. Each surface sits above the main video and below text/stickers, which
- * matches the export layer order (compositor first, OverlayEffect last).
+ * Picture-in-picture preview: one TextureView per PiP track, laid out from the
+ * same PipWindow the export compositor uses, so the box the user drags is the
+ * box that renders. Each sits above the main video and below text/stickers,
+ * which matches the export layer order (compositor first, OverlayEffect last).
  */
 @Composable
 private fun PipLayer(engine: PreviewEngine, viewport: TimelineViewportState) {
     val overlays by engine.overlays.collectAsState()
     for (overlay in overlays) {
         key(overlay.trackId) {
-            // derivedStateOf: the playhead changes every frame, but the resolved
-            // placement only changes at clip boundaries — so this box re-lays out
-            // when a PiP clip's framing actually changes, not sixty times a second.
-            val pip by remember(overlay) {
-                derivedStateOf {
-                    pipSpecAt(overlay.windows, viewport.playheadMs * 1_000L) ?: PipSpec()
-                }
+            // derivedStateOf: the playhead changes every frame, but the window in
+            // force only changes at clip boundaries — so this box re-lays out
+            // then, not sixty times a second.
+            val window by remember(overlay) {
+                derivedStateOf { pipWindowAt(overlay.windows, viewport.playheadMs * 1_000L) }
             }
+            val pip = window?.pip ?: PipSpec()
+            val aspect = window?.aspect ?: 0f
             Box(
                 Modifier
                     .fillMaxSize()
                     .layout { measurable, constraints ->
+                        // Width is the requested fraction of the picture; height keeps
+                        // the source's own proportions, as the export compositor does.
                         val w = (constraints.maxWidth * pip.scale).toInt().coerceAtLeast(1)
-                        val h = (constraints.maxHeight * pip.scale).toInt().coerceAtLeast(1)
+                        val h = (if (aspect > 0f) w / aspect else constraints.maxHeight * pip.scale)
+                            .toInt()
+                            .coerceAtLeast(1)
                         val placeable = measurable.measure(Constraints.fixed(w, h))
                         layout(constraints.maxWidth, constraints.maxHeight) {
-                            // NDC anchor -> pixel center, y up-positive.
+                            // NDC anchor -> pixel centre, y up-positive.
                             val cx = (pip.anchorX * 0.5f + 0.5f) * constraints.maxWidth
                             val cy = (-pip.anchorY * 0.5f + 0.5f) * constraints.maxHeight
                             placeable.place((cx - w / 2f).toInt(), (cy - h / 2f).toInt())
                         }
-                    }
-                    .rotate(pip.rotationDeg),
+                    },
             ) {
                 AndroidView(
                     factory = { ctx ->
-                        SurfaceView(ctx).also { engine.attachOverlaySurface(overlay.trackId, it) }
+                        TextureView(ctx).also { engine.attachOverlayTexture(overlay.trackId, it) }
                     },
-                    onRelease = { engine.detachOverlaySurface(overlay.trackId) },
-                    modifier = Modifier.fillMaxSize(),
+                    onRelease = { engine.detachOverlayTexture(overlay.trackId) },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        // On the box itself, so the rotation pivots on the box's centre.
+                        .rotate(pip.rotationDeg)
+                        // Between clips the slave player sits paused on its last frame: hide it.
+                        .alpha(if (window != null) 1f else 0f),
                 )
             }
         }

@@ -8,9 +8,9 @@ import android.text.SpannableString
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
+import androidx.media3.common.OverlaySettings
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.OverlayEffect
-import androidx.media3.effect.OverlaySettings
 import androidx.media3.effect.StaticOverlaySettings
 import androidx.media3.effect.TextOverlay
 import androidx.media3.effect.TextureOverlay
@@ -26,8 +26,13 @@ import com.kinetic.editor.core.model.TrackType
  * so overlay windows are the clip placements verbatim.
  *
  * Time-gating is done through alphaScale in getOverlaySettings (0 outside the
- * clip window, with a 150ms ease at both edges). Media3 1.6+ / 1.8 API: on
- * media3 <= 1.5 replace StaticOverlaySettings.Builder with OverlaySettings.Builder.
+ * clip window, with a 150ms ease at both edges).
+ *
+ * Sizes are canvas-relative. Media3 draws an overlay at its native pixel size
+ * times `scale`, so a 256px sticker asset would come out a different size on
+ * every canvas; [canvasWidth] folds that into the scale so `StickerSpec.scale`
+ * means "fraction of the frame's width" here and in the preview alike. Text
+ * needs no such correction: its size is authored in canvas pixels.
  *
  * (The PREVIEW draws the same specs as a Compose layer over the SurfaceView —
  * zero GL cost while editing; see PreviewOverlayLayer.)
@@ -36,7 +41,7 @@ object OverlayFactory {
 
     private const val FADE_US = 150_000L
 
-    fun build(context: Context, state: TimelineState): OverlayEffect? {
+    fun build(context: Context, state: TimelineState, canvasWidth: Int): OverlayEffect? {
         val overlays = ImmutableList.builder<TextureOverlay>()
         var any = false
         for (track in state.tracks) {
@@ -51,7 +56,9 @@ object OverlayFactory {
                     val bitmap = runCatching {
                         context.assets.open(spec.assetPath).use(BitmapFactory::decodeStream)
                     }.getOrNull() ?: continue
-                    overlays.add(TimedStickerOverlay(bitmap, spec, p.startMs * 1000L, p.endMs * 1000L))
+                    overlays.add(
+                        TimedStickerOverlay(bitmap, spec, canvasWidth, p.startMs * 1000L, p.endMs * 1000L),
+                    )
                     any = true
                 }
                 else -> Unit
@@ -102,16 +109,19 @@ private class TimedTextOverlay(
 private class TimedStickerOverlay(
     private val bitmap: Bitmap,
     private val spec: StickerSpec,
+    canvasWidth: Int,
     private val startUs: Long,
     private val endUs: Long,
 ) : BitmapOverlay() {
+
+    private val scale = spec.scale * canvasWidth / bitmap.width
 
     override fun getBitmap(presentationTimeUs: Long): Bitmap = bitmap
 
     override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings =
         StaticOverlaySettings.Builder()
             .setBackgroundFrameAnchor(spec.anchorX, spec.anchorY)
-            .setScale(spec.scale, spec.scale)
+            .setScale(scale, scale)
             .setRotationDegrees(spec.rotationDeg)
             .setAlphaScale(OverlayFactory.windowAlpha(presentationTimeUs, startUs, endUs))
             .build()

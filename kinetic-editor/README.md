@@ -10,21 +10,33 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 34 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 35 pure-JVM logic tests
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
 are all committed, so a fresh clone builds and installs with no extra setup.
 Code targets **media3 1.8.0** (see [API drift notes](#api-drift-notes)).
 
-**Verification status.** The full source tree parses and front-end-checks clean
-under the real Kotlin 2.1.0 compiler, and the serializable model compiles against
-the real kotlinx-serialization compiler plugin. androidx symbols were excluded —
-Google's Maven was unreachable from the authoring environment — so androidx-facing
-call sites are reviewed rather than compiled; everything else is executed. The
-pure-logic core (models, reducer, undo store, timeline<->preview mapping, shared
-transition/sequence planning math, project codec) compiles verbatim on the JVM and
-passes the suite in `app/src/test/java/com/kinetic/editor/CoreLogicTest.kt`.
+**Verification status.** Google's Maven was unreachable from the authoring
+environment, so the app has not been assembled by Gradle there. Instead:
+
+- Every file outside the Compose UI — the engines, the GL effects, the
+  compositor, the export mapper and worker, the audio processors, the probe,
+  the view model — **compiles with the real Kotlin 2.1.0 compiler against the
+  media3 1.8.0 sources** (the `androidx/media` tag, loaded as Java source roots)
+  and the Android 15 framework classes, with the kotlinx-serialization compiler
+  plugin. ExoPlayer, Transformer, `VideoCompositorSettings`, `OverlaySettings`,
+  `BaseGlShaderProgram` and friends are type-checked call sites, not reviewed
+  ones. (This is what caught `OverlaySettings`/`VideoCompositorSettings` having
+  moved to `androidx.media3.common`, and the deprecated composition-level
+  `experimentalSetForceAudioTrack`.)
+- The Compose/activity/lifecycle-facing files (`EditorScreen`, `PreviewSurface`,
+  `ui/timeline/*`) are front-end checked with those symbols unresolved; what
+  remains after filtering the unresolved-symbol cascades is nothing.
+- The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
+  shared transition/sequence/PiP planning math, project codec, timeline
+  geometry) runs on the JVM: the 35 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 38-scenario executable sandbox suite.
 
 ---
 
@@ -151,13 +163,22 @@ during pinch-zoom. Instead:
 - Per-clip speed and volume envelopes are applied by a 10 Hz control tick in
   preview (`setPlaybackSpeed`, `volume`) — the export applies them
   sample-exactly.
+- The preview is two nested frames, mirroring the export: the **canvas** (output
+  size) holds the **picture** — the main clip letterboxed by its own display
+  aspect, which is the fit the export's `Presentation` applies — so a landscape
+  clip on a portrait canvas is never stretched. Text and stickers are placed
+  relative to the canvas, PiP boxes relative to the picture, because that is
+  what the composition-level overlay and the compositor respectively see.
 - Overlay audio **and PiP video** tracks play on **slave ExoPlayers** phase-locked
-  to the master (re-seek on >80 ms drift). A PiP gets its own `SurfaceView`, laid
-  out by Compose from the same `pipSpecAt` lookup the export compositor uses —
-  resolved for the current playhead behind a `derivedStateOf`, so the box only
-  re-lays out when a clip's framing actually changes, and the box on screen is
-  the box that renders. One known preview-only gap: grade/LUT on a PiP clip is
-  exported but not previewed, because the slave players carry no GL effects.
+  to the master (re-seek on >80 ms drift). A PiP gets its own `TextureView`
+  (drawn in the view tree, so Compose can rotate, fade and clip it), laid out
+  from the same `pipWindowAt` lookup the export compositor uses — resolved for
+  the current playhead behind a `derivedStateOf`, so the box only re-lays out
+  when a clip's framing actually changes. `PipSpec.scale` is the fraction of
+  the picture's width; height follows the source's own proportions; between
+  clips the box is hidden rather than left frozen on a stale frame. One known
+  preview-only gap: grade/LUT on a PiP clip is exported but not previewed,
+  because the slave players carry no GL effects.
 - **Playback errors are surfaced, not swallowed.** A source that vanishes after
   being added (a persisted project whose file was deleted, a revoked URI) would
   otherwise be a silently black preview; `onPlayerError` on the master and every
@@ -178,14 +199,24 @@ during pinch-zoom. Instead:
   `SonicAudioProcessor(speed)` + `VolumeEnvelopeAudioProcessor` (which runs in
   clip *timeline* time — same domain the keyframes are authored in).
 - Each **VIDEO_OVERLAY (PiP) track → its own video sequence**, positioned in
-  time by leading gaps and in space by `PipCompositorSettings`, which maps
-  compositor input ids (0 = main track, 1..n = overlays) to each track's
-  `PipSpec`. The output size is pinned to the composition canvas, so adding a
-  PiP can never change the exported frame size.
-- Each AUDIO track → an audio-only sequence with `addGap()` silences;
-  `experimentalSetForceAudioTrack` guarantees a mixable primary stream.
+  time by gaps (blank frames) and in space by `PipCompositorSettings`, which
+  resolves compositor input ids (0 = main track, 1..n = overlays) to the
+  `PipWindow` in force at each frame's timestamp. The compositor's output is
+  the primary frame itself — so the main picture is never cropped — and the
+  overlay's scale is derived from the two frame sizes per composite, so
+  `PipSpec.scale` means the same "fraction of the picture's width, own
+  proportions kept" as in the preview. The sequence is padded with a trailing
+  gap to the main track's end (media3's compositor otherwise keeps re-drawing
+  a finished sequence's last frame), and outside a clip's window the overlay
+  is drawn at alpha 0.
+- Each AUDIO track → an audio-only sequence with `addGap()` silences. Every
+  sequence sets its own `experimentalSetForceAudioTrack` (and the PiP ones
+  `experimentalSetForceVideoTrack`): a sequence that opens with a gap, or with
+  an item lacking a track that later items carry, fails the export without it.
 - TEXT/STICKER tracks → one composition-level `OverlayEffect` with
-  alpha-gated, fade-edged windows (composition time == timeline time).
+  alpha-gated, fade-edged windows (composition time == timeline time). Sticker
+  scale is folded with the canvas width so it, too, means "fraction of the
+  frame's width" on any canvas rather than the asset's native pixel size.
 - Composition-level `Presentation.createForWidthAndHeight` fixes the canvas.
 - `Transformer` + `DefaultEncoderFactory(VideoEncoderSettings(bitrate))` renders
   hardware-to-hardware; progress is polled into a cold `callbackFlow`;
@@ -316,15 +347,19 @@ Pinned to `media3 = 1.8.0`. If you move:
 
 - `ExoPlayer.setScrubbingModeEnabled` — 1.8+. On older versions delete the two
   call sites in `PreviewEngine.setScrubbing`; conflation + `EXACT` still works.
-- `StaticOverlaySettings.Builder` (`effects/Overlays.kt`) — 1.6+. On ≤1.5 use
+- `OverlaySettings` and `VideoCompositorSettings` live in
+  `androidx.media3.common` in 1.8.0 (earlier releases had them in
+  `androidx.media3.effect`); `StaticOverlaySettings.Builder` — 1.6+, on ≤1.5 use
   `OverlaySettings.Builder`.
-- `EditedMediaItemSequence.Builder` (`addItem`/`addGap`) — 1.6+. On older
-  versions use the list constructors.
-- `Composition.Builder.setVideoCompositorSettings` and the
-  `VideoCompositorSettings` interface (`effects/PipCompositor.kt`) — 1.4+, and
-  the interface has gained methods over time. This is the least-settled surface
-  the project touches; if PiP fails to compile, check `getOutputSize` /
-  `getOverlaySettings` against your media3 version first.
+- `EditedMediaItemSequence.Builder` (`addItem`/`addGap`,
+  `experimentalSetForceAudioTrack`/`experimentalSetForceVideoTrack`) — 1.6+.
+  The composition-level `experimentalSetForceAudioTrack` is deprecated in 1.8.
+- `Composition.Builder.setVideoCompositorSettings` — 1.4+, and the
+  `VideoCompositorSettings` interface has gained methods over time. This is the
+  least-settled surface the project touches; `PipCompositorSettings` also relies
+  on `DefaultVideoCompositor` asking for the output size right before it draws,
+  which is how it learns the frame sizes it scales by. If PiP fails to compile
+  or sizes wrongly, check that class against your media3 version first.
 - Most Transformer/effect surfaces are `@UnstableApi`; the module opts in
   globally via `-opt-in` in `app/build.gradle.kts`.
 
