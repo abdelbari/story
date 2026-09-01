@@ -25,7 +25,14 @@ Work through, in this order — each exercises a path nothing else covers:
       must be right even if the layout is complex.
 - [ ] **An Arabic document → Word**, opened in real Word. Letters must stay
       joined, words must not reverse, and Latin words or digits inside Arabic
-      paragraphs must sit on the correct side.
+      paragraphs must sit on the correct side. Try **both a tagged and an
+      untagged PDF** — the two take different paths and each reversed text
+      in its own way before 1.0; a PDF from Word is tagged, one from an
+      older tool or a scanner usually is not.
+- [ ] **An Arabic document whose headings were typed by hand** (bold or
+      larger text, not Word's heading styles). Headings should still come
+      out as headings. A bold line that is not a heading — a byline, say —
+      may be promoted, which is what Review Mode is for.
 - [ ] **A scanned PDF → OCR → Word.** Watch the page counter advance; try
       Cancel mid-way and confirm nothing is saved. Judge the recognition
       quality — this is the number one thing to tune (see §5).
