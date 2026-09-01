@@ -85,7 +85,7 @@ fun Timeline(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    val geometry = remember(viewport, density) { TimelineGeometry(viewport, density) }
+    val geometry = remember(viewport, density) { TimelineGeometry(viewport, density.density) }
     val flingScope = rememberCoroutineScope()
     val textMeasurer = rememberTextMeasurer()
     val labelCache = remember { HashMap<String, TextLayoutResult>() }

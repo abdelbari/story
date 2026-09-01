@@ -15,6 +15,16 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
+ * The only two viewport values the geometry layer reads. Depending on this
+ * instead of the whole mutable viewport keeps time<->pixel math a pure function
+ * of two floats — which is what makes it testable without a Compose runtime.
+ */
+interface ViewportReader {
+    val pxPerMs: Float
+    val scrollXPx: Float
+}
+
+/**
  * HOT interaction state — the second tier of the two-tier state model.
  *
  * The MVI store holds the cold, committed document. Everything that changes at
@@ -30,11 +40,11 @@ import kotlinx.coroutines.launch
 @Stable
 class TimelineViewportState(
     initialPxPerMs: Float = 0.06f, // 60 px per second
-) {
-    var pxPerMs by mutableFloatStateOf(initialPxPerMs)
+) : ViewportReader {
+    override var pxPerMs by mutableFloatStateOf(initialPxPerMs)
         private set
 
-    var scrollXPx by mutableFloatStateOf(0f)
+    override var scrollXPx by mutableFloatStateOf(0f)
         private set
 
     val playheadMs: Long

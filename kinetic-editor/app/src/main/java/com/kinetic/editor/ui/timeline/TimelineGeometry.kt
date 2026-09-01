@@ -2,7 +2,6 @@ package com.kinetic.editor.ui.timeline
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.unit.Density
 import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.TimelineState
@@ -17,10 +16,10 @@ import kotlin.math.abs
  * changes invalidate only the draw pass, not the composable tree.
  */
 class TimelineGeometry(
-    private val viewport: TimelineViewportState,
-    density: Density,
+    private val viewport: ViewportReader,
+    /** Pixels per dp — `LocalDensity.current.density`, passed as a plain float. */
+    private val dp: Float,
 ) {
-    private val dp: Float = density.density
 
     val rulerHeightPx = 28f * dp
     val laneGapPx = 3f * dp
