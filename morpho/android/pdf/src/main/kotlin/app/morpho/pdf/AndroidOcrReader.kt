@@ -10,6 +10,7 @@ import com.googlecode.tesseract.android.TessBaseAPI
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.rendering.PDFRenderer
 import java.io.File
+import kotlin.math.sqrt
 
 /**
  * On-device OCR for scanned PDFs (milestone M3): pages render to bitmaps
@@ -72,7 +73,7 @@ class AndroidOcrReader(private val context: Context) {
                 for (index in 0 until doc.numberOfPages) {
                     if (!shouldContinue()) throw Cancelled()
                     onPage(index + 1, doc.numberOfPages)
-                    val bitmap = renderer.renderImageWithDPI(index, RENDER_DPI)
+                    val bitmap = renderer.renderImageWithDPI(index, dpiFor(doc, index))
                     try {
                         tess.setImage(bitmap)
                         pageTexts += tess.getUTF8Text().orEmpty()
@@ -94,6 +95,24 @@ class AndroidOcrReader(private val context: Context) {
                 }
             }
         )
+    }
+
+    /**
+     * [RENDER_DPI], unless the page is big enough that rendering it there
+     * would allocate an unreasonable bitmap — a poster-sized page at 200 dpi
+     * runs to hundreds of megabytes and takes the process down. Oversized
+     * pages are rendered at whatever resolution fits the budget instead:
+     * degraded recognition beats an out-of-memory crash, and ordinary
+     * page sizes are far below the cap and unaffected.
+     */
+    private fun dpiFor(doc: PDDocument, index: Int): Float {
+        val box = runCatching { doc.getPage(index).cropBox }.getOrNull() ?: return RENDER_DPI
+        val widthInches = box.width / POINTS_PER_INCH
+        val heightInches = box.height / POINTS_PER_INCH
+        if (widthInches <= 0f || heightInches <= 0f) return RENDER_DPI
+        val pixels = widthInches * heightInches * RENDER_DPI * RENDER_DPI
+        if (pixels <= MAX_PAGE_PIXELS) return RENDER_DPI
+        return RENDER_DPI * sqrt(MAX_PAGE_PIXELS / pixels)
     }
 
     /** Copies the bundled language packs to real files, once per language. */
@@ -119,6 +138,10 @@ class AndroidOcrReader(private val context: Context) {
         const val OCR_CONFIDENCE = 0.5f
 
         private const val RENDER_DPI = 200f
+
+        /** ~8 MP, i.e. a 32 MB ARGB_8888 bitmap. A4 at 200 dpi is 3.9 MP. */
+        private const val MAX_PAGE_PIXELS = 8_000_000f
+        private const val POINTS_PER_INCH = 72f
         private const val TESSDATA_DIR = "tessdata"
         private const val TRAINED_DATA_SUFFIX = ".traineddata"
     }
