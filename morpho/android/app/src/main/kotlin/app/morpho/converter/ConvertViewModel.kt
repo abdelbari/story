@@ -40,24 +40,27 @@ sealed interface ConvertUiState {
     data class Converting(val page: Int = 0, val pageCount: Int = 0) : ConvertUiState
 
     /**
-     * A finished conversion, carrying its own bytes rather than leaving the
-     * save handler to read a field that a later conversion may have
-     * replaced: whatever the dialog was opened for is what gets written.
-     * Array identity is the right equality here, and what the data class
-     * generates.
+     * A finished conversion, holding its own bytes and waiting for the
+     * reader to save it. Keeping this state between the conversion and the
+     * save dialog is what makes a dismissed dialog survivable: the result is
+     * still in hand, and a three-minute OCR run need not happen twice.
      */
+    data class Converted(
+        val suggestedName: String,
+        val mimeType: String,
+        val bytes: ByteArray,
+        val needsReview: Boolean = false,
+    ) : ConvertUiState
+
+    /** The reader asked to save; the UI opens the system dialog for this. */
     data class ReadyToSave(
         val suggestedName: String,
         val mimeType: String,
         val bytes: ByteArray,
     ) : ConvertUiState
 
-    /** The same payload, with the system save dialog now on screen. */
-    data class AwaitingSave(
-        val suggestedName: String,
-        val mimeType: String,
-        val bytes: ByteArray,
-    ) : ConvertUiState
+    /** The save dialog is on screen. Its payload is held outside the state. */
+    data object AwaitingSave : ConvertUiState
 
     /** Print-ready HTML for the system print sheet's "Save as PDF". */
     data class ReadyToPrint(val html: String, val jobName: String) : ConvertUiState
@@ -107,6 +110,29 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     /** Whichever conversion ran last — "Try again" repeats it, not convert(). */
     private var lastOperation: (() -> Unit)? = null
     private var outputName: String = ""
+
+    /**
+     * Bumped by every pick. A conversion captures it when it starts and
+     * publishes nothing once it no longer matches, so a document arriving
+     * from the share sheet mid-conversion supersedes the one in flight
+     * instead of racing it for the same fields and the same screen.
+     */
+    private var pickEpoch = 0
+
+    /**
+     * The payload of the save dialog currently on screen, held outside the
+     * state machine: the dialog is a separate activity, and whatever happens
+     * to this screen while it is open, the bytes it was opened for are the
+     * bytes that must be written.
+     */
+    private var pendingSave: ConvertUiState.ReadyToSave? = null
+
+    /** Publishes UI state only if the pick it belongs to is still current. */
+    private fun publish(epoch: Int, state: ConvertUiState) {
+        if (epoch == pickEpoch) _state.value = state
+    }
+
+    private fun needsReview(): Boolean = lastReport?.reviewables?.isNotEmpty() == true
 
     /** Fidelity Report of the last conversion's model, for the Saved notice. */
     private var lastReport: FidelityReport.Report? = null
@@ -184,6 +210,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         if (_state.value is ConvertUiState.Converting) return
         val model = lastModel ?: return
         val write = lastWriter ?: return
+        // "Try again" after a failed save must retry the save. Re-running the
+        // conversion would rebuild the model and drop every correction.
+        lastOperation = ::saveCorrected
         _review.value = null
         _state.value = ConvertUiState.Converting()
         viewModelScope.launch(Dispatchers.IO) {
@@ -199,16 +228,19 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun onPicked(uri: Uri) {
-        // Synchronously, before the IO hop: a second document arriving from
-        // the share sheet must invalidate the previous conversion's model
-        // immediately, or a correction tap racing the query could write a
-        // report for a file that is no longer picked.
+        // Synchronously, before the IO hop: a new document supersedes
+        // whatever was in flight. The epoch bump makes a running conversion
+        // discard its result rather than publish it over the new pick, and
+        // cancelling OCR stops minutes of work nobody is waiting for.
+        pickEpoch++
+        ocrCancelled.set(true)
         lastReport = null
         lastModel = null
         lastWriter = null
         editedBlocks.clear()
         _review.value = null
 
+        val epoch = pickEpoch
         viewModelScope.launch(Dispatchers.IO) {
             // DocumentsProviders can be slow (cloud providers, network
             // shares); never query them on the main thread.
@@ -228,6 +260,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                     name.lowercase().endsWith(".docx"),
                 isPdf = mime == "application/pdf" || name.lowercase().endsWith(".pdf"),
             )
+            // A newer pick while this query was in flight wins outright.
+            if (epoch != pickEpoch) return@launch
             pickedFile = PickedFile(uri, state)
             _state.value = state
         }
@@ -241,10 +275,11 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         val (uri, source) = pickedFile ?: return
         lastOperation = ::convert
         _state.value = ConvertUiState.Converting()
+        val epoch = pickEpoch
         viewModelScope.launch(Dispatchers.IO) {
             when {
                 source.isPdf -> convertPicked(
-                    uri, source, "docx", DocxWriter.MIME_TYPE,
+                    epoch, uri, source, "docx", DocxWriter.MIME_TYPE,
                     read = { bytes ->
                         val model = AndroidPdfReader(getApplication()).extract(bytes)
                         val hasText = model.blocks.filterIsInstance<Paragraph>()
@@ -255,16 +290,16 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                     write = { model -> DocxWriter.toByteArray(model) },
                 )
                 source.isWordDocument -> convertPicked(
-                    uri, source, "md", MARKDOWN_MIME,
+                    epoch, uri, source, "md", MARKDOWN_MIME,
                     read = { bytes -> DocxReader.read(bytes) },
                     write = { model -> MarkdownWriter.write(model).toByteArray(Charsets.UTF_8) },
                 )
                 looksTextual(source) -> convertPicked(
-                    uri, source, "docx", DocxWriter.MIME_TYPE,
+                    epoch, uri, source, "docx", DocxWriter.MIME_TYPE,
                     read = { bytes -> PlainTextImporter.import(bytes.toString(Charsets.UTF_8)) },
                     write = { model -> DocxWriter.toByteArray(model) },
                 )
-                else -> _state.value = ConvertUiState.Failed(FailReason.UNSUPPORTED_TYPE)
+                else -> publish(epoch, ConvertUiState.Failed(FailReason.UNSUPPORTED_TYPE))
             }
         }
     }
@@ -292,6 +327,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
      * Mode re-write a corrected model without touching the source again.
      */
     private fun convertPicked(
+        epoch: Int,
         uri: Uri,
         source: ConvertUiState.Picked,
         extension: String,
@@ -303,31 +339,37 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() }
         }.getOrNull()
         if (input == null) {
-            _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
+            publish(epoch, ConvertUiState.Failed(FailReason.READ_ERROR))
             return
         }
         val model = try {
             read(input)
         } catch (e: UnconvertibleContent) {
-            _state.value = ConvertUiState.Failed(e.reason)
+            publish(epoch, ConvertUiState.Failed(e.reason))
             return
         } catch (e: AndroidPdfReader.EncryptedDocument) {
-            _state.value = ConvertUiState.Failed(FailReason.ENCRYPTED_PDF)
+            publish(epoch, ConvertUiState.Failed(FailReason.ENCRYPTED_PDF))
             return
         } catch (e: AndroidOcrReader.Cancelled) {
-            _state.value = pickedFile?.meta ?: ConvertUiState.Idle
+            publish(epoch, pickedFile?.meta ?: ConvertUiState.Idle)
             return
         } catch (e: OutOfMemoryError) {
             // Rendering a page to a bitmap can exhaust the heap on a big
             // document. An Error is not an Exception, so without this the
             // process would simply die, taking the work and the error
             // message with it.
-            _state.value = ConvertUiState.Failed(FailReason.TOO_LARGE)
+            publish(epoch, ConvertUiState.Failed(FailReason.TOO_LARGE))
             return
         } catch (e: Exception) {
-            _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
+            publish(epoch, ConvertUiState.Failed(FailReason.READ_ERROR))
             return
         }
+        // Superseded by a newer pick while reading: leave every shared field
+        // to the conversion that now owns them.
+        if (epoch != pickEpoch) return
+
+        val base = source.fileName.substringBeforeLast('.').ifEmpty { "converted" }
+        outputName = "$base.$extension"
         lastModel = model
         lastWriter = write
         lastMimeType = mimeType
@@ -337,17 +379,15 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         val output = try {
             write(model)
         } catch (e: OutOfMemoryError) {
-            _state.value = ConvertUiState.Failed(FailReason.TOO_LARGE)
+            publish(epoch, ConvertUiState.Failed(FailReason.TOO_LARGE))
             return
         } catch (e: Exception) {
             // Writing failed, not reading: saying "couldn't read that file"
             // would send the user to re-pick a file that was read fine.
-            _state.value = ConvertUiState.Failed(FailReason.WRITE_ERROR)
+            publish(epoch, ConvertUiState.Failed(FailReason.WRITE_ERROR))
             return
         }
-        val base = source.fileName.substringBeforeLast('.').ifEmpty { "converted" }
-        outputName = "$base.$extension"
-        _state.value = ConvertUiState.ReadyToSave(outputName, mimeType, output)
+        publish(epoch, ConvertUiState.Converted(outputName, mimeType, output, needsReview()))
     }
 
     /**
@@ -364,15 +404,16 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         lastOperation = ::convertWithOcr
         _state.value = ConvertUiState.Converting()
         ocrCancelled.set(false)
+        val epoch = pickEpoch
         viewModelScope.launch(Dispatchers.IO) {
             convertPicked(
-                uri, source, "docx", DocxWriter.MIME_TYPE,
+                epoch, uri, source, "docx", DocxWriter.MIME_TYPE,
                 read = { bytes ->
                     val model = AndroidOcrReader(getApplication()).recognize(
                         bytes = bytes,
                         languages = ocrLanguages(),
                         onPage = { page, pageCount ->
-                            _state.value = ConvertUiState.Converting(page, pageCount)
+                            publish(epoch, ConvertUiState.Converting(page, pageCount))
                         },
                         shouldContinue = { !ocrCancelled.get() },
                     )
@@ -412,9 +453,10 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         val (uri, source) = pickedFile ?: return
         lastOperation = ::exportPdf
         _state.value = ConvertUiState.Converting()
+        val epoch = pickEpoch
         viewModelScope.launch(Dispatchers.IO) {
             convertPicked(
-                uri, source, "pdf", PDF_MIME,
+                epoch, uri, source, "pdf", PDF_MIME,
                 read = { bytes -> modelOf(bytes, source) },
                 write = { model -> PdfFileExporter.render(model) },
             )
@@ -430,23 +472,24 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         val (uri, source) = pickedFile ?: return
         lastOperation = ::printPdf
         _state.value = ConvertUiState.Converting()
+        val epoch = pickEpoch
         viewModelScope.launch(Dispatchers.IO) {
             val input = runCatching {
                 getApplication<Application>().contentResolver.openInputStream(uri)
                     ?.use { it.readBytes() }
             }.getOrNull()
             if (input == null) {
-                _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
+                publish(epoch, ConvertUiState.Failed(FailReason.READ_ERROR))
                 return@launch
             }
             val jobName = source.fileName.substringBeforeLast('.').ifEmpty { "document" }
             try {
                 val html = HtmlWriter.write(modelOf(input, source), jobName)
-                _state.value = ConvertUiState.ReadyToPrint(html, jobName)
+                publish(epoch, ConvertUiState.ReadyToPrint(html, jobName))
             } catch (e: UnconvertibleContent) {
-                _state.value = ConvertUiState.Failed(e.reason)
+                publish(epoch, ConvertUiState.Failed(e.reason))
             } catch (e: Exception) {
-                _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
+                publish(epoch, ConvertUiState.Failed(FailReason.READ_ERROR))
             }
         }
     }
@@ -461,19 +504,36 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         _state.value = pickedFile?.meta ?: ConvertUiState.Idle
     }
 
+    /** The reader asked to save the finished conversion. */
+    fun requestSave() {
+        val converted = _state.value as? ConvertUiState.Converted ?: return
+        _state.value = ConvertUiState.ReadyToSave(
+            converted.suggestedName,
+            converted.mimeType,
+            converted.bytes,
+        )
+    }
+
     /** The UI has launched the system save dialog for the current result. */
     fun onSaveDialogLaunched() {
         val ready = _state.value as? ConvertUiState.ReadyToSave ?: return
-        _state.value =
-            ConvertUiState.AwaitingSave(ready.suggestedName, ready.mimeType, ready.bytes)
+        pendingSave = ready
+        _state.value = ConvertUiState.AwaitingSave
+    }
+
+    /** The system had no save dialog, or no print service, to offer. */
+    fun onSystemUiUnavailable() {
+        pendingSave = null
+        _state.value = ConvertUiState.Failed(FailReason.WRITE_ERROR)
     }
 
     /** Result of the system "create document" dialog; null = user cancelled. */
     fun onSaveTarget(target: Uri?) {
-        // The payload of the dialog that just closed — not whatever the most
-        // recent conversion happens to have left behind.
-        val awaiting = _state.value as? ConvertUiState.AwaitingSave
-        val bytes = awaiting?.bytes
+        // The payload of the dialog that just closed — not whatever the
+        // screen has moved on to in the meantime.
+        val pending = pendingSave
+        pendingSave = null
+        val bytes = pending?.bytes
         if (target == null || bytes == null) {
             if (target != null) {
                 // The dialog created a document but the conversion is gone
@@ -487,7 +547,11 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
             }
-            _state.value = pickedFile?.meta ?: ConvertUiState.Idle
+            // Dismissing the dialog must not discard the conversion: offer
+            // it again rather than making the reader convert a second time.
+            _state.value = pending?.let {
+                ConvertUiState.Converted(it.suggestedName, it.mimeType, it.bytes, needsReview())
+            } ?: pickedFile?.meta ?: ConvertUiState.Idle
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -501,8 +565,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             }.getOrDefault(false)
             _state.value = if (ok) {
                 ConvertUiState.Saved(
-                    fileName = awaiting.suggestedName,
-                    needsReview = lastReport?.reviewables?.isNotEmpty() == true,
+                    fileName = pending.suggestedName,
+                    needsReview = needsReview(),
                 )
             } else {
                 ConvertUiState.Failed(FailReason.WRITE_ERROR)

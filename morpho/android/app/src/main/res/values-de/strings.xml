@@ -56,4 +56,6 @@
     <string name="encrypted_pdf">Dieses PDF ist passwortgeschützt. Öffnen Sie es in einer PDF-App, entfernen Sie den Schutz, und versuchen Sie es erneut.</string>
     <string name="ocr_empty">Aus diesem Scan konnte nichts gelesen werden. Er ist möglicherweise leer oder in einer Schrift, für die Morpho noch kein Modell hat.</string>
     <string name="too_large">Dieses Dokument braucht mehr Speicher, als dieses Gerät hat. Versuchen Sie eine kleinere Datei, oder teilen Sie sie auf.</string>
+    <string name="converted_ready">Konvertiert – bereit zum Speichern.</string>
+    <string name="save_file">Datei speichern</string>
 </resources>

@@ -78,14 +78,24 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                     ConvertViewModel.PDF_MIME -> savePdfLauncher
                     else -> saveDocxLauncher
                 }
-                launcher.launch(current.suggestedName)
-                // Leave ReadyToSave immediately: recreation (rotation, process
-                // restore) must not launch a second save dialog over the open one.
-                viewModel.onSaveDialogLaunched()
+                // A device with no document picker, or a disabled WebView
+                // package, throws here — and an exception escaping a
+                // LaunchedEffect takes the whole composition down with it.
+                val launched = runCatching { launcher.launch(current.suggestedName) }.isSuccess
+                if (launched) {
+                    // Leave ReadyToSave immediately: recreation (rotation,
+                    // process restore) must not launch a second dialog over
+                    // the open one.
+                    viewModel.onSaveDialogLaunched()
+                } else {
+                    viewModel.onSystemUiUnavailable()
+                }
             }
             is ConvertUiState.ReadyToPrint -> {
-                printLauncher.print(current.html, current.jobName)
-                viewModel.onPrintHandedOff()
+                val printed = runCatching {
+                    printLauncher.print(current.html, current.jobName)
+                }.isSuccess
+                if (printed) viewModel.onPrintHandedOff() else viewModel.onSystemUiUnavailable()
             }
             else -> {}
         }
@@ -145,6 +155,7 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                         onOcr = viewModel::convertWithOcr,
                         onReview = viewModel::showReview,
                         onCancel = viewModel::cancelOcr,
+                        onSave = viewModel::requestSave,
                     )
                 }
             }
@@ -188,6 +199,22 @@ private fun StateContent(state: ConvertUiState) {
         is ConvertUiState.ReadyToPrint -> {
             LinearProgressIndicator(Modifier.fillMaxWidth())
             Text(stringResource(R.string.converting))
+        }
+
+        is ConvertUiState.Converted -> {
+            Text(
+                text = stringResource(R.string.converted_ready),
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(state.suggestedName)
+            if (state.needsReview) {
+                Text(
+                    text = stringResource(R.string.fidelity_review),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
 
         is ConvertUiState.Saved -> {
@@ -247,6 +274,7 @@ private fun StateActions(
     onOcr: () -> Unit,
     onReview: () -> Unit,
     onCancel: () -> Unit,
+    onSave: () -> Unit,
 ) {
     when (state) {
         is ConvertUiState.Idle ->
@@ -279,6 +307,18 @@ private fun StateActions(
                 TextButton(onClick = onPrint, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.print_document))
                 }
+            }
+            TextButton(onClick = onPick, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.pick_other))
+            }
+        }
+
+        is ConvertUiState.Converted -> {
+            Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.save_file))
+            }
+            TextButton(onClick = onReview, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.review_open))
             }
             TextButton(onClick = onPick, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.pick_other))

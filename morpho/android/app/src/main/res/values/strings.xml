@@ -57,4 +57,6 @@
     <string name="encrypted_pdf">This PDF is password-protected. Open it in a PDF app, remove the password, then try again.</string>
     <string name="ocr_empty">Nothing could be read from this scan. It may be blank, or in a script Morpho has no model for yet.</string>
     <string name="too_large">This document needs more memory than this device has. Try a smaller file, or split it into parts.</string>
+    <string name="converted_ready">Converted — ready to save.</string>
+    <string name="save_file">Save file</string>
 </resources>

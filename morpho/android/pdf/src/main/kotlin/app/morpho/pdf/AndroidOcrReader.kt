@@ -73,6 +73,10 @@ class AndroidOcrReader(private val context: Context) {
                     } finally {
                         bitmap.recycle()
                     }
+                    // Again after the page: the check above already passed
+                    // for the page in flight, and on a single-page document
+                    // that is the only check there would ever be.
+                    if (!shouldContinue()) throw Cancelled()
                 }
             } finally {
                 tess.recycle()
@@ -121,8 +125,15 @@ class AndroidOcrReader(private val context: Context) {
             // non-empty file that the length check above skips forever after,
             // breaking OCR permanently until the user clears app data.
             val partial = File(tessdata, "$language$TRAINED_DATA_SUFFIX.part")
-            context.assets.open("$TESSDATA_DIR/$language$TRAINED_DATA_SUFFIX").use { input ->
-                partial.outputStream().use { output -> input.copyTo(output) }
+            try {
+                context.assets.open("$TESSDATA_DIR/$language$TRAINED_DATA_SUFFIX").use { input ->
+                    partial.outputStream().use { output -> input.copyTo(output) }
+                }
+            } catch (e: Exception) {
+                // Most likely the device is out of space; do not leave
+                // megabytes of half-copy behind on a device that just said so.
+                partial.delete()
+                throw e
             }
             if (!partial.renameTo(target)) {
                 partial.delete()

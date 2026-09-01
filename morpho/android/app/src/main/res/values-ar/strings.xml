@@ -56,4 +56,6 @@
     <string name="encrypted_pdf">ملف PDF هذا محمي بكلمة مرور. افتحه في تطبيق PDF وأزل الحماية ثم أعد المحاولة.</string>
     <string name="ocr_empty">تعذّرت قراءة أي شيء من هذا المسح الضوئي. قد يكون فارغًا أو بخط لا يملك مورفو نموذجًا له بعد.</string>
     <string name="too_large">يحتاج هذا المستند إلى ذاكرة أكبر مما يتوفر في هذا الجهاز. جرّب ملفًا أصغر أو قسّمه إلى أجزاء.</string>
+    <string name="converted_ready">تم التحويل — جاهز للحفظ.</string>
+    <string name="save_file">احفظ الملف</string>
 </resources>
