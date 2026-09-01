@@ -24,7 +24,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
@@ -44,6 +46,14 @@ private val inputMimeTypes = arrayOf(
 fun HomeScreen(viewModel: ConvertViewModel) {
     val state by viewModel.state.collectAsState()
     val review by viewModel.review.collectAsState()
+
+    // Local state: which screen is showing is not worth surviving process
+    // death, unlike a conversion.
+    var showAbout by remember { mutableStateOf(false) }
+    if (showAbout) {
+        AboutScreen(onClose = { showAbout = false })
+        return
+    }
 
     val openReview = review
     if (openReview != null) {
@@ -143,6 +153,9 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            TextButton(onClick = { showAbout = true }) {
+                Text(stringResource(R.string.about_open))
+            }
         }
     }
 }

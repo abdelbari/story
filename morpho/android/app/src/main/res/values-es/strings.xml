@@ -46,4 +46,11 @@
     <string name="review_as_h1">T1</string>
     <string name="review_as_h2">T2</string>
     <string name="review_as_h3">T3</string>
+    <string name="about_open">Acerca de y licencias</string>
+    <string name="about_title">Acerca de Morpho</string>
+    <string name="about_version">Versión %1$s</string>
+    <string name="about_privacy_title">Tus documentos nunca salen de este dispositivo</string>
+    <string name="about_privacy_body">Morpho no tiene ningún permiso de internet, así que no tiene forma de enviar tus documentos a ninguna parte, ni siquiera por accidente. Todo, incluida la lectura de páginas escaneadas, ocurre en este teléfono. No se recopila nada, y no hay cuenta ni servidor.</string>
+    <string name="about_components_title">Componentes de código abierto</string>
+    <string name="about_license_title">Licencia Apache 2.0</string>
 </resources>

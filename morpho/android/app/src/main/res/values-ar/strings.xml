@@ -46,4 +46,11 @@
     <string name="review_as_h1">عنوان ١</string>
     <string name="review_as_h2">عنوان ٢</string>
     <string name="review_as_h3">عنوان ٣</string>
+    <string name="about_open">حول التطبيق والتراخيص</string>
+    <string name="about_title">حول مورفو</string>
+    <string name="about_version">الإصدار %1$s</string>
+    <string name="about_privacy_title">مستنداتك لا تغادر هذا الجهاز</string>
+    <string name="about_privacy_body">لا يملك مورفو إذن الإنترنت إطلاقًا، فلا سبيل لديه لإرسال مستنداتك إلى أي مكان — ولا حتى عن طريق الخطأ. كل شيء، بما في ذلك قراءة الصفحات الممسوحة ضوئيًا، يجري على هذا الهاتف. لا يُجمع أي شيء، ولا يوجد حساب ولا خادم.</string>
+    <string name="about_components_title">المكوّنات مفتوحة المصدر</string>
+    <string name="about_license_title">رخصة أباتشي 2.0</string>
 </resources>

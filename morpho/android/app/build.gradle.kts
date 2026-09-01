@@ -67,6 +67,8 @@ android {
 
     buildFeatures {
         compose = true
+        // The About screen shows the version it was built from.
+        buildConfig = true
     }
 }
 

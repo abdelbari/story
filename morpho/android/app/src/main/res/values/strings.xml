@@ -47,4 +47,11 @@
     <string name="review_as_h1">H1</string>
     <string name="review_as_h2">H2</string>
     <string name="review_as_h3">H3</string>
+    <string name="about_open">About &amp; licenses</string>
+    <string name="about_title">About Morpho</string>
+    <string name="about_version">Version %1$s</string>
+    <string name="about_privacy_title">Your documents never leave this device</string>
+    <string name="about_privacy_body">Morpho has no internet permission at all, so it has no way to send your documents anywhere — not even by accident. Everything, including reading scanned pages, happens on this phone. Nothing is collected, and there is no account and no server.</string>
+    <string name="about_components_title">Open-source components</string>
+    <string name="about_license_title">Apache License 2.0</string>
 </resources>
