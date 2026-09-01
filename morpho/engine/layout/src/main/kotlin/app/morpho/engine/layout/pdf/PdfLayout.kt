@@ -16,7 +16,6 @@ import app.morpho.engine.layout.TextRun
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
 
 /**
  * Untagged-PDF layout heuristics: finds table regions from cell-column
@@ -32,12 +31,11 @@ import kotlin.math.roundToInt
  * right-to-left character; it also cannot tell a first-line indent from a
  * block indent yet.
  *
- * Headings: the body size is the median font size over the non-table lines;
- * a cluster of at most [MAX_HEADING_LINES] lines totalling at most
- * [SHORT_LINE_MAX_CHARS] characters whose font size reaches
- * [HEADING_SIZE_FACTOR] times the body size becomes a heading. Distinct
- * heading sizes rank descending onto HEADING_1/2/3; smaller heading sizes —
- * and every line of a document set in a single size — stay body.
+ * Headings: the body size is the median font size over the non-table lines,
+ * and a cluster of at most [MAX_HEADING_LINES] lines that [HeadingSizes]
+ * accepts as short enough and large enough becomes a heading. [HeadingSizes]
+ * also ranks the distinct heading sizes onto HEADING_1/2/3, so a document
+ * set in a single size keeps every line as body.
  *
  * Paragraph and cell direction comes from the first strongly-directional
  * character, exactly like [app.morpho.engine.layout.PlainTextImporter].
@@ -49,9 +47,7 @@ object PdfLayout {
 
     private const val PARAGRAPH_GAP_FACTOR = 1.6f
     private const val FONT_CHANGE_FACTOR = 1.2f
-    private const val HEADING_SIZE_FACTOR = 1.2f
     private const val INDENT_SHIFT_PT = 18f
-    private const val SHORT_LINE_MAX_CHARS = 80
     private const val MAX_HEADING_LINES = 2
     /** Pitch stand-in for pages without measurable gaps, in font sizes. */
     private const val FALLBACK_PITCH_FACTOR = 1.3f
@@ -75,7 +71,7 @@ object PdfLayout {
         if (cursor < lines.size) stretches += lines.subList(cursor, lines.size)
 
         val textLines = stretches.flatten()
-        val bodySize = median((textLines.ifEmpty { lines }).map { it.maxFontSize })
+        val bodySize = HeadingSizes.median((textLines.ifEmpty { lines }).map { it.maxFontSize })
         val clusters = stretches.map(::cluster)
         val kindBySize = headingKinds(clusters.flatten(), bodySize)
 
@@ -91,7 +87,7 @@ object PdfLayout {
         for (clusterLines in clusters.flatten()) {
             val kind =
                 if (isHeadingCandidate(clusterLines, bodySize)) {
-                    kindBySize[sizeKey(fontSize(clusterLines))] ?: ParagraphKind.BODY
+                    kindBySize[HeadingSizes.sizeKey(fontSize(clusterLines))] ?: ParagraphKind.BODY
                 } else {
                     ParagraphKind.BODY
                 }
@@ -155,7 +151,7 @@ object PdfLayout {
     private fun cluster(lines: List<PdfLine>): List<List<PdfLine>> {
         if (lines.isEmpty()) return emptyList()
         val pitchByPage = lines.groupBy { it.page }.mapValues { (_, pageLines) ->
-            median(pageLines.zipWithNext { a, b -> b.baselineY - a.baselineY }.filter { it > 0f })
+            HeadingSizes.median(pageLines.zipWithNext { a, b -> b.baselineY - a.baselineY }.filter { it > 0f })
         }
         val clusters = mutableListOf(mutableListOf(lines.first()))
         for ((previous, line) in lines.zipWithNext()) {
@@ -191,29 +187,13 @@ object PdfLayout {
     ): Map<Int, ParagraphKind> =
         clusters
             .filter { isHeadingCandidate(it, bodySize) }
-            .map { sizeKey(fontSize(it)) }
-            .distinct()
-            .sortedDescending()
-            .zip(listOf(ParagraphKind.HEADING_1, ParagraphKind.HEADING_2, ParagraphKind.HEADING_3))
-            .toMap()
+            .let { candidates -> HeadingSizes.rank(candidates.map(::fontSize)) }
 
     private fun isHeadingCandidate(cluster: List<PdfLine>, bodySize: Float): Boolean =
-        bodySize > 0f &&
-            cluster.size <= MAX_HEADING_LINES &&
-            cluster.sumOf { it.text.length } <= SHORT_LINE_MAX_CHARS &&
-            fontSize(cluster) >= HEADING_SIZE_FACTOR * bodySize
+        cluster.size <= MAX_HEADING_LINES &&
+            HeadingSizes.isCandidate(fontSize(cluster), cluster.sumOf { it.text.length }, bodySize)
 
     private fun fontSize(cluster: List<PdfLine>): Float = cluster.maxOf { it.maxFontSize }
-
-    /** Half-point buckets so float noise cannot multiply heading levels. */
-    private fun sizeKey(size: Float): Int = (size * 2).roundToInt()
-
-    private fun median(values: List<Float>): Float {
-        if (values.isEmpty()) return 0f
-        val sorted = values.sorted()
-        val middle = sorted.size / 2
-        return if (sorted.size % 2 == 1) sorted[middle] else (sorted[middle - 1] + sorted[middle]) / 2f
-    }
 
     private fun paragraph(text: String, kind: ParagraphKind, confidence: Float): Paragraph {
         val direction = Bidi.firstStrongDirection(text)

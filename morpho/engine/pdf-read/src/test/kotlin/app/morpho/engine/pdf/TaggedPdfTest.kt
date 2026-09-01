@@ -76,6 +76,8 @@ class TaggedPdfTest {
             parent: PDStructureElement,
             text: String,
             at: Float = -1f,
+            font: PDType1Font = PDType1Font.HELVETICA,
+            size: Float = 12f,
         ): PDStructureElement {
             val element = group(structType, parent)
             val mcid = nextMcid++
@@ -83,7 +85,7 @@ class TaggedPdfTest {
             properties.setInt(COSName.MCID, mcid)
             content.beginMarkedContent(COSName.P, PDPropertyList.create(properties))
             content.beginText()
-            content.setFont(PDType1Font.HELVETICA, 12f)
+            content.setFont(font, size)
             content.newLineAtOffset(72f, if (at >= 0f) at else y.also { y -= 18f })
             content.showText(text)
             content.endText()
@@ -266,4 +268,73 @@ class TaggedPdfTest {
             "fallback of a tagged PDF scores as untagged extraction",
         )
     }
+
+    @Test
+    fun `a tree that tags no headings falls back to type size`() {
+        // Word only tags H1 when the author used a heading style. A paper
+        // whose headings were made by hand arrives as a flat run of P.
+        val pdf = taggedPdf {
+            leaf(StandardStructureTypes.P, document, "The Title", size = 18f)
+            leaf(StandardStructureTypes.P, document, "Body text of the paper follows here.")
+            leaf(StandardStructureTypes.P, document, "More body text, same size as the rest.")
+        }
+        val paragraphs = paragraphs(pdf)
+        assertEquals(ParagraphKind.HEADING_1, paragraphs[0].style.kind)
+        assertEquals(ParagraphKind.BODY, paragraphs[1].style.kind)
+        assertEquals(ParagraphKind.BODY, paragraphs[2].style.kind)
+    }
+
+    @Test
+    fun `a bold line at body size becomes a heading below the larger title`() {
+        val pdf = taggedPdf {
+            leaf(StandardStructureTypes.P, document, "The Title", size = 18f)
+            leaf(StandardStructureTypes.P, document, "1. Introduction", font = PDType1Font.HELVETICA_BOLD)
+            leaf(StandardStructureTypes.P, document, "Body text of the paper follows here.")
+            leaf(StandardStructureTypes.P, document, "More body text, same size as the rest.")
+        }
+        val paragraphs = paragraphs(pdf)
+        assertEquals(ParagraphKind.HEADING_1, paragraphs[0].style.kind)
+        assertEquals(ParagraphKind.HEADING_2, paragraphs[1].style.kind)
+        assertEquals(ParagraphKind.BODY, paragraphs[2].style.kind)
+    }
+
+    @Test
+    fun `a tree that does tag a heading is trusted as it stands`() {
+        // The tags have spoken, so a large paragraph is a large paragraph.
+        val pdf = taggedPdf {
+            leaf(StandardStructureTypes.H1, document, "Tagged Title")
+            leaf(StandardStructureTypes.P, document, "Pull quote", size = 20f)
+            leaf(StandardStructureTypes.P, document, "Body text of the paper follows here.")
+        }
+        val paragraphs = paragraphs(pdf)
+        assertEquals(ParagraphKind.HEADING_1, paragraphs[0].style.kind)
+        assertEquals(ParagraphKind.BODY, paragraphs[1].style.kind)
+    }
+
+    @Test
+    fun `bold says nothing when most of the document is bold`() {
+        val pdf = taggedPdf {
+            leaf(StandardStructureTypes.P, document, "One bold line", font = PDType1Font.HELVETICA_BOLD)
+            leaf(StandardStructureTypes.P, document, "Two bold line", font = PDType1Font.HELVETICA_BOLD)
+            leaf(StandardStructureTypes.P, document, "Three bold line", font = PDType1Font.HELVETICA_BOLD)
+            leaf(StandardStructureTypes.P, document, "Plain line here")
+        }
+        assertTrue(paragraphs(pdf).all { it.style.kind == ParagraphKind.BODY })
+    }
+
+    @Test
+    fun `a long bold paragraph is not a heading`() {
+        val pdf = taggedPdf {
+            leaf(
+                StandardStructureTypes.P, document,
+                "A bold paragraph long enough to be prose rather than a heading, " +
+                    "which is the whole point of the length test applied here.",
+                font = PDType1Font.HELVETICA_BOLD,
+            )
+            leaf(StandardStructureTypes.P, document, "Body text of the paper follows here.")
+            leaf(StandardStructureTypes.P, document, "More body text, same size as the rest.")
+        }
+        assertTrue(paragraphs(pdf).all { it.style.kind == ParagraphKind.BODY })
+    }
+
 }

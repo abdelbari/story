@@ -13,6 +13,7 @@ import app.morpho.engine.layout.TableCell
 import app.morpho.engine.layout.TableRow
 import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
+import app.morpho.engine.layout.pdf.HeadingSizes
 import app.morpho.engine.layout.pdf.PdfImage
 import org.apache.pdfbox.contentstream.operator.Operator
 import org.apache.pdfbox.contentstream.operator.OperatorProcessor
@@ -112,6 +113,8 @@ internal object StructureTreeReader {
     private class MarkedContentIndex(doc: PDDocument) {
         private val pageIndexByPage = IdentityHashMap<COSDictionary, Int>()
         private val textByPageAndMcid = HashMap<Long, String>()
+        private val sizeByPageAndMcid = HashMap<Long, Float>()
+        private val boldByPageAndMcid = HashMap<Long, Boolean>()
 
         init {
             for ((index, page) in doc.pages.withIndex()) {
@@ -126,10 +129,16 @@ internal object StructureTreeReader {
 
         private fun collect(content: PDMarkedContent, pageIndex: Int) {
             val text = StringBuilder()
+            var size = 0f
+            var bold = true
             fun gather(mc: PDMarkedContent) {
                 for (item in mc.contents.orEmpty()) {
                     when (item) {
-                        is TextPosition -> text.append(item.unicode)
+                        is TextPosition -> {
+                            text.append(item.unicode)
+                            size = maxOf(size, item.fontSizeInPt)
+                            if (!item.unicode.isNullOrBlank() && !isBold(item)) bold = false
+                        }
                         is PDMarkedContent -> gather(item)
                     }
                 }
@@ -137,6 +146,8 @@ internal object StructureTreeReader {
             gather(content)
             if (content.mcid >= 0 && text.isNotEmpty()) {
                 textByPageAndMcid[key(pageIndex, content.mcid)] = text.toString()
+                sizeByPageAndMcid[key(pageIndex, content.mcid)] = size
+                boldByPageAndMcid[key(pageIndex, content.mcid)] = bold
             }
             // Nested marked content carries its own MCIDs too.
             for (item in content.contents.orEmpty()) {
@@ -147,6 +158,29 @@ internal object StructureTreeReader {
         fun textFor(page: PDPage?, mcid: Int): String {
             val pageIndex = page?.cosObject?.let(pageIndexByPage::get) ?: return ""
             return textByPageAndMcid[key(pageIndex, mcid)].orEmpty()
+        }
+
+        /** Largest type size drawn under [mcid], or 0 when it drew no text. */
+        fun sizeFor(page: PDPage?, mcid: Int): Float {
+            val pageIndex = page?.cosObject?.let(pageIndexByPage::get) ?: return 0f
+            return sizeByPageAndMcid[key(pageIndex, mcid)] ?: 0f
+        }
+
+        /** True when every visible glyph under [mcid] was drawn in a bold face. */
+        fun boldFor(page: PDPage?, mcid: Int): Boolean {
+            val pageIndex = page?.cosObject?.let(pageIndexByPage::get) ?: return false
+            return boldByPageAndMcid[key(pageIndex, mcid)] ?: false
+        }
+
+        /**
+         * Whether [position] was drawn in a bold face. PDFs carry no weight
+         * of their own, so this reads the embedded font's name — the same
+         * evidence a reader has, and what the producer wrote there when the
+         * author pressed bold. Subset prefixes ("ABCDEE+") do not interfere.
+         */
+        private fun isBold(position: TextPosition): Boolean {
+            val name = position.font?.name ?: return false
+            return name.contains("Bold", ignoreCase = true)
         }
 
         /** 1-based page number of a structure element's page, if known. */
@@ -164,6 +198,10 @@ internal object StructureTreeReader {
     ) {
         val blocks = mutableListOf<Block>()
         private var sawText = false
+        /** Type size of each paragraph block, by its index in [blocks]. */
+        private val sizeByBlockIndex = HashMap<Int, Float>()
+        /** Whether each paragraph block was set wholly in bold. */
+        private val boldByBlockIndex = HashMap<Int, Boolean>()
         private val imageByPageAndMcid = HashMap<Long, PdfImage>().apply {
             for (image in images) {
                 if (image.mcid >= 0) putIfAbsent(imageKey(image.page, image.mcid), image)
@@ -190,6 +228,9 @@ internal object StructureTreeReader {
                     heightPx = image.heightPx,
                     confidence = CONFIDENCE,
                 )
+            }
+            if (blocks.none { it is Paragraph && it.style.kind != ParagraphKind.BODY }) {
+                rankHeadingsBySize()
             }
             val paragraphs = blocks.filterIsInstance<Paragraph>()
             val rtl = paragraphs.count { it.style.direction == TextDirection.RTL }
@@ -246,6 +287,8 @@ internal object StructureTreeReader {
             if (text.isEmpty()) return
             sawText = true
             val direction = Bidi.firstStrongDirection(text)
+            sizeByBlockIndex[blocks.size] = sizeOf(element)
+            boldByBlockIndex[blocks.size] = boldOf(element)
             blocks += Paragraph(
                 runs = listOf(TextRun(text = text, direction = direction)),
                 style = ParagraphStyle(kind = kind, direction = direction, listMarker = marker),
@@ -381,6 +424,105 @@ internal object StructureTreeReader {
             // down the pipeline can tell that from logical order, so it is
             // reconstructed here, at the one place tagged text is assembled.
             return Bidi.visualToLogical(sb.toString())
+        }
+
+        /** True when every marked-content run under [element] is bold. */
+        private fun boldOf(element: PDStructureElement): Boolean {
+            var sawRun = false
+            var bold = true
+            fun gather(node: PDStructureElement, depth: Int) {
+                if (depth > MAX_DEPTH) throw TooDeepException()
+                fun mark(page: PDPage?, mcid: Int) {
+                    if (texts.textFor(page, mcid).isBlank()) return
+                    sawRun = true
+                    if (!texts.boldFor(page, mcid)) bold = false
+                }
+                for (kid in node.kids.orEmpty()) {
+                    when (kid) {
+                        is PDStructureElement -> gather(kid, depth + 1)
+                        is Int -> mark(node.page, kid)
+                        is COSInteger -> mark(node.page, kid.intValue())
+                        is PDMarkedContentReference -> mark(kid.page ?: node.page, kid.mcid)
+                        is PDMarkedContent -> mark(node.page, kid.mcid)
+                    }
+                }
+            }
+            gather(element, 0)
+            return sawRun && bold
+        }
+
+        /** Largest type size drawn anywhere under [element]. */
+        private fun sizeOf(element: PDStructureElement): Float {
+            var size = 0f
+            fun gather(node: PDStructureElement, depth: Int) {
+                if (depth > MAX_DEPTH) throw TooDeepException()
+                for (kid in node.kids.orEmpty()) {
+                    when (kid) {
+                        is PDStructureElement -> gather(kid, depth + 1)
+                        is Int -> size = maxOf(size, texts.sizeFor(node.page, kid))
+                        is COSInteger -> size = maxOf(size, texts.sizeFor(node.page, kid.intValue()))
+                        is PDMarkedContentReference ->
+                            size = maxOf(size, texts.sizeFor(kid.page ?: node.page, kid.mcid))
+                        is PDMarkedContent -> size = maxOf(size, texts.sizeFor(node.page, kid.mcid))
+                    }
+                }
+            }
+            gather(element, 0)
+            return size
+        }
+
+        /**
+         * Ranks paragraphs onto heading levels by type size, for a structure
+         * tree that tagged no headings at all.
+         *
+         * Word tags a heading as H1 only when the author used a heading
+         * style. Plenty of real documents — an academic paper whose headings
+         * were made by hand, with bold and a larger size — carry none, and
+         * arrive as a flat run of P elements. The tags are then silent rather
+         * than authoritative, and size is the only evidence left, so it is
+         * read the same way an untagged file's would be.
+         *
+         * Applied only when the tree named no heading of its own: a document
+         * that does tag headings has said what it means, and a large first
+         * paragraph there is a large paragraph, not an unmarked title.
+         */
+        private fun rankHeadingsBySize() {
+            val sizes = blocks.indices.mapNotNull { sizeByBlockIndex[it] }.filter { it > 0f }
+            if (sizes.isEmpty()) return
+            val bodySize = HeadingSizes.median(sizes)
+            val candidates = blocks.indices.filter { index ->
+                val paragraph = blocks[index] as? Paragraph ?: return@filter false
+                val size = sizeByBlockIndex[index] ?: return@filter false
+                HeadingSizes.isCandidate(size, paragraph.text.length, bodySize)
+            }
+            if (candidates.isEmpty()) return
+            val kindBySize = HeadingSizes.rank(candidates.mapNotNull { sizeByBlockIndex[it] })
+            for (index in candidates) {
+                val paragraph = blocks[index] as? Paragraph ?: continue
+                val size = sizeByBlockIndex[index] ?: continue
+                val kind = kindBySize[HeadingSizes.sizeKey(size)] ?: continue
+                blocks[index] = paragraph.copy(style = paragraph.style.copy(kind = kind))
+            }
+            rankBoldHeadings(kindBySize)
+        }
+
+        /**
+         * Promotes short, wholly bold paragraphs that type size could not
+         * reach. A heading set in bold at the body's own size is invisible to
+         * a size comparison, and that is how most hand-formatted section
+         * headings are made.
+         */
+        private fun rankBoldHeadings(sizeRanked: Map<Int, ParagraphKind>) {
+            val paragraphIndices = blocks.indices.filter { blocks[it] is Paragraph }
+            val boldIndices = paragraphIndices.filter { boldByBlockIndex[it] == true }
+            if (!HeadingSizes.boldIsMeaningful(boldIndices.size, paragraphIndices.size)) return
+            val level = HeadingSizes.boldLevel(sizeRanked)
+            for (index in boldIndices) {
+                val paragraph = blocks[index] as? Paragraph ?: continue
+                if (paragraph.style.kind != ParagraphKind.BODY) continue
+                if (paragraph.text.length > HeadingSizes.MAX_CHARS) continue
+                blocks[index] = paragraph.copy(style = paragraph.style.copy(kind = level))
+            }
         }
 
         private fun childElements(element: PDStructureElement): List<PDStructureElement> =
