@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 sealed interface ConvertUiState {
     data object Idle : ConvertUiState
@@ -181,9 +182,25 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         _state.value = ConvertUiState.Converting
         viewModelScope.launch(Dispatchers.IO) {
             convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
-                DocxWriter.toByteArray(AndroidOcrReader(getApplication()).recognize(bytes))
+                DocxWriter.toByteArray(
+                    AndroidOcrReader(getApplication()).recognize(bytes, ocrLanguages())
+                )
             }
         }
+    }
+
+    /**
+     * The OCR language set follows the app language — a second model rides
+     * along so mixed documents still read: English with the RTL locale,
+     * Arabic with the English one. A per-scan language picker is a later
+     * refinement.
+     */
+    private fun ocrLanguages(): String = when (Locale.getDefault().language) {
+        "ar" -> "ara+eng"
+        "fr" -> "fra+eng"
+        "es" -> "spa+eng"
+        "de" -> "deu+eng"
+        else -> "eng+ara"
     }
 
     /** Text, Markdown or Word input → a real .pdf file via the save dialog. */

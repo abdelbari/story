@@ -12,7 +12,7 @@
     <string name="converting">جارٍ التحويل…</string>
     <string name="saved_ok">تم — حُفظ الملف.</string>
     <string name="retry">أعد المحاولة</string>
-    <string name="scanned_pdf">يبدو هذا ملف PDF ممسوحًا ضوئيًا دون طبقة نصية. يمكنك قراءته بالتعرف الضوئي على الجهاز (العربية والإنجليزية حاليًا).</string>
+    <string name="scanned_pdf">يبدو هذا ملف PDF ممسوحًا ضوئيًا دون طبقة نصية. يمكنك قراءته بالتعرف الضوئي على الجهاز بالكامل.</string>
     <string name="convert_with_ocr">اقرأ بالتعرف الضوئي وحوِّل</string>
     <string name="unsupported_type">نوع الملف هذا غير مدعوم بعد.</string>
     <string name="read_error">تعذّرت قراءة الملف. جرّب اختياره مجددًا.</string>

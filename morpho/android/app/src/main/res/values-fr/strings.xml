@@ -12,7 +12,7 @@
     <string name="converting">Conversion en cours…</string>
     <string name="saved_ok">Terminé — votre fichier est enregistré.</string>
     <string name="retry">Réessayer</string>
-    <string name="scanned_pdf">Ce PDF semble numérisé, sans couche de texte. Vous pouvez le lire par OCR sur l’appareil (arabe et anglais pour l’instant).</string>
+    <string name="scanned_pdf">Ce PDF semble numérisé, sans couche de texte. Vous pouvez le lire par OCR entièrement sur l’appareil.</string>
     <string name="convert_with_ocr">Lire par OCR et convertir</string>
     <string name="unsupported_type">Ce type de fichier n’est pas encore pris en charge.</string>
     <string name="read_error">Impossible de lire ce fichier. Réessayez de le choisir.</string>

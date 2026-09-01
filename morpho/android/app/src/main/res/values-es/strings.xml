@@ -12,7 +12,7 @@
     <string name="converting">Convirtiendo…</string>
     <string name="saved_ok">Listo — tu archivo está guardado.</string>
     <string name="retry">Reintentar</string>
-    <string name="scanned_pdf">Este PDF parece escaneado, sin capa de texto. Puedes leerlo con OCR en el dispositivo (árabe e inglés por ahora).</string>
+    <string name="scanned_pdf">Este PDF parece escaneado, sin capa de texto. Puedes leerlo con OCR completamente en el dispositivo.</string>
     <string name="convert_with_ocr">Leer con OCR y convertir</string>
     <string name="unsupported_type">Ese tipo de archivo aún no es compatible.</string>
     <string name="read_error">No se pudo leer el archivo. Intenta elegirlo de nuevo.</string>

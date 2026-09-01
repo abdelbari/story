@@ -14,9 +14,10 @@ import java.io.File
 /**
  * On-device OCR for scanned PDFs (milestone M3): pages render to bitmaps
  * through the PDFBox port and Tesseract 5 (Tesseract4Android) reads them —
- * fully offline, keeping the Zero-Upload guarantee. Arabic and English fast
- * models ship in the module's assets; Tesseract needs real files, so they
- * are copied once into the app's files directory before first use.
+ * fully offline, keeping the Zero-Upload guarantee. Fast models for all
+ * five app languages (ara, eng, fra, spa, deu) ship in the module's assets;
+ * Tesseract needs real files, so the requested ones are copied once into
+ * the app's files directory before first use.
  *
  * Recognized text flows through [PlainTextImporter], so paragraph splitting,
  * list detection and the UAX #9 direction pass all apply. Every block scores

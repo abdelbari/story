@@ -13,7 +13,7 @@
     <string name="converting">Converting…</string>
     <string name="saved_ok">Done — your file is saved.</string>
     <string name="retry">Try again</string>
-    <string name="scanned_pdf">This looks like a scanned PDF with no text layer. You can read it with on-device OCR (Arabic and English for now).</string>
+    <string name="scanned_pdf">This looks like a scanned PDF with no text layer. You can read it with fully on-device OCR.</string>
     <string name="convert_with_ocr">Read with OCR and convert</string>
     <string name="unsupported_type">That file type isn’t supported yet.</string>
     <string name="read_error">Couldn’t read that file. Try picking it again.</string>
