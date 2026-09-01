@@ -3,6 +3,7 @@ package app.morpho.engine.layout.pdf
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
+import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.ParagraphStyle
@@ -39,6 +40,9 @@ import kotlin.math.roundToInt
  *
  * Paragraph and cell direction comes from the first strongly-directional
  * character, exactly like [app.morpho.engine.layout.PlainTextImporter].
+ *
+ * Captured [PdfImage]s are interleaved with text and tables by their page
+ * and top edge, so figures land between the right paragraphs.
  */
 object PdfLayout {
 
@@ -51,42 +55,71 @@ object PdfLayout {
     /** Pitch stand-in for pages without measurable gaps, in font sizes. */
     private const val FALLBACK_PITCH_FACTOR = 1.3f
 
-    fun reconstruct(lines: List<PdfLine>, confidence: Float): DocumentModel {
+    fun reconstruct(
+        lines: List<PdfLine>,
+        confidence: Float,
+        images: List<PdfImage> = emptyList(),
+    ): DocumentModel {
         val regions = PdfTableDetector.detect(lines)
 
-        // Interleave text stretches and table regions in document order.
-        val stretches = mutableListOf<Pair<Int, List<PdfLine>>>() // insertion slot, lines
-        val orderedTables = mutableListOf<Pair<Int, Table>>()
+        // Text stretches between table regions, each remembering its lines.
+        val stretches = mutableListOf<List<PdfLine>>()
+        val tablesWithAnchor = mutableListOf<Pair<PdfLine, Table>>()
         var cursor = 0
-        var slot = 0
         for (region in regions) {
-            if (region.start > cursor) {
-                stretches += slot++ to lines.subList(cursor, region.start)
-            }
-            orderedTables += slot++ to tableOf(region, confidence)
+            if (region.start > cursor) stretches += lines.subList(cursor, region.start)
+            tablesWithAnchor += lines[region.start] to tableOf(region, confidence)
             cursor = region.end
         }
-        if (cursor < lines.size) stretches += slot++ to lines.subList(cursor, lines.size)
+        if (cursor < lines.size) stretches += lines.subList(cursor, lines.size)
 
-        val textLines = stretches.flatMap { it.second }
+        val textLines = stretches.flatten()
         val bodySize = median((textLines.ifEmpty { lines }).map { it.maxFontSize })
-        val clustersByStretch = stretches.map { (at, stretchLines) -> at to cluster(stretchLines) }
-        val kindBySize = headingKinds(clustersByStretch.flatMap { it.second }, bodySize)
+        val clusters = stretches.map(::cluster)
+        val kindBySize = headingKinds(clusters.flatten(), bodySize)
 
-        val bySlot = HashMap<Int, List<Block>>()
-        for ((at, table) in orderedTables) bySlot[at] = listOf(table)
-        for ((at, clusters) in clustersByStretch) {
-            bySlot[at] = clusters.map { clusterLines ->
-                val kind =
-                    if (isHeadingCandidate(clusterLines, bodySize)) {
-                        kindBySize[sizeKey(fontSize(clusterLines))] ?: ParagraphKind.BODY
-                    } else {
-                        ParagraphKind.BODY
-                    }
-                paragraph(clusterLines.joinToString(" ") { it.text }, kind, confidence)
-            }
+        // Every block gets a position anchor (page, y of its first line);
+        // captured images join the same stream and a stable sort interleaves
+        // them — text added first wins ties at identical coordinates.
+        class Positioned(val page: Int, val y: Float, val block: Block)
+
+        val positioned = mutableListOf<Positioned>()
+        for ((anchor, table) in tablesWithAnchor) {
+            positioned += Positioned(anchor.page, anchor.baselineY, table)
         }
-        val blocks = (0 until slot).flatMap { bySlot[it].orEmpty() }
+        for (clusterLines in clusters.flatten()) {
+            val kind =
+                if (isHeadingCandidate(clusterLines, bodySize)) {
+                    kindBySize[sizeKey(fontSize(clusterLines))] ?: ParagraphKind.BODY
+                } else {
+                    ParagraphKind.BODY
+                }
+            val first = clusterLines.first()
+            positioned += Positioned(
+                first.page,
+                first.baselineY,
+                paragraph(clusterLines.joinToString(" ") { it.text }, kind, confidence),
+            )
+        }
+        val textCount = positioned.size
+        positioned.sortWith(compareBy({ it.page }, { it.y }))
+        val imagesPositioned = images.map { image ->
+            Positioned(
+                image.page,
+                image.topY,
+                ImageBlock(
+                    bytes = image.bytes,
+                    mimeType = image.mimeType,
+                    widthPx = image.widthPx,
+                    heightPx = image.heightPx,
+                    confidence = confidence,
+                ),
+            )
+        }
+        val blocks = (positioned + imagesPositioned)
+            .sortedWith(compareBy({ it.page }, { it.y }))
+            .map { it.block }
+        check(textCount + imagesPositioned.size == blocks.size)
 
         val paragraphs = blocks.filterIsInstance<Paragraph>()
         val rtlCount = paragraphs.count { it.style.direction == TextDirection.RTL }

@@ -5,6 +5,7 @@ import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.layout.Table
+import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLayout
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.text.PDFTextStripper
@@ -45,23 +46,33 @@ class PdfReader {
             val confidence = if (tagged) 0.9f else 0.6f
 
             // Fast path: read structure straight from the tags when present.
+            // (Figures inside tagged PDFs are still to come; images are
+            // captured on the heuristic paths below.)
             val fromTags =
                 if (tagged) runCatching { StructureTreeReader.read(doc) }.getOrNull() else null
             if (fromTags != null) return fromTags
 
+            val images = runCatching { ImageCapture().capture(doc) }.getOrDefault(emptyList())
             val lines = runCatching { PositionTextStripper().capture(doc) }
                 .getOrDefault(emptyList())
             if (lines.isNotEmpty()) {
-                PdfLayout.reconstruct(lines, confidence)
+                PdfLayout.reconstruct(lines, confidence, images)
             } else {
-                plainTextFallback(doc, confidence)
+                plainTextFallback(doc, confidence, images)
             }
         }
 
-    private fun plainTextFallback(doc: PDDocument, confidence: Float): DocumentModel {
+    private fun plainTextFallback(
+        doc: PDDocument,
+        confidence: Float,
+        images: List<PdfImage>,
+    ): DocumentModel {
         val stripper = PDFTextStripper()
         stripper.sortByPosition = true
         val base = PlainTextImporter.import(stripper.getText(doc))
+        val imageBlocks = images
+            .sortedWith(compareBy({ it.page }, { it.topY }))
+            .map { ImageBlock(it.bytes, it.mimeType, it.widthPx, it.heightPx, confidence) }
         return base.copy(
             blocks = base.blocks.map { block ->
                 when (block) {
@@ -69,7 +80,7 @@ class PdfReader {
                     is Table -> block.copy(confidence = confidence)
                     is ImageBlock -> block
                 }
-            }
+            } + imageBlocks
         )
     }
 }

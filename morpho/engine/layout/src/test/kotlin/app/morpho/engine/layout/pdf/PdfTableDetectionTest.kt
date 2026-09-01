@@ -135,3 +135,52 @@ class PdfTableDetectionTest {
         assertEquals(1, PdfTableDetector.cellsOf(bare).size)
     }
 }
+
+/** Image interleaving by position — synthetic geometry, no real PDF. */
+class PdfImageInterleaveTest {
+
+    private fun textLine(text: String, y: Float, page: Int = 1): PdfLine =
+        PdfLine(text, 72f, y, 12f, page)
+
+    private fun image(y: Float, page: Int = 1) =
+        PdfImage(page, y, byteArrayOf(9, 9), "image/png", 40, 20)
+
+    @org.junit.jupiter.api.Test
+    fun `an image lands between the paragraphs around it`() {
+        val model = PdfLayout.reconstruct(
+            lines = listOf(
+                textLine("above line one", 100f),
+                textLine("above line two", 115f),
+                textLine("below line one", 400f),
+                textLine("below line two", 415f),
+            ),
+            confidence = 0.6f,
+            images = listOf(image(y = 200f)),
+        )
+        org.junit.jupiter.api.Assertions.assertEquals(
+            listOf("Paragraph", "ImageBlock", "Paragraph"),
+            model.blocks.map { it.javaClass.simpleName },
+        )
+        val img = model.blocks[1] as app.morpho.engine.layout.ImageBlock
+        org.junit.jupiter.api.Assertions.assertEquals(0.6f, img.confidence)
+    }
+
+    @org.junit.jupiter.api.Test
+    fun `page order beats y order`() {
+        val model = PdfLayout.reconstruct(
+            lines = listOf(textLine("page two text", 100f, page = 2)),
+            confidence = 0.6f,
+            images = listOf(image(y = 700f, page = 1)),
+        )
+        org.junit.jupiter.api.Assertions.assertEquals(
+            listOf("ImageBlock", "Paragraph"),
+            model.blocks.map { it.javaClass.simpleName },
+        )
+    }
+
+    @org.junit.jupiter.api.Test
+    fun `images alone still produce a model`() {
+        val model = PdfLayout.reconstruct(emptyList(), 0.6f, listOf(image(y = 100f)))
+        org.junit.jupiter.api.Assertions.assertEquals(1, model.blocks.size)
+    }
+}
