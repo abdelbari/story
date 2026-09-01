@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
+import android.graphics.text.LineBreaker
 import android.text.Layout
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -284,7 +285,10 @@ internal object PdfFileExporter {
             )
             .setLineSpacing(0f, 1.25f)
         if (alignment == Alignment.JUSTIFY) {
-            builder.setJustificationMode(Layout.JUSTIFICATION_MODE_INTER_WORD)
+            // The LineBreaker constant is what setJustificationMode is
+            // annotated with; it inlines at compile time, so referencing it
+            // needs no API 29 at runtime.
+            builder.setJustificationMode(LineBreaker.JUSTIFICATION_MODE_INTER_WORD)
         }
         return builder.build()
     }
