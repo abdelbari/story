@@ -1,10 +1,12 @@
 package app.morpho.engine.layout.pdf
 
+import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.LineJoiner
+import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.ParagraphStyle
@@ -51,12 +53,56 @@ object PdfLayout {
     private const val MAX_HEADING_LINES = 2
     /** Pitch stand-in for pages without measurable gaps, in font sizes. */
     private const val FALLBACK_PITCH_FACTOR = 1.3f
+    /** A line within this share of a page's height of its top or bottom edge sits in the margin. */
+    private const val MARGIN_BAND_SHARE = 0.12f
+    /** A line repeating in the margin of this many pages is a running header or footer. */
+    private const val REPEATS_TO_BE_RUNNING = 3
+    /** Baselines this far apart are the same line of the page, on another page. */
+    private const val SAME_PLACE_PT = 3f
+    /** A line whose middle is within this share of the page width of the block's middle is centred… */
+    private const val CENTRE_TOLERANCE = 0.015f
+    /** …provided it is shorter than this share of the block. */
+    private const val CENTRED_MAX_SHARE = 0.7f
+    /** Lines whose edges agree within this are flush — a justified paragraph, or a margin. */
+    private const val FLUSH_TOLERANCE_PT = 4f
+    /** An edge at least this far in from the margin is an indent; nearer is the margin itself. */
+    private const val INDENT_MIN_PT = 6f
+    /** An indent past this share of the block is not one: the line is set against the far edge. */
+    private const val INDENT_MAX_SHARE = 0.4f
+    /** Space after a paragraph past this is a page's worth of gap, not the paragraph's own. */
+    private const val SPACE_AFTER_MAX_PT = 60f
+    /** Line pitch as a share of type size, for a paragraph of one line. */
+    private const val DEFAULT_PITCH_SHARE = 1.2f
+    /** A line shorter than this share of the block cannot say whether the document is justified. */
+    private const val LONG_LINE_SHARE = 0.5f
+    /** A line ending within this share of the column of the end margin has reached it. */
+    private const val JUSTIFIED_TOLERANCE_SHARE = 0.02f
+    /** A line stopping more than this share of the column short of the end margin ends its paragraph. */
+    private const val PARAGRAPH_END_SHARE = 0.06f
+    /** This share of the long lines reaching the end margin means the document is justified. */
+    private const val JUSTIFIED_SHARE = 0.55f
+    /** A page of fewer lines than this has its margins read at its extremes. */
+    private const val MIN_LINES_FOR_PERCENTILE = 5
+    /** Fewer long lines than this and the question does not arise. */
+    private const val MIN_LINES_TO_JUDGE = 8
 
     fun reconstruct(
         lines: List<PdfLine>,
         confidence: Float,
         images: List<PdfImage> = emptyList(),
+        sheets: List<PdfPageSheet> = emptyList(),
     ): DocumentModel {
+        val body = withoutRunningHeadsAndFeet(lines, sheets)
+        return reconstructBody(body.ifEmpty { lines }, confidence, images, sheets)
+    }
+
+    private fun reconstructBody(
+        lines: List<PdfLine>,
+        confidence: Float,
+        images: List<PdfImage>,
+        sheets: List<PdfPageSheet>,
+    ): DocumentModel {
+        val blockByPage = lines.groupBy { it.page }.mapValues { (_, pageLines) -> blockOf(pageLines) }
         val regions = PdfTableDetector.detect(lines)
 
         // Text stretches between table regions, each remembering its lines.
@@ -72,7 +118,8 @@ object PdfLayout {
 
         val textLines = stretches.flatten()
         val bodySize = HeadingSizes.median((textLines.ifEmpty { lines }).map { it.maxFontSize })
-        val clusters = stretches.map(::cluster)
+        val justified = looksJustified(lines, blockByPage)
+        val clusters = stretches.map { cluster(it, blockByPage, justified) }
         val kindBySize = headingKinds(clusters.flatten(), bodySize)
 
         // Every block gets a position anchor (page, y of its first line);
@@ -84,18 +131,36 @@ object PdfLayout {
         for ((anchor, table) in tablesWithAnchor) {
             positioned += Positioned(anchor.page, anchor.baselineY, table)
         }
-        for (clusterLines in clusters.flatten()) {
-            val kind =
+        val flatClusters = clusters.flatten()
+        // A heading set in bold at the body's own size is invisible to a
+        // size comparison, and that is how most hand-made section headings
+        // are written; bold means nothing in a document that is mostly bold.
+        val boldClusters = flatClusters.count(::isBold)
+        val boldLevel =
+            if (HeadingSizes.boldIsMeaningful(boldClusters, flatClusters.size)) {
+                HeadingSizes.boldLevel(kindBySize)
+            } else {
+                null
+            }
+        for ((index, clusterLines) in flatClusters.withIndex()) {
+            val bySize =
                 if (isHeadingCandidate(clusterLines, bodySize)) {
                     kindBySize[HeadingSizes.sizeKey(fontSize(clusterLines))] ?: ParagraphKind.BODY
                 } else {
                     ParagraphKind.BODY
                 }
+            val kind = when {
+                bySize != ParagraphKind.BODY -> bySize
+                boldLevel != null && isBold(clusterLines) &&
+                    clusterLines.sumOf { it.text.length } <= HeadingSizes.MAX_CHARS -> boldLevel
+                else -> ParagraphKind.BODY
+            }
             val first = clusterLines.first()
+            val next = flatClusters.getOrNull(index + 1)?.firstOrNull()
             positioned += Positioned(
                 first.page,
                 first.baselineY,
-                paragraph(LineJoiner.join(clusterLines.map { it.text }), kind, confidence),
+                paragraph(clusterLines, kind, confidence, blockByPage, next),
             )
         }
         val textCount = positioned.size
@@ -124,7 +189,69 @@ object PdfLayout {
             if (rtlCount > paragraphs.size - rtlCount) TextDirection.RTL else TextDirection.LTR
         // Full UAX #9 pass: split mixed-direction runs so writers can mark
         // direction per run instead of per paragraph.
-        return Bidi.refine(DocumentModel(blocks = blocks, defaultDirection = defaultDirection))
+        return Bidi.refine(
+            DocumentModel(
+                blocks = blocks,
+                defaultDirection = defaultDirection,
+                pageSetup = pageSetup(sheets, blockByPage, lines),
+            )
+        )
+    }
+
+    /**
+     * The lines without the page's furniture: a running header or footer
+     * repeats in the same place in the margin of page after page, and is
+     * not part of the text. Page numbers differ from page to page, so lines
+     * are compared with their digits masked; a document of one or two pages
+     * has nothing to compare and keeps everything.
+     */
+    private fun withoutRunningHeadsAndFeet(
+        lines: List<PdfLine>,
+        sheets: List<PdfPageSheet>,
+    ): List<PdfLine> {
+        val heightByPage = sheets.associate { it.page to it.heightPt }
+        val pages = lines.map { it.page }.distinct().size
+        if (pages < REPEATS_TO_BE_RUNNING) return lines
+        fun inMargin(line: PdfLine): Boolean {
+            val height = heightByPage[line.page]?.takeIf { it > 0f } ?: return false
+            return line.baselineY < MARGIN_BAND_SHARE * height ||
+                line.baselineY > (1f - MARGIN_BAND_SHARE) * height
+        }
+        val running = lines.filter(::inMargin)
+            .groupBy { DIGITS.replace(it.text, "#") to (it.baselineY / SAME_PLACE_PT).toInt() }
+            .filterValues { group -> group.map { it.page }.distinct().size >= REPEATS_TO_BE_RUNNING }
+            .values.flatten()
+            .toCollection(java.util.Collections.newSetFromMap(java.util.IdentityHashMap()))
+        return lines.filterNot { it in running }
+    }
+
+    private val DIGITS = Regex("[0-9\u0660-\u0669]")
+
+    /**
+     * The page the document was set on: the first sheet that drew text,
+     * with margins where the kept lines reach nearest each edge.
+     */
+    private fun pageSetup(
+        sheets: List<PdfPageSheet>,
+        blockByPage: Map<Int, Pair<Float, Float>>,
+        lines: List<PdfLine>,
+    ): PageSetup? {
+        val sheet = sheets.firstOrNull { it.widthPt > 0f && it.heightPt > 0f } ?: return null
+        if (blockByPage.isEmpty() || lines.isEmpty()) return null
+        // The median page's edges, so one runaway line cannot flatten a margin.
+        val left = HeadingSizes.median(blockByPage.values.map { it.first })
+        val right = HeadingSizes.median(blockByPage.values.map { it.second })
+        val top = lines.minOf { line -> line.baselineY - line.maxFontSize }
+        val bottom = lines.maxOf { it.baselineY }
+        fun margin(value: Float) = value.coerceIn(0f, minOf(sheet.widthPt, sheet.heightPt) / 3)
+        return PageSetup(
+            widthPt = sheet.widthPt,
+            heightPt = sheet.heightPt,
+            marginTopPt = margin(top),
+            marginBottomPt = margin(sheet.heightPt - bottom),
+            marginLeftPt = margin(left),
+            marginRightPt = margin(sheet.widthPt - right),
+        )
     }
 
     private fun tableOf(region: PdfTableDetector.Region, confidence: Float): Table =
@@ -148,14 +275,18 @@ object PdfLayout {
             confidence = confidence,
         )
 
-    private fun cluster(lines: List<PdfLine>): List<List<PdfLine>> {
+    private fun cluster(
+        lines: List<PdfLine>,
+        blockByPage: Map<Int, Pair<Float, Float>>,
+        justified: Boolean,
+    ): List<List<PdfLine>> {
         if (lines.isEmpty()) return emptyList()
         val pitchByPage = lines.groupBy { it.page }.mapValues { (_, pageLines) ->
             HeadingSizes.median(pageLines.zipWithNext { a, b -> b.baselineY - a.baselineY }.filter { it > 0f })
         }
         val clusters = mutableListOf(mutableListOf(lines.first()))
         for ((previous, line) in lines.zipWithNext()) {
-            if (startsNewParagraph(previous, line, pitchByPage.getValue(line.page))) {
+            if (startsNewParagraph(previous, line, pitchByPage.getValue(line.page), blockByPage, justified)) {
                 clusters += mutableListOf(line)
             } else {
                 clusters.last() += line
@@ -164,7 +295,54 @@ object PdfLayout {
         return clusters
     }
 
-    private fun startsNewParagraph(previous: PdfLine, line: PdfLine, medianPitch: Float): Boolean {
+    /**
+     * Whether the document sets its text to both margins. In one that does,
+     * a line stopping short of the end margin is the last line of its
+     * paragraph — the most reliable paragraph break there is, and the only
+     * one that works whichever way the text runs and whether it is indented
+     * on its first line or hanging. Lines too short to fill any line are
+     * left out of the judgement.
+     */
+    private fun looksJustified(lines: List<PdfLine>, blockByPage: Map<Int, Pair<Float, Float>>): Boolean {
+        var full = 0
+        var reaching = 0
+        for (line in lines) {
+            val block = blockByPage[line.page] ?: continue
+            val width = block.second - block.first
+            if (width <= 0f || line.xEnd - line.x < LONG_LINE_SHARE * width) continue
+            full++
+            val rtl = Bidi.firstStrongDirection(line.text) == TextDirection.RTL
+            if (endGap(line, block, rtl) <= JUSTIFIED_TOLERANCE_SHARE * width) reaching++
+        }
+        return full >= MIN_LINES_TO_JUDGE && reaching.toFloat() / full >= JUSTIFIED_SHARE
+    }
+
+    /**
+     * A page's margins, as the lines on it reach them. Read a tenth of the
+     * way in from each end rather than at the extremes: one line that
+     * overhangs — a wide bibliography entry, a stray glyph — would otherwise
+     * move the margin, and every other line then looks indented from it.
+     * A page of a few lines has no distribution to speak of and is measured
+     * at its extremes.
+     */
+    private fun blockOf(lines: List<PdfLine>): Pair<Float, Float> {
+        if (lines.size < MIN_LINES_FOR_PERCENTILE) return lines.minOf { it.x } to lines.maxOf { it.xEnd }
+        val lefts = lines.map { it.x }.sorted()
+        val rights = lines.map { it.xEnd }.sorted()
+        val edge = lines.size / 10
+        return lefts[edge] to rights[rights.size - 1 - edge]
+    }
+
+    private fun endGap(line: PdfLine, block: Pair<Float, Float>, rtl: Boolean): Float =
+        (if (rtl) line.x - block.first else block.second - line.xEnd).coerceAtLeast(0f)
+
+    private fun startsNewParagraph(
+        previous: PdfLine,
+        line: PdfLine,
+        medianPitch: Float,
+        blockByPage: Map<Int, Pair<Float, Float>>,
+        justified: Boolean,
+    ): Boolean {
         if (line.page != previous.page) return true
         val pitch =
             if (medianPitch > 0f) medianPitch
@@ -175,6 +353,20 @@ object PdfLayout {
         val smaller = min(previous.maxFontSize, line.maxFontSize)
         if (smaller > 0f && max(previous.maxFontSize, line.maxFontSize) / smaller >= FONT_CHANGE_FACTOR) {
             return true
+        }
+        // A line set wholly in bold after one that is not — or the other
+        // way about — is a heading meeting its text, whatever the geometry
+        // says: the last line of a justified paragraph fills its column,
+        // and the heading under it would otherwise join it.
+        if (isBold(listOf(previous)) != isBold(listOf(line))) return true
+        val block = blockByPage[line.page]
+        if (justified && block != null) {
+            // Measured as a share of the column, not in points: Arabic is
+            // justified by stretching letters, and a line can fall a few
+            // points short of the margin and still be a line in the middle
+            // of a paragraph.
+            val rtl = Bidi.firstStrongDirection(previous.text) == TextDirection.RTL
+            return endGap(previous, block, rtl) > PARAGRAPH_END_SHARE * (block.second - block.first)
         }
         val anyRtl = Bidi.firstStrongDirection(previous.text) == TextDirection.RTL ||
             Bidi.firstStrongDirection(line.text) == TextDirection.RTL
@@ -195,12 +387,149 @@ object PdfLayout {
 
     private fun fontSize(cluster: List<PdfLine>): Float = cluster.maxOf { it.maxFontSize }
 
-    private fun paragraph(text: String, kind: ParagraphKind, confidence: Float): Paragraph {
+    /**
+     * Whether every letter of the cluster was drawn in a bold face. Judged
+     * on letters: "2-تعريف" is a bold heading whose digit is set in a
+     * regular Latin face, and the digit must not veto the letters.
+     */
+    private fun isBold(cluster: List<PdfLine>): Boolean {
+        var sawLetter = false
+        for (line in cluster) {
+            for (run in line.runs) {
+                if (run.text.none(Character::isLetter)) continue
+                val look = run.look ?: return false
+                if (!look.bold) return false
+                sawLetter = true
+            }
+        }
+        return sawLetter
+    }
+
+    private fun paragraph(
+        cluster: List<PdfLine>,
+        kind: ParagraphKind,
+        confidence: Float,
+        blockByPage: Map<Int, Pair<Float, Float>>,
+        next: PdfLine?,
+    ): Paragraph {
+        val text = LineJoiner.join(cluster.map { it.text })
         val direction = Bidi.firstStrongDirection(text)
+        val runs =
+            if (cluster.any { it.runs.isNotEmpty() }) PdfRuns.toTextRuns(joinRuns(cluster, text))
+            else listOf(TextRun(text = text))
+        val block = blockByPage[cluster.first().page]
+        val placement = block?.let { placement(cluster, it, direction) }
+        val pitch = pitchOf(cluster)
+        val last = cluster.last()
+        val after = next?.takeIf { it.page == last.page }
+            ?.let { (it.baselineY - last.baselineY - (pitch ?: 0f)).coerceIn(0f, SPACE_AFTER_MAX_PT) }
         return Paragraph(
-            runs = listOf(TextRun(text = text, direction = direction)),
-            style = ParagraphStyle(kind = kind, direction = direction),
+            runs = runs.map { it.copy(direction = direction) },
+            style = ParagraphStyle(
+                kind = kind,
+                direction = direction,
+                alignment = placement?.alignment,
+                firstLineIndentPt = placement?.firstLineIndentPt,
+                startIndentPt = placement?.startIndentPt,
+                hangingIndentPt = placement?.hangingIndentPt,
+                spaceBeforePt = 0f,
+                spaceAfterPt = after ?: 0f,
+                linePitchPt = pitch,
+            ),
             confidence = confidence,
+        )
+    }
+
+    /**
+     * The cluster's runs against the text [LineJoiner] produced: it drops a
+     * hyphen and joins the halves of a broken word, so the runs are walked
+     * in step with the joined text rather than concatenated blindly.
+     */
+    private fun joinRuns(cluster: List<PdfLine>, joined: String): List<PdfRun> {
+        val runs = cluster.flatMap { line -> line.runs.ifEmpty { listOf(PdfRun(line.text, null)) } }
+        val out = mutableListOf<PdfRun>()
+        var cursor = 0
+        for (run in runs) {
+            if (cursor >= joined.length) break
+            // Each run is one character from the stripper; where the joined
+            // text agrees, it keeps its look, and where a character was
+            // dropped or added the look of the run beside it carries.
+            if (run.text.isNotEmpty() && joined.startsWith(run.text, cursor)) {
+                out += run
+                cursor += run.text.length
+            }
+        }
+        if (cursor < joined.length) out += PdfRun(joined.substring(cursor), out.lastOrNull()?.look)
+        return out
+    }
+
+    /** The distance between the cluster's own baselines, or its type size's share for one line. */
+    private fun pitchOf(cluster: List<PdfLine>): Float? {
+        val pitches = cluster.zipWithNext { a, b -> b.baselineY - a.baselineY }
+            .filter { it > 0f }
+        if (pitches.isNotEmpty()) return HeadingSizes.median(pitches)
+        return cluster.maxOf { it.maxFontSize }.takeIf { it > 0f }?.let { DEFAULT_PITCH_SHARE * it }
+    }
+
+    private class Placement(
+        val alignment: Alignment?,
+        val firstLineIndentPt: Float?,
+        val startIndentPt: Float?,
+        val hangingIndentPt: Float?,
+    )
+
+    /**
+     * How the cluster sits between its page's margins — measured against the
+     * block its text occupies, not the sheet, and read from the start edge,
+     * which is the right one for a right-to-left paragraph.
+     */
+    private fun placement(
+        cluster: List<PdfLine>,
+        block: Pair<Float, Float>,
+        direction: TextDirection?,
+    ): Placement {
+        val (blockLeft, blockRight) = block
+        val width = blockRight - blockLeft
+        if (width <= 0f) return Placement(null, null, null, null)
+        val rtl = direction == TextDirection.RTL
+        fun startGap(line: PdfLine) = (if (rtl) blockRight - line.xEnd else line.x - blockLeft).coerceAtLeast(0f)
+        fun endGap(line: PdfLine) = endGap(line, block, rtl)
+        val centre = (blockLeft + blockRight) / 2
+        val centred = cluster.all { line ->
+            abs((line.x + line.xEnd) / 2 - centre) <= CENTRE_TOLERANCE * width &&
+                line.xEnd - line.x < CENTRED_MAX_SHARE * width &&
+                startGap(line) > FLUSH_TOLERANCE_PT && endGap(line) > FLUSH_TOLERANCE_PT
+        }
+        if (centred) return Placement(Alignment.CENTER, null, null, null)
+        var alignment: Alignment? = null
+        if (cluster.size >= 3) {
+            val full = cluster.dropLast(1)
+            val ends = full.map(::endGap)
+            val starts = full.drop(1).map(::startGap)
+            if (ends.max() - ends.min() <= FLUSH_TOLERANCE_PT &&
+                starts.max() - starts.min() <= FLUSH_TOLERANCE_PT
+            ) {
+                alignment = Alignment.JUSTIFY
+            }
+        }
+        val gaps = cluster.map(::startGap)
+        val deepest = INDENT_MAX_SHARE * width
+        val first = gaps.first()
+        if (gaps.size == 1) {
+            if (first > deepest && endGap(cluster.single()) <= FLUSH_TOLERANCE_PT) {
+                return Placement(Alignment.END, null, null, null)
+            }
+            val indent = first.takeIf { it in INDENT_MIN_PT..deepest }
+            return Placement(alignment, indent, null, null)
+        }
+        val rest = HeadingSizes.median(gaps.drop(1))
+        val restIndent = if (rest in INDENT_MIN_PT..deepest) rest else 0f
+        val extra = first - restIndent
+        return Placement(
+            alignment = alignment,
+            firstLineIndentPt = extra.takeIf { it >= INDENT_MIN_PT && first <= deepest },
+            startIndentPt = restIndent.takeIf { it > 0f },
+            hangingIndentPt = (-extra).takeIf { extra <= -INDENT_MIN_PT && restIndent > 0f },
         )
     }
 }

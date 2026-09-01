@@ -56,10 +56,10 @@ class AndroidPdfReader(context: Context) {
             // untagged — even when a tree exists but yielded nothing.
             val confidence = 0.6f
 
-            val lines = runCatching { AndroidPositionTextStripper().capture(doc) }
-                .getOrDefault(emptyList())
+            val stripper = AndroidPositionTextStripper()
+            val lines = runCatching { stripper.capture(doc) }.getOrDefault(emptyList())
             if (lines.isNotEmpty()) {
-                PdfLayout.reconstruct(lines, confidence, images)
+                PdfLayout.reconstruct(lines, confidence, images, stripper.pages())
             } else {
                 plainTextFallback(doc, confidence, images)
             }

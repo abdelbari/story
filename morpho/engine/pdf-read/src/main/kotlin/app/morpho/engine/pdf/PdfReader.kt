@@ -54,10 +54,10 @@ class PdfReader {
             // Everything below ran the position heuristics, so it scores as
             // untagged — even when a tree exists but yielded nothing.
             val confidence = 0.6f
-            val lines = runCatching { PositionTextStripper().capture(doc) }
-                .getOrDefault(emptyList())
+            val stripper = PositionTextStripper()
+            val lines = runCatching { stripper.capture(doc) }.getOrDefault(emptyList())
             if (lines.isNotEmpty()) {
-                PdfLayout.reconstruct(lines, confidence, images)
+                PdfLayout.reconstruct(lines, confidence, images, stripper.pages())
             } else {
                 plainTextFallback(doc, confidence, images)
             }

@@ -156,6 +156,45 @@ class ArabicPdfTest {
      * ToUnicode — so the corruption test needs the font as a real
      * exporter embeds it, cmap and all.
      */
+    /**
+     * One untagged page painting الجزائر as two operations whose glyphs
+     * overlap by a fraction of a point, the way the source document does.
+     */
+    private fun kernedPdf(): ByteArray {
+        val bytes = ByteArrayOutputStream()
+        PDDocument().use { document ->
+            val page = PDPage(PDRectangle.A4)
+            document.addPage(page)
+            document.documentCatalog.language = "ar"
+            val font = PDType0Font.load(
+                document,
+                javaClass.getResourceAsStream("/fonts/NotoNaskhArabic-Regular.ttf")
+                    ?: error("test font missing"),
+                false,
+            )
+            // Visual order, left to right: the word reversed, split where
+            // the two halves overlap.
+            val visual = "الجزائر".reversed()
+            val head = visual.substring(0, 3)
+            val tail = visual.substring(3)
+            val headWidth = font.getStringWidth(head) / 1000f * SIZE
+            PDPageContentStream(document, page).use { content ->
+                content.beginText()
+                content.setFont(font, SIZE)
+                content.newLineAtOffset(200f, 700f)
+                content.showText(head)
+                content.endText()
+                content.beginText()
+                content.setFont(font, SIZE)
+                content.newLineAtOffset(200f + headWidth - 0.4f, 700f)
+                content.showText(tail)
+                content.endText()
+            }
+            document.save(bytes)
+        }
+        return bytes.toByteArray()
+    }
+
     private fun taggedArabicPdf(
         logicalWords: List<String>,
         asOneBlock: Boolean = false,
@@ -231,6 +270,14 @@ class ArabicPdfTest {
         return bytes.toByteArray()
     }
 
+
+    @Test
+    fun `a kerned glyph does not split a word on the untagged path`() {
+        // The ا of الجزائر is painted a hair to the left of the ز, so the
+        // stripper is offered a word break where the page shows none.
+        val pdf = kernedPdf()
+        assertEquals("الجزائر", paragraphText(pdf))
+    }
 
     @Test
     fun `the tagged fixture really takes the tagged path`() {

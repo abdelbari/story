@@ -35,7 +35,7 @@ class PdfTableDetectionTest {
             val width = word.length * size * 0.5f
             PdfSegment(word, x, x + width).also { x += width + size * 0.3f }
         }
-        return PdfLine(text, 72f, y.also { y += 15f }, size, page, segments)
+        return PdfLine(text, 72f, y.also { y += 15f }, size, page, segments = segments)
     }
 
     @Test

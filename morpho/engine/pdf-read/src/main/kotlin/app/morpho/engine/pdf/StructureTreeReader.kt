@@ -18,6 +18,8 @@ import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
 import app.morpho.engine.layout.pdf.HeadingSizes
 import app.morpho.engine.layout.pdf.PdfImage
+import app.morpho.engine.layout.pdf.PdfLook
+import app.morpho.engine.layout.pdf.PdfRuns
 import org.apache.pdfbox.contentstream.operator.Operator
 import org.apache.pdfbox.contentstream.operator.OperatorProcessor
 import org.apache.pdfbox.cos.COSBase
@@ -66,23 +68,11 @@ import java.util.IdentityHashMap
  */
 private class Glyph(val position: TextPosition, val x: Float)
 
-/**
- * The look of one painted character — what a paragraph's runs are split
- * by. [raised] is +1 for a superscript, -1 for a subscript, 0 on the line.
- */
-private data class Look(
-    val bold: Boolean,
-    val italic: Boolean,
-    val family: String?,
-    val sizePt: Float,
-    val raised: Int,
-)
-
 /** An element's text in logical order with its looks, and the tab stops its lines were set to. */
-private class StyledText(val logical: ExtractedText.Logical<Look>, val tabStopsPt: List<Float>)
+private class StyledText(val logical: ExtractedText.Logical<PdfLook>, val tabStopsPt: List<Float>)
 
 /** [styled] without the blank characters at either end, painters kept in step. */
-private fun trimmed(styled: ExtractedText.Logical<Look>): ExtractedText.Logical<Look> {
+private fun trimmed(styled: ExtractedText.Logical<PdfLook>): ExtractedText.Logical<PdfLook> {
     val text = styled.text
     var start = 0
     var end = text.length
@@ -471,7 +461,7 @@ internal object StructureTreeReader {
         fun readStyled(glyphs: List<Pair<Int, Glyph>>): StyledText {
             if (glyphs.isEmpty()) return StyledText(ExtractedText.Logical("", emptyList()), emptyList())
             val text = StringBuilder()
-            val looks = ArrayList<Look?>()
+            val looks = ArrayList<PdfLook?>()
             val tabStops = sortedSetOf<Float>()
             for ((page, line) in linesByPage(glyphs)) {
                 // Each line trimmed on its own: a line's last glyph is often
@@ -530,9 +520,9 @@ internal object StructureTreeReader {
          * belongs to the edge of one run, and runs are joined edge to edge.
          * The paragraph is trimmed once, where it is emitted.
          */
-        private fun lineText(page: Int, line: List<Glyph>, tabStops: MutableSet<Float>): ExtractedText.Logical<Look> {
+        private fun lineText(page: Int, line: List<Glyph>, tabStops: MutableSet<Float>): ExtractedText.Logical<PdfLook> {
             val visual = StringBuilder()
-            val painters = ArrayList<Look?>()
+            val painters = ArrayList<PdfLook?>()
             val ordered = line.sortedBy { it.x }
             val block = inkByPageIndex[page]
             val baseline = dominantBaseline(ordered)
@@ -635,11 +625,11 @@ internal object StructureTreeReader {
             }
         }
 
-        private fun lookOf(position: TextPosition, raised: Int): Look = Look(
+        private fun lookOf(position: TextPosition, raised: Int): PdfLook = PdfLook(
+            fontFamily = position.font?.name?.let(::familyName),
+            fontSizePt = position.fontSizeInPt,
             bold = isBold(position),
             italic = isItalic(position),
-            family = position.font?.name?.let(::familyName),
-            sizePt = position.fontSizeInPt,
             raised = raised,
         )
 
@@ -1057,22 +1047,14 @@ internal object StructureTreeReader {
          * look. A space no glyph painted — between two lines — belongs to
          * the run before it.
          */
-        private fun runsOf(styled: ExtractedText.Logical<Look>): List<TextRun> {
+        private fun runsOf(styled: ExtractedText.Logical<PdfLook>): List<TextRun> {
             val runs = mutableListOf<TextRun>()
             val text = StringBuilder()
-            var current: Look? = null
+            var current: PdfLook? = null
             fun flush() {
                 if (text.isEmpty()) return
                 val look = current
-                runs += TextRun(
-                    text = text.toString(),
-                    bold = look?.bold ?: false,
-                    italic = look?.italic ?: false,
-                    fontFamily = look?.family,
-                    fontSizePt = look?.sizePt?.takeIf { it > 0f },
-                    superscript = look?.raised == 1,
-                    subscript = look?.raised == -1,
-                )
+                runs += PdfRuns.toTextRun(text.toString(), current)
                 text.setLength(0)
             }
             for ((index, c) in styled.text.withIndex()) {
@@ -1086,7 +1068,7 @@ internal object StructureTreeReader {
         }
 
         /** [styled] without [prefix] at its head, when it starts with it. */
-        private fun withoutPrefix(styled: ExtractedText.Logical<Look>, prefix: String): ExtractedText.Logical<Look> {
+        private fun withoutPrefix(styled: ExtractedText.Logical<PdfLook>, prefix: String): ExtractedText.Logical<PdfLook> {
             if (prefix.isEmpty() || !styled.text.startsWith(prefix)) return styled
             return ExtractedText.Logical(
                 styled.text.substring(prefix.length),
