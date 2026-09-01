@@ -346,6 +346,7 @@ private fun ToolBar(
     hasSelection: Boolean,
 ) {
     val context = LocalContext.current
+    val state by vm.store.timeline.collectAsState()
     var voiceoverStartMs by remember { mutableLongStateOf(0L) }
 
     // OpenDocument (not PickVisualMedia/GetContent): only its grants can be made
@@ -411,9 +412,25 @@ private fun ToolBar(
                 vm.store.dispatch(EditorIntent.RemoveClip(id))
             }
         }
+        val canvas = state.outputWidth to state.outputHeight
+        val preset = CANVAS_PRESETS.indexOfFirst { it.width == canvas.first && it.height == canvas.second }
+        ToolButton("Canvas ${CANVAS_PRESETS.getOrNull(preset)?.label ?: "${canvas.first}×${canvas.second}"}") {
+            val next = CANVAS_PRESETS[(preset + 1) % CANVAS_PRESETS.size]
+            vm.store.dispatch(EditorIntent.SetCanvas(next.width, next.height))
+        }
         ToolButton("Export") { vm.startExport() }
     }
 }
+
+private class CanvasPreset(val label: String, val width: Int, val height: Int)
+
+/** The four frames short-form video is delivered in; cycled by the Canvas button. */
+private val CANVAS_PRESETS = listOf(
+    CanvasPreset("9:16", 1080, 1920),
+    CanvasPreset("16:9", 1920, 1080),
+    CanvasPreset("1:1", 1080, 1080),
+    CanvasPreset("4:5", 1080, 1350),
+)
 
 @Composable
 private fun ToolButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {

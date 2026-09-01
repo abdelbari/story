@@ -377,6 +377,18 @@ class CoreLogicTest {
     }
 
     @Test
+    fun setCanvasKeepsDimensionsEvenAndBounded() {
+        val s0 = stateWith(listOf(clip("a", 5_000)))
+        val wide = reduce(s0, EditorIntent.SetCanvas(1920, 1080))
+        assertEquals(1920, wide.outputWidth)
+        assertEquals(1080, wide.outputHeight)
+        val odd = reduce(s0, EditorIntent.SetCanvas(1081, 9_999))
+        assertEquals(1080, odd.outputWidth)
+        assertEquals(4096, odd.outputHeight)
+        assertEquals(16, reduce(s0, EditorIntent.SetCanvas(2, 2)).outputWidth)
+    }
+
+    @Test
     fun fadesGenerateAndReadBackRoundTrip() {
         val dur = 10_000L
         val kfs = fadeKeyframes(dur, FadeSpec(1_000, 2_000))

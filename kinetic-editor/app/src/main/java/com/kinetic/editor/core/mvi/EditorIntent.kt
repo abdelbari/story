@@ -97,6 +97,13 @@ sealed interface EditorIntent {
         override val coalesceKey get() = "sticker:${clipId.value}"
     }
 
+    /**
+     * Output canvas in pixels. Preview letterboxes the picture into it and the
+     * export renders at exactly this size, so a landscape project is a choice,
+     * not a crop.
+     */
+    data class SetCanvas(val width: Int, val height: Int) : EditorIntent
+
     /** Replaces the whole document (project restore). Clears undo history. */
     data class Replace(val state: TimelineState) : EditorIntent
 

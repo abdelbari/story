@@ -86,6 +86,11 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
     is EditorIntent.SetTrackMuted -> mapTracks(state) { t ->
         if (t.id == intent.trackId) t.copy(muted = intent.muted) else t
     }
+    is EditorIntent.SetCanvas -> state.copy(
+        // Hardware encoders want even dimensions; keep both within sane bounds.
+        outputWidth = (intent.width.coerceIn(16, 4096) / 2) * 2,
+        outputHeight = (intent.height.coerceIn(16, 4096) / 2) * 2,
+    )
     // A restored project keeps its own revision counter continuity via the store.
     is EditorIntent.Replace -> intent.state
     // Undo/Redo are handled by the store's history, never by the reducer.
