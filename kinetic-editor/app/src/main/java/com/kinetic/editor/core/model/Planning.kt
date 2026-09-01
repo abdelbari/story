@@ -168,3 +168,30 @@ fun readFades(keyframes: List<VolumeKeyframe>, clipDurationMs: Long): FadeSpec {
     } else 0L
     return FadeSpec(inMs, outMs)
 }
+
+/** One PiP clip's placement over its span of composition (== timeline) time. */
+data class PipWindow(val startUs: Long, val endUs: Long, val pip: PipSpec)
+
+fun pipWindows(placements: List<PlacedClip>): List<PipWindow> =
+    placements.map { PipWindow(it.startMs * 1_000L, it.endMs * 1_000L, it.clip.pip ?: PipSpec()) }
+
+/**
+ * Placement in force at a composition timestamp. Between or outside windows —
+ * a gap, or a rounding straggler at a boundary — the nearest known framing is
+ * held rather than returning null, so a stray frame is never placed full-screen.
+ */
+fun pipSpecAt(windows: List<PipWindow>, timeUs: Long): PipSpec? {
+    if (windows.isEmpty()) return null
+    var lo = 0
+    var hi = windows.size - 1
+    while (lo <= hi) {
+        val mid = (lo + hi) ushr 1
+        val w = windows[mid]
+        when {
+            timeUs < w.startUs -> hi = mid - 1
+            timeUs >= w.endUs -> lo = mid + 1
+            else -> return w.pip
+        }
+    }
+    return windows[lo.coerceIn(0, windows.size - 1)].pip
+}

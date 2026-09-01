@@ -7,6 +7,8 @@ import com.kinetic.editor.core.model.MediaRef
 import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.FadeSpec
 import com.kinetic.editor.core.model.PipSpec
+import com.kinetic.editor.core.model.pipSpecAt
+import com.kinetic.editor.core.model.pipWindows
 import com.kinetic.editor.core.model.fadeKeyframes
 import com.kinetic.editor.core.model.readFades
 import com.kinetic.editor.core.model.PlacedClip
@@ -368,6 +370,23 @@ class CoreLogicTest {
         val c = clip("f", 4_000).copy(volumeKeyframes = kfs.toPersistentList())
         assertEquals(0f, c.gainAt(0), 1e-3f)
         assertTrue(c.gainAt(dur / 2) > 0f)
+    }
+
+    @Test
+    fun pipPlacementResolvesPerFrameNotPerTrack() {
+        val a = clip("p1", 2_000, start = 1_000).copy(pip = PipSpec(anchorX = -0.5f, scale = 0.3f))
+        val b = clip("p2", 2_000, start = 5_000).copy(pip = PipSpec(anchorX = 0.8f, scale = 0.5f))
+        val ws = pipWindows(listOf(PlacedClip(a, 1_000), PlacedClip(b, 5_000)))
+        assertEquals(2, ws.size)
+        assertEquals(1_000_000L, ws[0].startUs)
+        assertEquals(3_000_000L, ws[0].endUs)
+
+        assertEquals(-0.5f, pipSpecAt(ws, 1_500_000)!!.anchorX, 1e-3f)
+        assertEquals(0.8f, pipSpecAt(ws, 5_500_000)!!.anchorX, 1e-3f)
+        assertEquals(0.5f, pipSpecAt(ws, 5_000_000)!!.scale, 1e-3f)   // boundary
+        assertTrue(pipSpecAt(ws, 4_000_000) != null)                  // gap holds framing
+        assertTrue(pipSpecAt(ws, 99_000_000) != null)                 // past end
+        assertNull(pipSpecAt(emptyList(), 0))
     }
 
     @Test

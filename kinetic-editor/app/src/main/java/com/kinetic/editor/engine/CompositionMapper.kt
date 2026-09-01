@@ -16,7 +16,8 @@ import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import com.kinetic.editor.audio.VolumeEnvelopeAudioProcessor
-import com.kinetic.editor.core.model.PipSpec
+import com.kinetic.editor.core.model.PipWindow
+import com.kinetic.editor.core.model.pipWindows
 import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.Track
@@ -75,12 +76,13 @@ object CompositionMapper {
         // Secondary VIDEO sequences come first so their input ids (1..n) line up
         // with the placement list handed to the compositor; audio sequences carry
         // no video and are never composited, so they can follow.
-        val overlayPlacements = ArrayList<PipSpec>()
+        val overlayWindows = ArrayList<List<PipWindow>>()
         for (track in state.tracks) {
             if (track.type != TrackType.VIDEO_OVERLAY || track.clips.isEmpty()) continue
             sequences += overlaySequence(context, state, track, lutCache)
-            // One placement per sequence; a track's first clip defines its frame.
-            overlayPlacements += track.clips.first().pip ?: PipSpec()
+            // Placement is per clip and resolved by time, so two PiP clips on one
+            // track can sit in different corners.
+            overlayWindows += pipWindows(state.placements(track))
         }
 
         for (track in state.tracks) {
@@ -96,10 +98,10 @@ object CompositionMapper {
         return Composition.Builder(sequences)
             .setEffects(Effects(/* audioProcessors= */ emptyList(), compositionVideoEffects))
             .setVideoCompositorSettings(
-                if (overlayPlacements.isEmpty()) {
+                if (overlayWindows.isEmpty()) {
                     VideoCompositorSettings.DEFAULT
                 } else {
-                    PipCompositorSettings(spec.width, spec.height, overlayPlacements)
+                    PipCompositorSettings(spec.width, spec.height, overlayWindows)
                 },
             )
             // Audio sequences may lead with gaps and main clips may be muted or
