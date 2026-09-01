@@ -20,7 +20,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.morpho.engine.ooxml.DocxWriter
@@ -49,15 +51,26 @@ fun HomeScreen(viewModel: ConvertViewModel) {
         ActivityResultContracts.CreateDocument(ConvertViewModel.MARKDOWN_MIME)
     ) { uri -> viewModel.onSaveTarget(uri) }
 
+    val context = LocalContext.current
+    val printLauncher = remember { PdfPrintLauncher(context) }
+
     LaunchedEffect(state) {
-        val ready = state as? ConvertUiState.ReadyToSave ?: return@LaunchedEffect
-        val launcher =
-            if (ready.mimeType == ConvertViewModel.MARKDOWN_MIME) saveMarkdownLauncher
-            else saveDocxLauncher
-        launcher.launch(ready.suggestedName)
-        // Leave ReadyToSave immediately: recreation (rotation, process
-        // restore) must not launch a second save dialog over the open one.
-        viewModel.onSaveDialogLaunched()
+        when (val current = state) {
+            is ConvertUiState.ReadyToSave -> {
+                val launcher =
+                    if (current.mimeType == ConvertViewModel.MARKDOWN_MIME) saveMarkdownLauncher
+                    else saveDocxLauncher
+                launcher.launch(current.suggestedName)
+                // Leave ReadyToSave immediately: recreation (rotation, process
+                // restore) must not launch a second save dialog over the open one.
+                viewModel.onSaveDialogLaunched()
+            }
+            is ConvertUiState.ReadyToPrint -> {
+                printLauncher.print(current.html, current.jobName)
+                viewModel.onPrintHandedOff()
+            }
+            else -> {}
+        }
     }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -90,6 +103,7 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                         state = state,
                         onPick = { openLauncher.launch(inputMimeTypes) },
                         onConvert = viewModel::convert,
+                        onExportPdf = viewModel::exportPdf,
                     )
                 }
             }
@@ -115,7 +129,7 @@ private fun StateContent(state: ConvertUiState) {
             Text(state.fileName, style = MaterialTheme.typography.titleMedium)
 
         is ConvertUiState.Converting, is ConvertUiState.ReadyToSave,
-        is ConvertUiState.AwaitingSave -> {
+        is ConvertUiState.AwaitingSave, is ConvertUiState.ReadyToPrint -> {
             LinearProgressIndicator(Modifier.fillMaxWidth())
             Text(stringResource(R.string.converting))
         }
@@ -142,6 +156,7 @@ private fun StateActions(
     state: ConvertUiState,
     onPick: () -> Unit,
     onConvert: () -> Unit,
+    onExportPdf: () -> Unit,
 ) {
     when (state) {
         is ConvertUiState.Idle ->
@@ -157,6 +172,11 @@ private fun StateActions(
                         else R.string.convert_to_docx
                     )
                 )
+            }
+            if (!state.isPdf) {
+                TextButton(onClick = onExportPdf, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.convert_to_pdf))
+                }
             }
             TextButton(onClick = onPick, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.pick_other))

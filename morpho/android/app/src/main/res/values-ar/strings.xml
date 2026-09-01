@@ -6,6 +6,7 @@
     <string name="pick_other">اختر ملفًا آخر</string>
     <string name="convert_to_docx">حوِّل إلى Word ‏(.docx)</string>
     <string name="convert_to_markdown">حوِّل إلى Markdown ‏(.md)</string>
+    <string name="convert_to_pdf">حوِّل إلى PDF</string>
     <string name="convert_another">حوِّل ملفًا آخر</string>
     <string name="converting">جارٍ التحويل…</string>
     <string name="saved_ok">تم — حُفظ الملف.</string>

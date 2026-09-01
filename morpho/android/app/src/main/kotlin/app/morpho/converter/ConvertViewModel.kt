@@ -6,6 +6,7 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.morpho.engine.layout.HtmlWriter
 import app.morpho.engine.layout.MarkdownWriter
 import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.ooxml.DocxReader
@@ -25,6 +26,8 @@ sealed interface ConvertUiState {
         val mime: String?,
         /** True when the input is a Word document, so conversion targets Markdown. */
         val isWordDocument: Boolean,
+        /** True when the input is a PDF (conversion targets Word; no PDF export). */
+        val isPdf: Boolean,
     ) : ConvertUiState
 
     data object Converting : ConvertUiState
@@ -32,6 +35,9 @@ sealed interface ConvertUiState {
     /** Conversion done and the system save dialog is on screen. */
     data object AwaitingSave : ConvertUiState
     data class ReadyToSave(val suggestedName: String, val mimeType: String) : ConvertUiState
+
+    /** Print-ready HTML for the system print sheet's "Save as PDF". */
+    data class ReadyToPrint(val html: String, val jobName: String) : ConvertUiState
     data class Saved(val fileName: String) : ConvertUiState
     data class Failed(val reason: FailReason) : ConvertUiState
 }
@@ -75,6 +81,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                 mime = mime,
                 isWordDocument = mime == DocxWriter.MIME_TYPE ||
                     name.lowercase().endsWith(".docx"),
+                isPdf = mime == "application/pdf" || name.lowercase().endsWith(".pdf"),
             )
             picked = state
             _state.value = state
@@ -88,7 +95,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(Dispatchers.IO) {
             val mime = source.mime.orEmpty()
             val lowerName = source.fileName.lowercase()
-            val isPdf = mime == "application/pdf" || lowerName.endsWith(".pdf")
+            val isPdf = source.isPdf
             // A null or blank provider MIME alone is no evidence of text — an
             // unknown binary would convert to garbage. Extensions decide.
             val looksTextual = mime.startsWith("text/") ||
@@ -140,6 +147,40 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         val base = source.fileName.substringBeforeLast('.').ifEmpty { "converted" }
         outputName = "$base.$extension"
         _state.value = ConvertUiState.ReadyToSave(outputName, mimeType)
+    }
+
+    /** Text, Markdown or Word input → print-ready HTML → system "Save as PDF". */
+    fun exportPdf() {
+        val uri = pickedUri ?: return
+        val source = picked ?: return
+        _state.value = ConvertUiState.Converting
+        viewModelScope.launch(Dispatchers.IO) {
+            val input = runCatching {
+                getApplication<Application>().contentResolver.openInputStream(uri)
+                    ?.use { it.readBytes() }
+            }.getOrNull()
+            if (input == null) {
+                _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
+                return@launch
+            }
+            val jobName = source.fileName.substringBeforeLast('.').ifEmpty { "document" }
+            val html = runCatching {
+                val model =
+                    if (source.isWordDocument) DocxReader.read(input)
+                    else PlainTextImporter.import(input.toString(Charsets.UTF_8))
+                HtmlWriter.write(model, jobName)
+            }.getOrNull()
+            if (html == null) {
+                _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
+                return@launch
+            }
+            _state.value = ConvertUiState.ReadyToPrint(html, jobName)
+        }
+    }
+
+    /** The print job is with the system UI; return to the picked state. */
+    fun onPrintHandedOff() {
+        _state.value = picked ?: ConvertUiState.Idle
     }
 
     /** The UI has launched the system save dialog for the current result. */

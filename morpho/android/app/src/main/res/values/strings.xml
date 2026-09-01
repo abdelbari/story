@@ -7,6 +7,7 @@
     <string name="pick_other">Choose a different file</string>
     <string name="convert_to_docx">Convert to Word (.docx)</string>
     <string name="convert_to_markdown">Convert to Markdown (.md)</string>
+    <string name="convert_to_pdf">Convert to PDF</string>
     <string name="convert_another">Convert another</string>
     <string name="converting">Converting…</string>
     <string name="saved_ok">Done — your file is saved.</string>
