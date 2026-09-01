@@ -92,6 +92,11 @@ sealed interface EditorIntent {
         override val coalesceKey get() = "pip:${clipId.value}"
     }
 
+    /** Moves/scales/rotates a sticker overlay. */
+    data class SetSticker(val clipId: ClipId, val sticker: StickerSpec) : EditorIntent {
+        override val coalesceKey get() = "sticker:${clipId.value}"
+    }
+
     /** Replaces the whole document (project restore). Clears undo history. */
     data class Replace(val state: TimelineState) : EditorIntent
 

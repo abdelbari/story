@@ -444,8 +444,33 @@ private fun ClipInspector(
                 InspectorSlider("Size", spec.textSizePx, 24f..160f) {
                     dispatch(EditorIntent.SetText(clip.id, spec.copy(textSizePx = it)))
                 }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                InspectorSlider("X", spec.anchorX, -1f..1f) {
+                    dispatch(EditorIntent.SetText(clip.id, spec.copy(anchorX = it)))
+                }
                 InspectorSlider("Y", spec.anchorY, -1f..1f) {
                     dispatch(EditorIntent.SetText(clip.id, spec.copy(anchorY = it)))
+                }
+            }
+        }
+
+        // Sticker placement: the same numbers the export overlay consumes.
+        clip.sticker?.let { spec ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                InspectorSlider("Size", spec.scale, 0.05f..0.8f) {
+                    dispatch(EditorIntent.SetSticker(clip.id, spec.copy(scale = it)))
+                }
+                InspectorSlider("Rot", spec.rotationDeg, -180f..180f) {
+                    dispatch(EditorIntent.SetSticker(clip.id, spec.copy(rotationDeg = it)))
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                InspectorSlider("X", spec.anchorX, -1f..1f) {
+                    dispatch(EditorIntent.SetSticker(clip.id, spec.copy(anchorX = it)))
+                }
+                InspectorSlider("Y", spec.anchorY, -1f..1f) {
+                    dispatch(EditorIntent.SetSticker(clip.id, spec.copy(anchorY = it)))
                 }
             }
         }
@@ -455,6 +480,9 @@ private fun ClipInspector(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 InspectorSlider("PiP size", spec.scale, 0.1f..0.9f) {
                     dispatch(EditorIntent.SetPip(clip.id, spec.copy(scale = it)))
+                }
+                InspectorSlider("PiP rot", spec.rotationDeg, -180f..180f) {
+                    dispatch(EditorIntent.SetPip(clip.id, spec.copy(rotationDeg = it)))
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -467,20 +495,32 @@ private fun ClipInspector(
             }
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            InspectorSlider("Bright", clip.grade.brightness, -0.5f..0.5f) {
-                dispatch(EditorIntent.SetGrade(clip.id, clip.grade.copy(brightness = it)))
-            }
-            InspectorSlider("Sat", clip.grade.saturation, 0f..2f) {
-                dispatch(EditorIntent.SetGrade(clip.id, clip.grade.copy(saturation = it)))
+        // Picture controls only for clips that carry a picture; sound controls
+        // only for clips that carry sound. A sticker has neither.
+        val hasVideo = clip.media.hasVideo
+        val hasAudio = clip.media.hasAudio
+        if (hasVideo) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                InspectorSlider("Bright", clip.grade.brightness, -0.5f..0.5f) {
+                    dispatch(EditorIntent.SetGrade(clip.id, clip.grade.copy(brightness = it)))
+                }
+                InspectorSlider("Sat", clip.grade.saturation, 0f..2f) {
+                    dispatch(EditorIntent.SetGrade(clip.id, clip.grade.copy(saturation = it)))
+                }
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            InspectorSlider("Contrast", clip.grade.contrast, 0.25f..2f) {
-                dispatch(EditorIntent.SetGrade(clip.id, clip.grade.copy(contrast = it)))
-            }
-            InspectorSlider("Vol", clip.volume, 0f..2f) {
-                dispatch(EditorIntent.SetVolume(clip.id, it))
+        if (hasVideo || hasAudio) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (hasVideo) {
+                    InspectorSlider("Contrast", clip.grade.contrast, 0.25f..2f) {
+                        dispatch(EditorIntent.SetGrade(clip.id, clip.grade.copy(contrast = it)))
+                    }
+                }
+                if (hasAudio) {
+                    InspectorSlider("Vol", clip.volume, 0f..2f) {
+                        dispatch(EditorIntent.SetVolume(clip.id, it))
+                    }
+                }
             }
         }
 
@@ -510,6 +550,9 @@ private fun ClipInspector(
                 }
             }
         }
+        // Text and stickers carry no media to speed up, grade or cut between.
+        if (!hasVideo && !hasAudio) return@Column
+
         // Scrollable: speed presets + effect toggles overflow a 360dp screen.
         // NOTE: no Modifier.weight children in here — weight inside a scrollable
         // row is measured with infinite constraints and crashes.
@@ -545,34 +588,40 @@ private fun ClipInspector(
                     )
                 }
             }
-            val lutOn = clip.lut != null
-            TextButton(onClick = {
-                dispatch(
-                    EditorIntent.SetLut(
-                        clip.id,
-                        if (lutOn) null else LutSpec(FILM_LUT_ASSET, intensity = 0.85f),
-                    ),
-                )
-            }) {
-                Text(
-                    if (lutOn) "Film ✓" else "Film",
-                    fontSize = 12.sp,
-                    color = if (lutOn) Color(0xFF35C4B5) else Color(0xFF9A9AA5),
-                )
+            if (hasVideo) {
+                val lutOn = clip.lut != null
+                TextButton(onClick = {
+                    dispatch(
+                        EditorIntent.SetLut(
+                            clip.id,
+                            if (lutOn) null else LutSpec(FILM_LUT_ASSET, intensity = 0.85f),
+                        ),
+                    )
+                }) {
+                    Text(
+                        if (lutOn) "Film ✓" else "Film",
+                        fontSize = 12.sp,
+                        color = if (lutOn) Color(0xFF35C4B5) else Color(0xFF9A9AA5),
+                    )
+                }
             }
-            TextButton(onClick = {
-                dispatch(
-                    EditorIntent.SetTransition(
-                        clip.id,
-                        nextTransition.takeIf { it != TransitionType.NONE }
-                            ?.let { TransitionSpec(it, 500L) },
-                    ),
-                )
-            }) {
-                Text(
-                    "Trans: ${(clip.transitionOut?.type ?: TransitionType.NONE).name.lowercase()}",
-                    fontSize = 12.sp, color = Color(0xFFFFC145),
-                )
+            // A transition is a cut between neighbours on the main track; nothing
+            // else has a cut to sit on.
+            if (track.type == TrackType.VIDEO_MAIN) {
+                TextButton(onClick = {
+                    dispatch(
+                        EditorIntent.SetTransition(
+                            clip.id,
+                            nextTransition.takeIf { it != TransitionType.NONE }
+                                ?.let { TransitionSpec(it, 500L) },
+                        ),
+                    )
+                }) {
+                    Text(
+                        "Trans: ${(clip.transitionOut?.type ?: TransitionType.NONE).name.lowercase()}",
+                        fontSize = 12.sp, color = Color(0xFFFFC145),
+                    )
+                }
             }
         }
     }

@@ -42,9 +42,9 @@ object MediaStorePublisher {
 
         val uri = runCatching { resolver.insert(collection, values) }.getOrNull() ?: return null
         return try {
-            resolver.openOutputStream(uri)?.use { out ->
-                source.inputStream().use { it.copyTo(out) }
-            } ?: return null
+            // A row we cannot write to must not linger as a pending ghost entry.
+            val out = resolver.openOutputStream(uri) ?: throw IllegalStateException("no output stream")
+            out.use { source.inputStream().use { it.copyTo(out) } }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 resolver.update(uri, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
             }

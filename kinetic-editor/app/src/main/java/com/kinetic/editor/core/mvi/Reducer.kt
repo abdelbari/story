@@ -69,6 +69,20 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
             ),
         )
     }
+    is EditorIntent.SetSticker -> replaceClip(state, intent.clipId) {
+        // Only meaningful on a clip that already is a sticker.
+        if (it.sticker == null) {
+            it
+        } else {
+            it.copy(
+                sticker = intent.sticker.copy(
+                    scale = intent.sticker.scale.coerceIn(0.05f, 1f),
+                    anchorX = intent.sticker.anchorX.coerceIn(-1f, 1f),
+                    anchorY = intent.sticker.anchorY.coerceIn(-1f, 1f),
+                ),
+            )
+        }
+    }
     is EditorIntent.SetTrackMuted -> mapTracks(state) { t ->
         if (t.id == intent.trackId) t.copy(muted = intent.muted) else t
     }

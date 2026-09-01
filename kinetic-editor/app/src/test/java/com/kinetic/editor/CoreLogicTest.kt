@@ -13,6 +13,7 @@ import com.kinetic.editor.core.model.fadeKeyframes
 import com.kinetic.editor.core.model.readFades
 import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.ProjectCodec
+import com.kinetic.editor.core.model.StickerSpec
 import com.kinetic.editor.core.model.TextSpec
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.planSequence
@@ -342,6 +343,37 @@ class CoreLogicTest {
         assertEquals(1f, pip.anchorX, 1e-3f)
         assertEquals(-1f, pip.anchorY, 1e-3f)
         assertEquals(1f, pip.scale, 1e-3f)
+    }
+
+    @Test
+    fun setStickerOnlyAppliesToStickerClipsAndClamps() {
+        val plain = clip("a", 5_000)
+        val s0 = stateWith(listOf(plain))
+        assertTrue(reduce(s0, EditorIntent.SetSticker(plain.id, StickerSpec("stickers/star.png"))) === s0)
+
+        val stickerClip = ClipModel(
+            ClipId("s"), MediaRef("kinetic://sticker", 3_000, false, false, 0f), 0, 3_000,
+            sticker = StickerSpec("stickers/star.png"),
+        )
+        val base = TimelineState.empty()
+        val withSticker = base.copy(
+            tracks = base.tracks.map {
+                if (it.type == TrackType.STICKER) it.copy(clips = persistentListOf(stickerClip)) else it
+            }.toPersistentList(),
+        )
+        val edited = reduce(
+            withSticker,
+            EditorIntent.SetSticker(
+                stickerClip.id,
+                StickerSpec("stickers/star.png", anchorX = 5f, anchorY = -9f, scale = 40f, rotationDeg = 30f),
+            ),
+        )
+        val spec = edited.tracks.first { it.type == TrackType.STICKER }.clips[0].sticker!!
+        assertEquals(1f, spec.anchorX, 1e-3f)
+        assertEquals(-1f, spec.anchorY, 1e-3f)
+        assertEquals(1f, spec.scale, 1e-3f)
+        assertEquals(30f, spec.rotationDeg, 1e-3f)
+        assertEquals("sticker:s", EditorIntent.SetSticker(stickerClip.id, spec).coalesceKey)
     }
 
     @Test
