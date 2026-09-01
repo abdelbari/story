@@ -150,6 +150,15 @@ private fun StateContent(state: ConvertUiState) {
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(state.fileName)
+            if (state.needsReview) {
+                // The Fidelity Report's honesty, surfaced: reconstructed or
+                // OCR-read blocks are guesses, and the user should know.
+                Text(
+                    text = stringResource(R.string.fidelity_review),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
 
         is ConvertUiState.Failed ->

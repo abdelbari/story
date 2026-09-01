@@ -11,6 +11,7 @@
     <string name="convert_another">Convertir otro</string>
     <string name="converting">Convirtiendo…</string>
     <string name="saved_ok">Listo — tu archivo está guardado.</string>
+    <string name="fidelity_review">Algunas partes se reconstruyeron con confianza limitada; conviene revisarlas.</string>
     <string name="retry">Reintentar</string>
     <string name="scanned_pdf">Este PDF parece escaneado, sin capa de texto. Puedes leerlo con OCR completamente en el dispositivo.</string>
     <string name="convert_with_ocr">Leer con OCR y convertir</string>

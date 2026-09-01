@@ -7,6 +7,7 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.morpho.engine.layout.DocumentModel
+import app.morpho.engine.layout.FidelityReport
 import app.morpho.engine.layout.HtmlWriter
 import app.morpho.engine.layout.MarkdownWriter
 import app.morpho.engine.layout.PlainTextImporter
@@ -41,7 +42,11 @@ sealed interface ConvertUiState {
 
     /** Print-ready HTML for the system print sheet's "Save as PDF". */
     data class ReadyToPrint(val html: String, val jobName: String) : ConvertUiState
-    data class Saved(val fileName: String) : ConvertUiState
+    data class Saved(
+        val fileName: String,
+        /** True when the Fidelity Report flagged blocks worth reviewing. */
+        val needsReview: Boolean = false,
+    ) : ConvertUiState
     data class Failed(val reason: FailReason) : ConvertUiState
 }
 
@@ -52,10 +57,11 @@ private class UnconvertibleContent(val reason: FailReason) : Exception()
 
 /**
  * Drives the conversion slices, all fully on-device: text/Markdown → Word,
- * Word → Markdown, PDF → Word (text PDFs; scanned ones await the M3 OCR
- * milestone), and text/Markdown/Word → PDF — as a saved file
- * ([PdfFileExporter]) or through the system print sheet. This process has
- * no network permission at all.
+ * Word → Markdown, PDF → Word (scanned PDFs go through Tesseract OCR), and
+ * text/Markdown/Word → PDF — as a saved file ([PdfFileExporter]) or through
+ * the system print sheet. Every conversion records a [FidelityReport] so
+ * the Saved state can say honestly when blocks deserve review. This
+ * process has no network permission at all.
  */
 class ConvertViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -75,6 +81,15 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     private var lastOperation: (() -> Unit)? = null
     private var outputBytes: ByteArray? = null
     private var outputName: String = ""
+
+    /** Fidelity Report of the last conversion's model, for the Saved notice. */
+    private var lastReport: FidelityReport.Report? = null
+
+    /** Records the report of the model a conversion is about to write. */
+    private fun reported(model: DocumentModel): DocumentModel {
+        lastReport = FidelityReport.of(model)
+        return model
+    }
 
     fun onPicked(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -97,6 +112,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                 isPdf = mime == "application/pdf" || name.lowercase().endsWith(".pdf"),
             )
             pickedFile = PickedFile(uri, state)
+            lastReport = null
             _state.value = state
         }
     }
@@ -108,17 +124,20 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(Dispatchers.IO) {
             when {
                 source.isPdf -> convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
-                    val model = AndroidPdfReader(getApplication()).extract(bytes)
+                    val model = reported(AndroidPdfReader(getApplication()).extract(bytes))
                     val hasText = model.blocks.filterIsInstance<Paragraph>()
                         .any { it.text.isNotBlank() }
                     if (!hasText) throw UnconvertibleContent(FailReason.SCANNED_PDF)
                     DocxWriter.toByteArray(model)
                 }
                 source.isWordDocument -> convertPicked(uri, source, "md", MARKDOWN_MIME) { bytes ->
-                    MarkdownWriter.write(DocxReader.read(bytes)).toByteArray(Charsets.UTF_8)
+                    MarkdownWriter.write(reported(DocxReader.read(bytes)))
+                        .toByteArray(Charsets.UTF_8)
                 }
                 looksTextual(source) -> convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
-                    DocxWriter.toByteArray(PlainTextImporter.import(bytes.toString(Charsets.UTF_8)))
+                    DocxWriter.toByteArray(
+                        reported(PlainTextImporter.import(bytes.toString(Charsets.UTF_8)))
+                    )
                 }
                 else -> _state.value = ConvertUiState.Failed(FailReason.UNSUPPORTED_TYPE)
             }
@@ -183,7 +202,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(Dispatchers.IO) {
             convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
                 DocxWriter.toByteArray(
-                    AndroidOcrReader(getApplication()).recognize(bytes, ocrLanguages())
+                    reported(AndroidOcrReader(getApplication()).recognize(bytes, ocrLanguages()))
                 )
             }
         }
@@ -210,7 +229,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         _state.value = ConvertUiState.Converting
         viewModelScope.launch(Dispatchers.IO) {
             convertPicked(uri, source, "pdf", PDF_MIME) { bytes ->
-                PdfFileExporter.render(modelOf(bytes, source))
+                PdfFileExporter.render(reported(modelOf(bytes, source)))
             }
         }
     }
@@ -287,7 +306,10 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                     ?.use { it.write(bytes) } != null
             }.getOrDefault(false)
             _state.value = if (ok) {
-                ConvertUiState.Saved(outputName)
+                ConvertUiState.Saved(
+                    fileName = outputName,
+                    needsReview = lastReport?.reviewables?.isNotEmpty() == true,
+                )
             } else {
                 ConvertUiState.Failed(FailReason.WRITE_ERROR)
             }

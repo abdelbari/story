@@ -12,6 +12,7 @@
     <string name="convert_another">Convert another</string>
     <string name="converting">Converting…</string>
     <string name="saved_ok">Done — your file is saved.</string>
+    <string name="fidelity_review">Some parts were reconstructed with limited confidence — worth a quick review.</string>
     <string name="retry">Try again</string>
     <string name="scanned_pdf">This looks like a scanned PDF with no text layer. You can read it with fully on-device OCR.</string>
     <string name="convert_with_ocr">Read with OCR and convert</string>

@@ -11,6 +11,7 @@
     <string name="convert_another">حوِّل ملفًا آخر</string>
     <string name="converting">جارٍ التحويل…</string>
     <string name="saved_ok">تم — حُفظ الملف.</string>
+    <string name="fidelity_review">أُعيد بناء بعض الأجزاء بثقة محدودة — تستحق مراجعة سريعة.</string>
     <string name="retry">أعد المحاولة</string>
     <string name="scanned_pdf">يبدو هذا ملف PDF ممسوحًا ضوئيًا دون طبقة نصية. يمكنك قراءته بالتعرف الضوئي على الجهاز بالكامل.</string>
     <string name="convert_with_ocr">اقرأ بالتعرف الضوئي وحوِّل</string>
