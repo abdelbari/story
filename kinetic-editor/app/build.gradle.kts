@@ -29,19 +29,26 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-        // Media3 Transformer/effect surfaces are @UnstableApi; opt in project-wide
-        // instead of sprinkling per-file annotations.
-        freeCompilerArgs += listOf("-opt-in=androidx.media3.common.util.UnstableApi")
-    }
     buildFeatures {
         compose = true
+    }
+    packaging {
+        // Compose and coroutines both ship these license stubs; AGP refuses duplicates.
+        resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
     testOptions {
         // The pure-logic unit tests touch android.os.SystemClock only;
         // default values (0) preserve the tested behavior without Robolectric.
         unitTests.isReturnDefaultValues = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        // Media3 Transformer/effect surfaces are @UnstableApi; opt in project-wide
+        // instead of sprinkling per-file annotations.
+        freeCompilerArgs.add("-opt-in=androidx.media3.common.util.UnstableApi")
     }
 }
 
