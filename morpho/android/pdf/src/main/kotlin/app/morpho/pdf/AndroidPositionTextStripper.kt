@@ -1,5 +1,6 @@
 package app.morpho.pdf
 
+import app.morpho.engine.layout.ExtractedText
 import app.morpho.engine.layout.pdf.PdfLine
 import app.morpho.engine.layout.pdf.PdfSegment
 import com.tom_roush.pdfbox.pdmodel.PDDocument
@@ -42,17 +43,21 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
 
     override fun writeString(text: String, textPositions: List<TextPosition>) {
         if (text.isBlank() || textPositions.isEmpty()) return
+        // The painted glyphs, not PDFBox's direction-corrected word: the
+        // line is reconstructed as a whole in flushLine.
+        val painted = textPositions.joinToString(separator = "") { it.unicode.orEmpty() }
+        if (painted.isEmpty()) return
         val baselineY = textPositions.first().yDirAdj
         if (lineText.isNotEmpty() && abs(baselineY - lineY) > SAME_LINE_TOLERANCE_PT) flushLine()
         if (lineText.isEmpty()) {
             lineY = baselineY
             linePage = currentPageNo
         }
-        lineText.append(text)
+        lineText.append(painted)
         lineX = min(lineX, textPositions.minOf { it.xDirAdj })
         lineFontSize = max(lineFontSize, textPositions.maxOf { it.fontSizeInPt })
         lineSegments += PdfSegment(
-            text = text,
+            text = painted,
             xStart = textPositions.minOf { it.xDirAdj },
             xEnd = textPositions.maxOf { it.xDirAdj + it.widthDirAdj },
         )
@@ -69,7 +74,7 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
     override fun writePageEnd() = flushLine()
 
     private fun flushLine() {
-        val text = lineText.toString().trim()
+        val text = ExtractedText.toLogical(lineText.toString()).trim()
         if (text.isNotEmpty()) {
             captured += PdfLine(
                 text = text,

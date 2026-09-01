@@ -3,6 +3,7 @@ package app.morpho.engine.pdf
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
+import app.morpho.engine.layout.ExtractedText
 import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.ListMarker
 import app.morpho.engine.layout.Paragraph
@@ -423,7 +424,7 @@ internal object StructureTreeReader {
             // right-to-left line is visual order — backwards. Nothing further
             // down the pipeline can tell that from logical order, so it is
             // reconstructed here, at the one place tagged text is assembled.
-            return Bidi.visualToLogical(sb.toString())
+            return ExtractedText.toLogical(sb.toString())
         }
 
         /** True when every marked-content run under [element] is bold. */

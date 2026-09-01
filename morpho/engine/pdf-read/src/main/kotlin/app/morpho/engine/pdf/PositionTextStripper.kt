@@ -1,5 +1,6 @@
 package app.morpho.engine.pdf
 
+import app.morpho.engine.layout.ExtractedText
 import app.morpho.engine.layout.pdf.PdfLine
 import app.morpho.engine.layout.pdf.PdfSegment
 import org.apache.pdfbox.pdmodel.PDDocument
@@ -16,9 +17,15 @@ import kotlin.math.min
  * largest font size, and page number, in reading order (sort-by-position is
  * always on). Nothing is ever written to the stripper's output.
  *
- * The word text PDFBox hands to [writeString] has already been through the
- * stripper's own BiDi normalisation, so captured lines are logical-order
- * Unicode and can go straight into the IR.
+ * Sorting by position is what makes the layout heuristics possible — they
+ * need coordinates — but it orders words strictly left to right, which is
+ * the wrong way round for a right-to-left line: its first word is the
+ * rightmost one. So each line is captured exactly as painted, from the glyph
+ * text of its [TextPosition]s rather than the word text PDFBox has already
+ * put through its own direction pass, and [ExtractedText] then reconstructs
+ * logical order over the whole line at once. Doing it per line rather than
+ * per word is what lets a Latin phrase or a number inside an Arabic sentence
+ * keep its own direction.
  */
 internal class PositionTextStripper : PDFTextStripper() {
 
@@ -45,17 +52,21 @@ internal class PositionTextStripper : PDFTextStripper() {
 
     override fun writeString(text: String, textPositions: List<TextPosition>) {
         if (text.isBlank() || textPositions.isEmpty()) return
+        // The painted glyphs, not PDFBox's direction-corrected word: the
+        // line is reconstructed as a whole in flushLine.
+        val painted = textPositions.joinToString(separator = "") { it.unicode.orEmpty() }
+        if (painted.isEmpty()) return
         val baselineY = textPositions.first().yDirAdj
         if (lineText.isNotEmpty() && abs(baselineY - lineY) > SAME_LINE_TOLERANCE_PT) flushLine()
         if (lineText.isEmpty()) {
             lineY = baselineY
             linePage = currentPageNo
         }
-        lineText.append(text)
+        lineText.append(painted)
         lineX = min(lineX, textPositions.minOf { it.xDirAdj })
         lineFontSize = max(lineFontSize, textPositions.maxOf { it.fontSizeInPt })
         lineSegments += PdfSegment(
-            text = text,
+            text = painted,
             xStart = textPositions.minOf { it.xDirAdj },
             xEnd = textPositions.maxOf { it.xDirAdj + it.widthDirAdj },
         )
@@ -72,7 +83,7 @@ internal class PositionTextStripper : PDFTextStripper() {
     override fun writePageEnd() = flushLine()
 
     private fun flushLine() {
-        val text = lineText.toString().trim()
+        val text = ExtractedText.toLogical(lineText.toString()).trim()
         if (text.isNotEmpty()) {
             captured += PdfLine(
                 text = text,
