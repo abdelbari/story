@@ -327,6 +327,11 @@ private fun ToolBar(
                 vm.store.dispatch(EditorIntent.SplitClip(id, viewport.playheadMs))
             }
         }
+        ToolButton("Delete", enabled = hasSelection) {
+            vm.store.selection.value?.let { id ->
+                vm.store.dispatch(EditorIntent.RemoveClip(id))
+            }
+        }
         ToolButton("Export") { vm.startExport() }
     }
 }
@@ -361,7 +366,11 @@ private fun ClipInspector(
                 dispatch(EditorIntent.SetVolume(clip.id, it))
             }
         }
+        // Scrollable: speed presets + effect toggles overflow a 360dp screen.
+        // NOTE: no Modifier.weight children in here — weight inside a scrollable
+        // row is measured with infinite constraints and crashes.
         Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
@@ -375,7 +384,6 @@ private fun ClipInspector(
                     )
                 }
             }
-            Spacer(Modifier.weight(1f))
             val nextTransition = when (clip.transitionOut?.type) {
                 null, TransitionType.NONE -> TransitionType.DIP_TO_BLACK
                 TransitionType.DIP_TO_BLACK -> TransitionType.WIPE_LEFT
