@@ -13,6 +13,7 @@ import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.ooxml.DocxReader
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.ooxml.DocxWriter
+import app.morpho.pdf.AndroidOcrReader
 import app.morpho.pdf.AndroidPdfReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -167,6 +168,22 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         val base = source.fileName.substringBeforeLast('.').ifEmpty { "converted" }
         outputName = "$base.$extension"
         _state.value = ConvertUiState.ReadyToSave(outputName, mimeType)
+    }
+
+    /**
+     * Scanned PDF → on-device OCR (Tesseract, Arabic+English) → Word. Slow
+     * by nature — pages render to bitmaps and get recognized one by one —
+     * but never leaves the device.
+     */
+    fun convertWithOcr() {
+        val (uri, source) = pickedFile ?: return
+        lastOperation = ::convertWithOcr
+        _state.value = ConvertUiState.Converting
+        viewModelScope.launch(Dispatchers.IO) {
+            convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
+                DocxWriter.toByteArray(AndroidOcrReader(getApplication()).recognize(bytes))
+            }
+        }
     }
 
     /** Text, Markdown or Word input → a real .pdf file via the save dialog. */

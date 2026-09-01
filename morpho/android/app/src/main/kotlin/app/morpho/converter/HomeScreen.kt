@@ -112,6 +112,7 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                         onExportPdf = viewModel::exportPdf,
                         onPrint = viewModel::printPdf,
                         onRetry = viewModel::retry,
+                        onOcr = viewModel::convertWithOcr,
                     )
                 }
             }
@@ -167,6 +168,7 @@ private fun StateActions(
     onExportPdf: () -> Unit,
     onPrint: () -> Unit,
     onRetry: () -> Unit,
+    onOcr: () -> Unit,
 ) {
     when (state) {
         is ConvertUiState.Idle ->
@@ -202,6 +204,11 @@ private fun StateActions(
             }
 
         is ConvertUiState.Failed -> {
+            if (state.reason == FailReason.SCANNED_PDF) {
+                Button(onClick = onOcr, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.convert_with_ocr))
+                }
+            }
             Button(onClick = onPick, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.pick_document))
             }
