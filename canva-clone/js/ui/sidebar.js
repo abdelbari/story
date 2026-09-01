@@ -145,14 +145,17 @@ async function thumbnailFor(template) {
   return templateThumbs.get(template.id);
 }
 
-// Apply a template into the CURRENT page, uniformly scaled to the doc size.
+// Apply a template into the CURRENT page, scaled to FIT the doc (the smaller
+// of the two ratios) and centred on both axes — scaling by width alone pushes
+// a tall template's content off a wide canvas.
 function applyTemplate(store, template) {
   const doc = store.doc;
-  const scale = doc.width / template.width;
+  const scale = Math.min(doc.width / template.width, doc.height / template.height);
+  const dx = (doc.width - template.width * scale) / 2;
   const dy = (doc.height - template.height * scale) / 2;
   const page = instantiatePage(template);
   for (const el of page.elements) {
-    el.x *= scale;
+    el.x = el.x * scale + dx;
     el.y = el.y * scale + dy;
     el.w *= scale;
     el.h *= scale;

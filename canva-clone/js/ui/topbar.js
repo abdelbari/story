@@ -106,19 +106,22 @@ function resizeButton(store, app) {
 }
 
 // Scale all pages' content proportionally to the new canvas (Canva's
-// "magic resize" simplified: uniform scale by the width ratio, centered
-// vertically if aspect changes).
+// "magic resize", simplified): scale to fit the new box and centre on both
+// axes, so an aspect-ratio change never strands content off the page.
 function resizeDoc(store, w, hNew) {
   const doc = store.doc;
   if (w === doc.width && hNew === doc.height) return;
-  const scale = w / doc.width;
+  // Scale to fit and centre, so an aspect-ratio change never strands content
+  // off the bottom of the new canvas.
+  const scale = Math.min(w / doc.width, hNew / doc.height);
+  const dx = (w - doc.width * scale) / 2;
   const dy = (hNew - doc.height * scale) / 2;
   store.apply(d => {
     d.width = w;
     d.height = hNew;
     for (const page of d.pages) {
       for (const el of page.elements) {
-        el.x *= scale;
+        el.x = el.x * scale + dx;
         el.y = el.y * scale + dy;
         el.w *= scale;
         el.h *= scale;
