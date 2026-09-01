@@ -1,5 +1,6 @@
 package app.morpho.engine.pdf
 
+import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.ListMarker
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
@@ -16,10 +17,15 @@ import org.apache.pdfbox.pdmodel.documentinterchange.markedcontent.PDMarkedConte
 import org.apache.pdfbox.pdmodel.documentinterchange.markedcontent.PDPropertyList
 import org.apache.pdfbox.pdmodel.documentinterchange.taggedpdf.StandardStructureTypes
 import org.apache.pdfbox.pdmodel.font.PDType1Font
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.awt.Color
+import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import javax.imageio.ImageIO
 
 /**
  * Authors real tagged PDFs with PDFBox and checks the structure-tree fast
@@ -40,7 +46,7 @@ class TaggedPdfTest {
             document.page = page
             root.appendKid(document)
             PDPageContentStream(doc, page).use { content ->
-                TaggedBuilder(page, content, document).populate()
+                TaggedBuilder(doc, page, content, document).populate()
             }
             val out = ByteArrayOutputStream()
             doc.save(out)
@@ -49,6 +55,7 @@ class TaggedPdfTest {
     }
 
     private class TaggedBuilder(
+        private val doc: PDDocument,
         private val page: PDPage,
         private val content: PDPageContentStream,
         val document: PDStructureElement,
@@ -83,6 +90,41 @@ class TaggedPdfTest {
             content.endMarkedContent()
             element.appendKid(PDMarkedContent(COSName.P, properties))
             return element
+        }
+
+        /**
+         * A Figure structure element whose marked-content block wraps an
+         * actual image draw — the shape Word/LibreOffice exporters produce.
+         * beginMarkedContent(tag, propertyList) writes the named-resource
+         * BDC form, so the MCID resolution through page resources is what
+         * gets exercised, same as in real exports.
+         */
+        fun figure(parent: PDStructureElement, widthPx: Int, heightPx: Int): PDStructureElement {
+            val element = group("Figure", parent)
+            val mcid = nextMcid++
+            val properties = COSDictionary()
+            properties.setInt(COSName.MCID, mcid)
+            val tag = COSName.getPDFName("Figure")
+            content.beginMarkedContent(tag, PDPropertyList.create(properties))
+            drawImage(widthPx, heightPx)
+            content.endMarkedContent()
+            element.appendKid(PDMarkedContent(tag, properties))
+            return element
+        }
+
+        /** An image drawn outside any marked content — untracked by the tree. */
+        fun rawImage(widthPx: Int, heightPx: Int) = drawImage(widthPx, heightPx)
+
+        private fun drawImage(widthPx: Int, heightPx: Int) {
+            val awt = BufferedImage(widthPx, heightPx, BufferedImage.TYPE_INT_RGB)
+            awt.createGraphics().apply {
+                color = Color(30, 90, 200)
+                fillRect(0, 0, widthPx, heightPx)
+                dispose()
+            }
+            val xobject = LosslessFactory.createFromImage(doc, awt)
+            y -= heightPx + 8f
+            content.drawImage(xobject, 72f, y, widthPx.toFloat(), heightPx.toFloat())
         }
     }
 
@@ -147,6 +189,49 @@ class TaggedPdfTest {
             listOf("logically first", "logically second"),
             paragraphs(pdf).map { it.text },
         )
+    }
+
+    @Test
+    fun `a Figure element resolves to its image, in tag order`() {
+        val pdf = taggedPdf {
+            leaf(StandardStructureTypes.P, document, "Text before the figure.")
+            figure(document, widthPx = 20, heightPx = 10)
+            leaf(StandardStructureTypes.P, document, "Text after the figure.")
+        }
+
+        val model = PdfReader().extract(pdf)
+        assertEquals(3, model.blocks.size, "paragraph, image, paragraph")
+        assertEquals("Text before the figure.", (model.blocks[0] as Paragraph).text)
+        assertEquals("Text after the figure.", (model.blocks[2] as Paragraph).text)
+
+        val image = model.blocks[1] as ImageBlock
+        assertEquals(20, image.widthPx)
+        assertEquals(10, image.heightPx)
+        assertEquals("image/png", image.mimeType)
+        val decoded = ImageIO.read(ByteArrayInputStream(image.bytes))
+        assertEquals(20, decoded.width, "captured bytes decode to the drawn image")
+        assertTrue(model.blocks.all { it.confidence == 0.9f }, "figures ride the tagged path")
+    }
+
+    @Test
+    fun `an image the structure tree never references is appended at the end`() {
+        val pdf = taggedPdf {
+            rawImage(widthPx = 24, heightPx = 12)
+            leaf(StandardStructureTypes.P, document, "Only tagged text.")
+        }
+
+        val model = PdfReader().extract(pdf)
+        assertEquals(2, model.blocks.size)
+        assertEquals("Only tagged text.", (model.blocks[0] as Paragraph).text)
+        assertEquals(24, (model.blocks[1] as ImageBlock).widthPx)
+    }
+
+    @Test
+    fun `a figure-only tagged PDF still takes the tagged path`() {
+        val pdf = taggedPdf { figure(document, widthPx = 16, heightPx = 16) }
+        val model = PdfReader().extract(pdf)
+        val image = model.blocks.single() as ImageBlock
+        assertEquals(0.9f, image.confidence, "0.9 proves the tags were read, not the fallback")
     }
 
     @Test

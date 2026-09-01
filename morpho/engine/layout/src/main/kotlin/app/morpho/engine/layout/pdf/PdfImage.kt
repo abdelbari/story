@@ -15,4 +15,10 @@ class PdfImage(
     val mimeType: String,
     val widthPx: Int,
     val heightPx: Int,
+    /**
+     * The innermost marked-content id active when the image was drawn, or -1
+     * when it was drawn outside marked content. Lets the tagged fast path
+     * resolve `Figure` structure elements to their images.
+     */
+    val mcid: Int = -1,
 )

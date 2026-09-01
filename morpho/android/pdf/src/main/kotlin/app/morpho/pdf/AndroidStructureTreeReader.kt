@@ -3,6 +3,7 @@ package app.morpho.pdf
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
+import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.ListMarker
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
@@ -12,6 +13,7 @@ import app.morpho.engine.layout.TableCell
 import app.morpho.engine.layout.TableRow
 import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
+import app.morpho.engine.layout.pdf.PdfImage
 import com.tom_roush.pdfbox.contentstream.operator.Operator
 import com.tom_roush.pdfbox.contentstream.operator.OperatorProcessor
 import com.tom_roush.pdfbox.cos.COSBase
@@ -25,6 +27,7 @@ import com.tom_roush.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStruc
 import com.tom_roush.pdfbox.pdmodel.documentinterchange.markedcontent.PDMarkedContent
 import com.tom_roush.pdfbox.text.PDFMarkedContentExtractor
 import com.tom_roush.pdfbox.text.TextPosition
+import java.util.Collections
 import java.util.IdentityHashMap
 
 /**
@@ -43,9 +46,11 @@ import java.util.IdentityHashMap
  * Mapping: P → body paragraph; H/H1 → HEADING_1, H2 → HEADING_2, H3–H6 →
  * HEADING_3; L/LI → list items (numbered when the item labels carry digits,
  * bullets otherwise); Table/TR/TH/TD → tables; grouping types (Document,
- * Part, Sect, Div, Art) recurse; Figure is skipped until image support
- * lands; inline types (Span, Link, Quote, Lbl, LBody, …) contribute text.
- * Non-standard structure types are resolved once through the role map.
+ * Part, Sect, Div, Art) recurse; Figure resolves to its captured image via
+ * the marked-content id its draw was wrapped in (images the tree never
+ * references are appended at the end); inline types (Span, Link, Quote,
+ * Lbl, LBody, …) contribute text. Non-standard structure types are
+ * resolved once through the role map.
  *
  * Returns null — so callers fall back to the position heuristics — when the
  * tree exists but yields no text (some producers write empty shells), or is
@@ -56,11 +61,11 @@ internal object AndroidStructureTreeReader {
     private const val MAX_DEPTH = 128
     private const val CONFIDENCE = 0.9f
 
-    fun read(doc: PDDocument): DocumentModel? {
+    fun read(doc: PDDocument, images: List<PdfImage> = emptyList()): DocumentModel? {
         val root = doc.documentCatalog.structureTreeRoot ?: return null
         val texts = MarkedContentIndex(doc)
         val roleMap: Map<String, Any> = runCatching { root.roleMap }.getOrNull().orEmpty()
-        val builder = Builder(texts, roleMap)
+        val builder = Builder(texts, roleMap, images)
         return try {
             for (kid in root.kids.orEmpty()) {
                 if (kid is PDStructureElement) builder.walk(kid, depth = 0)
@@ -72,6 +77,9 @@ internal object AndroidStructureTreeReader {
     }
 
     private class TooDeepException : RuntimeException()
+
+    private fun imageKey(pageNumber: Int, mcid: Int): Long =
+        pageNumber.toLong() shl 32 or (mcid.toLong() and 0xFFFFFFFFL)
 
     /**
      * PDFBox's stock extractor drops the MCID when a BDC operator uses the
@@ -145,6 +153,10 @@ internal object AndroidStructureTreeReader {
             return textByPageAndMcid[key(pageIndex, mcid)].orEmpty()
         }
 
+        /** 1-based page number of a structure element's page, if known. */
+        fun pageNumberOf(page: PDPage?): Int? =
+            page?.cosObject?.let(pageIndexByPage::get)?.plus(1)
+
         private fun key(pageIndex: Int, mcid: Int): Long =
             pageIndex.toLong() shl 32 or (mcid.toLong() and 0xFFFFFFFFL)
     }
@@ -152,12 +164,34 @@ internal object AndroidStructureTreeReader {
     private class Builder(
         private val texts: MarkedContentIndex,
         private val roleMap: Map<String, Any>,
+        private val images: List<PdfImage>,
     ) {
         val blocks = mutableListOf<Block>()
         private var sawText = false
+        private val imageByPageAndMcid = HashMap<Long, PdfImage>().apply {
+            for (image in images) {
+                if (image.mcid >= 0) putIfAbsent(imageKey(image.page, image.mcid), image)
+            }
+        }
+        private val usedImages =
+            Collections.newSetFromMap(IdentityHashMap<PdfImage, Boolean>())
 
         fun result(): DocumentModel? {
-            if (!sawText) return null
+            // Images the structure tree never referenced (drawn outside any
+            // Figure) still belong to the document — appended at the end,
+            // since the tagged path has no geometry to interleave them by.
+            val leftovers = images.filter { it !in usedImages }
+                .sortedWith(compareBy({ it.page }, { it.topY }))
+            for (image in leftovers) {
+                blocks += ImageBlock(
+                    bytes = image.bytes,
+                    mimeType = image.mimeType,
+                    widthPx = image.widthPx,
+                    heightPx = image.heightPx,
+                    confidence = CONFIDENCE,
+                )
+            }
+            if (!sawText && leftovers.isEmpty()) return null
             val paragraphs = blocks.filterIsInstance<Paragraph>()
             val rtl = paragraphs.count { it.style.direction == TextDirection.RTL }
             val defaultDirection =
@@ -183,7 +217,7 @@ internal object AndroidStructureTreeReader {
 
                 "Table" -> emitTable(element, depth)
 
-                "Figure" -> {} // images land with the media-part work
+                "Figure" -> emitFigure(element)
 
                 else -> {
                     // Unknown grouping types recurse; unknown leaves keep text.
@@ -214,6 +248,42 @@ internal object AndroidStructureTreeReader {
                 style = ParagraphStyle(kind = kind, direction = direction, listMarker = marker),
                 confidence = CONFIDENCE,
             )
+        }
+
+        /** A Figure resolves to its image through the marked-content ids. */
+        private fun emitFigure(element: PDStructureElement) {
+            val image = figureImage(element) ?: return
+            usedImages += image
+            sawText = true
+            blocks += ImageBlock(
+                bytes = image.bytes,
+                mimeType = image.mimeType,
+                widthPx = image.widthPx,
+                heightPx = image.heightPx,
+                confidence = CONFIDENCE,
+            )
+        }
+
+        private fun figureImage(element: PDStructureElement): PdfImage? {
+            val ids = mutableListOf<Pair<PDPage?, Int>>()
+            fun gather(node: PDStructureElement, depth: Int) {
+                if (depth > MAX_DEPTH) throw TooDeepException()
+                for (kid in node.kids.orEmpty()) {
+                    when (kid) {
+                        is PDStructureElement -> gather(kid, depth + 1)
+                        is Int -> ids += node.page to kid
+                        is COSInteger -> ids += node.page to kid.intValue()
+                        is PDMarkedContentReference -> ids += (kid.page ?: node.page) to kid.mcid
+                        is PDMarkedContent -> ids += node.page to kid.mcid
+                    }
+                }
+            }
+            gather(element, 0)
+            for ((page, mcid) in ids) {
+                val pageNumber = texts.pageNumberOf(page) ?: continue
+                imageByPageAndMcid[imageKey(pageNumber, mcid)]?.let { return it }
+            }
+            return null
         }
 
         private fun emitList(list: PDStructureElement, depth: Int) {

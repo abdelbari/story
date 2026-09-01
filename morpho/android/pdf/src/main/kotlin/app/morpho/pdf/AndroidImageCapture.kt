@@ -11,6 +11,7 @@ import com.tom_roush.pdfbox.contentstream.operator.state.Save
 import com.tom_roush.pdfbox.contentstream.operator.state.SetGraphicsStateParameters
 import com.tom_roush.pdfbox.contentstream.operator.state.SetMatrix
 import com.tom_roush.pdfbox.cos.COSBase
+import com.tom_roush.pdfbox.cos.COSDictionary
 import com.tom_roush.pdfbox.cos.COSName
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject
@@ -28,6 +29,7 @@ internal class AndroidImageCapture : PDFStreamEngine() {
     private val captured = mutableListOf<PdfImage>()
     private var pageNumber = 0
     private var pageHeight = 0f
+    private val mcidStack = ArrayDeque<Int>()
 
     init {
         addOperator(Concatenate())
@@ -43,12 +45,20 @@ internal class AndroidImageCapture : PDFStreamEngine() {
         for ((index, page) in doc.pages.withIndex()) {
             pageNumber = index + 1
             pageHeight = page.cropBox.height
+            mcidStack.clear()
             runCatching { processPage(page) }
         }
         return captured.toList()
     }
 
     override fun processOperator(operator: Operator, operands: List<COSBase>) {
+        when (operator.name) {
+            // Marked-content nesting: figures wrap their image draw in a
+            // /Figure <</MCID n>> BDC ... EMC block.
+            "BDC" -> { mcidStack.addLast(mcidOf(operands)); return }
+            "BMC" -> { mcidStack.addLast(-1); return }
+            "EMC" -> { mcidStack.removeLastOrNull(); return }
+        }
         if (operator.name != "Do") {
             super.processOperator(operator, operands)
             return
@@ -71,11 +81,23 @@ internal class AndroidImageCapture : PDFStreamEngine() {
                     mimeType = "image/png",
                     widthPx = xobject.width,
                     heightPx = xobject.height,
+                    mcid = mcidStack.lastOrNull { it >= 0 } ?: -1,
                 )
             }
             is PDFormXObject -> showForm(xobject)
             else -> {}
         }
+    }
+
+    private fun mcidOf(operands: List<COSBase>): Int {
+        if (operands.size < 2) return -1
+        val properties = when (val raw = operands[1]) {
+            is COSDictionary -> raw
+            is COSName ->
+                runCatching { resources?.getProperties(raw)?.cosObject }.getOrNull()
+            else -> null
+        }
+        return properties?.getInt(COSName.MCID, -1) ?: -1
     }
 
     private companion object {

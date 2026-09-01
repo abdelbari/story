@@ -11,14 +11,14 @@ import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.text.PDFTextStripper
 
 /**
- * PDF reader: position-aware extraction with layout reconstruction — the
- * first real slice of the plan's §5.3 untagged-PDF pipeline. Glyph positions
- * are captured line-by-line ([PositionTextStripper]) and clustered into
- * paragraphs with heading detection ([PdfLayout]). When position capture
- * yields nothing (empty page, exotic PDF), extraction falls back to plain
- * text routed through [PlainTextImporter], so it never regresses below the
- * naive path. The tagged fast path (reading the structure tree directly)
- * is still to come.
+ * PDF reader, plan §5.3: tagged PDFs take the fast path — structure and
+ * reading order come straight from the tags ([StructureTreeReader]), with
+ * Figure elements resolving to the images [ImageCapture] collected. For
+ * untagged PDFs, glyph positions are captured line-by-line
+ * ([PositionTextStripper]) and clustered into paragraphs with heading
+ * detection ([PdfLayout]). When position capture yields nothing (empty
+ * page, exotic PDF), extraction falls back to plain text routed through
+ * [PlainTextImporter], so it never regresses below the naive path.
  *
  * Confidence encodes honesty about the current stage: blocks from a tagged
  * PDF get 0.9, untagged extraction gets 0.6, and the Fidelity Report surfaces
@@ -45,14 +45,13 @@ class PdfReader {
             val tagged = doc.documentCatalog.structureTreeRoot != null
             val confidence = if (tagged) 0.9f else 0.6f
 
-            // Fast path: read structure straight from the tags when present.
-            // (Figures inside tagged PDFs are still to come; images are
-            // captured on the heuristic paths below.)
-            val fromTags =
-                if (tagged) runCatching { StructureTreeReader.read(doc) }.getOrNull() else null
-            if (fromTags != null) return fromTags
-
             val images = runCatching { ImageCapture().capture(doc) }.getOrDefault(emptyList())
+
+            // Fast path: read structure straight from the tags when present;
+            // Figure elements resolve to captured images via marked content.
+            val fromTags =
+                if (tagged) runCatching { StructureTreeReader.read(doc, images) }.getOrNull() else null
+            if (fromTags != null) return fromTags
             val lines = runCatching { PositionTextStripper().capture(doc) }
                 .getOrDefault(emptyList())
             if (lines.isNotEmpty()) {

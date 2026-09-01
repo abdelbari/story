@@ -34,12 +34,18 @@ class AndroidPdfReader(context: Context) {
             val tagged = doc.documentCatalog.structureTreeRoot != null
             val confidence = if (tagged) 0.9f else 0.6f
 
-            // Fast path: read structure straight from the tags when present.
+            val images = runCatching { AndroidImageCapture().capture(doc) }.getOrDefault(emptyList())
+
+            // Fast path: read structure straight from the tags when present;
+            // Figure elements resolve to captured images via marked content.
             val fromTags =
-                if (tagged) runCatching { AndroidStructureTreeReader.read(doc) }.getOrNull() else null
+                if (tagged) {
+                    runCatching { AndroidStructureTreeReader.read(doc, images) }.getOrNull()
+                } else {
+                    null
+                }
             if (fromTags != null) return fromTags
 
-            val images = runCatching { AndroidImageCapture().capture(doc) }.getOrDefault(emptyList())
             val lines = runCatching { AndroidPositionTextStripper().capture(doc) }
                 .getOrDefault(emptyList())
             if (lines.isNotEmpty()) {
