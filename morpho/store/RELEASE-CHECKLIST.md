@@ -14,6 +14,10 @@ git clone <repo> && cd morpho/android
 ./gradlew :app:installDebug        # with a device attached
 ```
 
+Never run an Android project from a clone before? `morpho/RUNNING.md` walks
+through it from installing Android Studio to the app on your phone, including
+the folder-to-open step that catches everyone.
+
 Work through, in this order — each exercises a path nothing else covers:
 
 - [ ] **A born-digital PDF → Word.** Headings, lists and tables should survive.
