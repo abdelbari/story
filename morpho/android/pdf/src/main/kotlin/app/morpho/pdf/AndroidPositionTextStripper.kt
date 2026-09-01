@@ -1,5 +1,6 @@
 package app.morpho.pdf
 
+import java.util.IdentityHashMap
 import app.morpho.engine.layout.pdf.PdfRun
 import app.morpho.engine.layout.pdf.PdfPageSheet
 import app.morpho.engine.layout.pdf.PdfLook
@@ -38,24 +39,18 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         val segments: List<PdfSegment>,
     )
 
-    /** A glyph's look before its line knows which baseline is the line's own. */
-    private class PendingLook(val baselineY: Float, val look: PdfLook)
-
     private val pending = mutableListOf<PendingLine>()
     /** The sheet of every page that drew text, filled as the pages are read. */
     private val sheets = HashMap<Int, FloatArray>()
     /** Overrules a broken ToUnicode map with the embedded font's own cmap. */
     private val glyphText = AndroidGlyphUnicode()
-    private val lineText = StringBuilder()
-    private val linePainters = mutableListOf<PendingLook?>()
-    private var lineXEnd = 0f
-    /** A word break the stripper offered, held until the next chunk says whether the page shows one. */
-    private var separatorPending = false
-    private var chunkEnd = Float.NEGATIVE_INFINITY
+    /** When each glyph was painted: the order PDFBox's own sort throws away. */
+    private val paintOrder = IdentityHashMap<TextPosition, Int>()
+    private var paintedSoFar = 0
+
+    private val lineGlyphs = mutableListOf<TextPosition>()
     private val lineSegments = mutableListOf<PdfSegment>()
-    private var lineX = Float.MAX_VALUE
     private var lineY = 0f
-    private var lineFontSize = 0f
     private var linePage = 0
 
     init {
@@ -67,6 +62,8 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         captured.clear()
         pending.clear()
         sheets.clear()
+        paintOrder.clear()
+        paintedSoFar = 0
         resetLine()
         writeText(document, Writer.nullWriter())
         flushLine()
@@ -89,9 +86,7 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
                 baselineY = line.baselineY,
                 maxFontSize = line.maxFontSize,
                 page = line.page,
-                runs = text.mapIndexed { index, c ->
-                    PdfRun(c.toString(), logical.painters[start + index])
-                },
+                runs = text.mapIndexed { index, c -> PdfRun(c.toString(), logical.painters[start + index]) },
                 segments = line.segments,
             )
         }
@@ -103,64 +98,144 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
     fun pages(): List<PdfPageSheet> =
         sheets.toSortedMap().map { (page, sheet) -> PdfPageSheet(page, sheet[0], sheet[1]) }
 
+    override fun processTextPosition(text: TextPosition) {
+        paintOrder[text] = paintedSoFar++
+        super.processTextPosition(text)
+    }
+
     override fun writeString(text: String, textPositions: List<TextPosition>) {
-        if (text.isBlank() || textPositions.isEmpty()) return
-        // The painted glyphs, not PDFBox's direction-corrected word: the
-        // line is reconstructed as a whole in flushLine.
-        val paintedText = StringBuilder()
-        val paintedLooks = mutableListOf<PendingLook?>()
-        for ((index, position) in textPositions.withIndex()) {
-            val unicode = ExtractedText.paintedForm(glyphText.of(position))
-            // A painted space with no room on the page between its
-            // neighbours — Word's Arabic justification leaves one inside
-            // a word — is not a word break; the page shows one word.
-            if (unicode.isNotEmpty() && unicode.isBlank() && isSwallowed(textPositions, index)) continue
-            paintedText.append(unicode)
-            val look = PendingLook(position.yDirAdj, lookOf(position))
-            repeat(unicode.length) { paintedLooks += look }
-        }
-        val painted = paintedText.toString()
-        if (painted.isEmpty()) return
+        if (textPositions.isEmpty()) return
         rememberSheet()
         val baselineY = textPositions.first().yDirAdj
-        if (lineText.isNotEmpty() && abs(baselineY - lineY) > SAME_LINE_TOLERANCE_PT) flushLine()
-        if (lineText.isEmpty()) {
+        if (lineGlyphs.isNotEmpty() && abs(baselineY - lineY) > SAME_LINE_TOLERANCE_PT) flushLine()
+        if (lineGlyphs.isEmpty()) {
             lineY = baselineY
             linePage = currentPageNo
         }
-        // A word break offered between two chunks that do not clear each
-        // other on the page is a kerning step, not a space: in الجزائر the
-        // ا is painted a hair to the left of the ز and the two arrive as
-        // separate chunks.
-        if (separatorPending) {
-            separatorPending = false
-            val start = textPositions.minOf { it.xDirAdj }
-            val size = textPositions.first().fontSizeInPt
-            if (lineText.isNotEmpty() && !lineText.endsWith(' ') &&
-                start - chunkEnd > VISIBLE_SPACE_SHARE * WORD_GAP_FACTOR * size
-            ) {
-                lineText.append(' ')
-                linePainters += null
-            }
+        lineGlyphs += textPositions
+        val ink = textPositions.filter { !it.unicode.isNullOrBlank() }
+        if (ink.isNotEmpty()) {
+            lineSegments += PdfSegment(
+                text = text.trim(),
+                xStart = ink.minOf { it.xDirAdj },
+                xEnd = ink.maxOf { it.xDirAdj + it.widthDirAdj },
+            )
         }
-        lineText.append(painted)
-        linePainters += paintedLooks
-        chunkEnd = textPositions.maxOf { it.xDirAdj + it.widthDirAdj }
-        lineX = min(lineX, textPositions.minOf { it.xDirAdj })
-        lineXEnd = max(lineXEnd, textPositions.maxOf { it.xDirAdj + it.widthDirAdj })
-        lineFontSize = max(lineFontSize, textPositions.maxOf { it.fontSizeInPt })
-        lineSegments += PdfSegment(
-            text = painted,
-            xStart = textPositions.minOf { it.xDirAdj },
-            xEnd = textPositions.maxOf { it.xDirAdj + it.widthDirAdj },
-        )
     }
 
-    private fun isSwallowed(positions: List<TextPosition>, index: Int): Boolean {
-        val space = positions[index]
-        val before = (index - 1 downTo 0).map { positions[it] }.firstOrNull { !it.unicode.isNullOrBlank() }
+    /** Word breaks come from the page, so PDFBox's own are not needed. */
+    override fun writeWordSeparator() = Unit
+
+    override fun writeLineSeparator() = flushLine()
+
+    override fun writeParagraphEnd() = flushLine()
+
+    override fun writePageEnd() = flushLine()
+
+    private fun flushLine() {
+        if (lineGlyphs.isEmpty()) {
+            resetLine()
+            return
+        }
+        val ordered = inVisualOrder(lineGlyphs)
+        val visual = StringBuilder()
+        val painters = mutableListOf<PdfLook?>()
+        val baseline = dominantBaseline(ordered)
+        val lineSize = ordered.filter { abs(it.yDirAdj - baseline) <= SAME_LINE_TOLERANCE_PT }
+            .maxOfOrNull { it.fontSizeInPt } ?: 0f
+        // A producer that painted its spaces is trusted on where the words
+        // are. Only one that painted none has its word breaks read from the
+        // gaps, as PDFBox's own stripper does — a kerning gap inside a word
+        // is otherwise easy to mistake for one.
+        val inferBreaks = ordered.none { glyphText.of(it).let { u -> u.isNotEmpty() && u.isBlank() } }
+        var previous: TextPosition? = null
+        for ((index, position) in ordered.withIndex()) {
+            val unicode = ExtractedText.paintedForm(glyphText.of(position))
+            if (unicode.isEmpty()) continue
+            // A painted space with no room on the page between its
+            // neighbours — Word's Arabic justification leaves one inside a
+            // word — is not a word break; the page shows one word.
+            if (unicode.isBlank() && isSwallowed(ordered, index)) continue
+            if (inferBreaks && previous != null && previous.widthDirAdj > 0f &&
+                unicode.isNotBlank() && !visual.endsWith(' ')
+            ) {
+                val gap = position.xDirAdj - (previous.xDirAdj + previous.widthDirAdj)
+                if (gap > WORD_GAP_FACTOR * position.fontSizeInPt) {
+                    visual.append(' ')
+                    painters += null
+                }
+            }
+            val look = lookOf(position, raised(position, baseline, lineSize))
+            visual.append(unicode)
+            repeat(unicode.length) { painters += look }
+            previous = position
+        }
+        val ink = ordered.filter { !it.unicode.isNullOrBlank() }
+        if (visual.isNotBlank() && ink.isNotEmpty()) {
+            pending += PendingLine(
+                visual = visual.toString(),
+                painters = painters,
+                x = ink.minOf { it.xDirAdj },
+                xEnd = ink.maxOf { it.xDirAdj + it.widthDirAdj },
+                baselineY = baseline,
+                maxFontSize = ordered.maxOf { it.fontSizeInPt },
+                page = linePage,
+                segments = lineSegments.toList(),
+            )
+        }
+        resetLine()
+    }
+
+    /**
+     * The line's glyphs left to right, with a kerning step counted as the
+     * step it is: in الجزائر the ا is painted right after the ز and a hair
+     * to its left, and sorted strictly by x the two come back swapped. A
+     * glyph painted right after another and barely to its left is not to
+     * its left in any sense that matters, so it takes a position just past
+     * it. A real step backwards — the next word of a right-to-left line —
+     * is many points wide and keeps its own place.
+     */
+    private fun inVisualOrder(glyphs: List<TextPosition>): List<TextPosition> {
+        val painted = glyphs.sortedBy { paintOrder[it] ?: 0 }
+        val sortsAt = IdentityHashMap<TextPosition, Float>()
+        var previous = Float.NEGATIVE_INFINITY
+        for (glyph in painted) {
+            val x = glyph.xDirAdj
+            val at = if (x < previous && previous - x <= KERNING_OVERLAP_PT) previous + 0.01f else x
+            sortsAt[glyph] = at
+            previous = at
+        }
+        return painted.sortedBy { sortsAt[it] ?: it.xDirAdj }
+    }
+
+    /** The baseline most of the line's glyphs sit on, to the half point. */
+    private fun dominantBaseline(line: List<TextPosition>): Float {
+        val counts = HashMap<Int, Int>()
+        for (glyph in line) {
+            if (glyph.unicode.isNullOrBlank()) continue
+            val bucket = (glyph.yDirAdj * 2f).toInt()
+            counts[bucket] = (counts[bucket] ?: 0) + 1
+        }
+        val bucket = counts.maxByOrNull { it.value }?.key ?: return lineY
+        return line.filter { (it.yDirAdj * 2f).toInt() == bucket }.maxOf { it.yDirAdj }
+    }
+
+    /** +1 for a smaller glyph raised off the line's baseline, -1 for one lowered, else 0. */
+    private fun raised(position: TextPosition, baseline: Float, lineSize: Float): Int {
+        if (lineSize <= 0f || position.fontSizeInPt >= lineSize) return 0
+        val lift = baseline - position.yDirAdj
+        return when {
+            lift > RAISED_SHARE * lineSize -> 1
+            lift < -RAISED_SHARE * lineSize -> -1
+            else -> 0
+        }
+    }
+
+    private fun isSwallowed(ordered: List<TextPosition>, index: Int): Boolean {
+        val space = ordered[index]
+        val before = (index - 1 downTo 0).map { ordered[it] }.firstOrNull { !it.unicode.isNullOrBlank() }
             ?: return false
-        val after = (index + 1 until positions.size).map { positions[it] }.firstOrNull { !it.unicode.isNullOrBlank() }
+        val after = (index + 1 until ordered.size).map { ordered[it] }.firstOrNull { !it.unicode.isNullOrBlank() }
             ?: return false
         val clear = after.xDirAdj - (before.xDirAdj + before.widthDirAdj)
         val needed = if (space.widthDirAdj > 0f) VISIBLE_SPACE_SHARE * space.widthDirAdj
@@ -168,18 +243,17 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         return clear < needed
     }
 
-    override fun writeWordSeparator() {
-        separatorPending = true
-    }
-
     /** The typeface, size, weight and slant a glyph was drawn in. */
-    private fun lookOf(position: TextPosition): PdfLook {
+    private fun lookOf(position: TextPosition, raised: Int): PdfLook {
         val name = position.font?.name
         return PdfLook(
             fontFamily = name?.substringAfter('+', name)?.substringBefore(',')?.trim()?.ifEmpty { null },
             fontSizePt = position.fontSizeInPt,
             bold = name?.contains("Bold", ignoreCase = true) ?: false,
-            italic = name?.let { it.contains("Italic", ignoreCase = true) || it.contains("Oblique", ignoreCase = true) } ?: false,
+            italic = name?.let {
+                it.contains("Italic", ignoreCase = true) || it.contains("Oblique", ignoreCase = true)
+            } ?: false,
+            raised = raised,
         )
     }
 
@@ -191,74 +265,23 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         }
     }
 
-    override fun writeLineSeparator() = flushLine()
-
-    override fun writeParagraphEnd() = flushLine()
-
-    override fun writePageEnd() = flushLine()
-
-    private fun flushLine() {
-        val visual = lineText.toString()
-        if (visual.isNotBlank()) {
-            pending += PendingLine(
-                visual = visual,
-                painters = raisedResolved(),
-                x = lineX,
-                xEnd = lineXEnd,
-                baselineY = lineY,
-                maxFontSize = lineFontSize,
-                page = linePage,
-                segments = lineSegments.toList(),
-            )
-        }
-        resetLine()
-    }
-
-    /**
-     * The line's looks with each glyph told whether it is raised: a smaller
-     * glyph off the baseline most of the line sits on is a superscript or a
-     * subscript, which only the whole line can say.
-     */
-    private fun raisedResolved(): List<PdfLook?> {
-        val baseline = linePainters.filterNotNull()
-            .groupingBy { (it.baselineY * 2f).toInt() }.eachCount()
-            .maxByOrNull { it.value }?.key?.let { it / 2f } ?: lineY
-        val lineSize = linePainters.filterNotNull()
-            .filter { abs(it.baselineY - baseline) <= SAME_LINE_TOLERANCE_PT }
-            .maxOfOrNull { it.look.fontSizePt } ?: 0f
-        return linePainters.map { pending ->
-            if (pending == null) return@map null
-            val look = pending.look
-            if (lineSize <= 0f || look.fontSizePt >= lineSize) return@map look
-            val lift = baseline - pending.baselineY
-            when {
-                lift > RAISED_SHARE * lineSize -> look.copy(raised = 1)
-                lift < -RAISED_SHARE * lineSize -> look.copy(raised = -1)
-                else -> look
-            }
-        }
-    }
-
     private fun resetLine() {
-        lineText.setLength(0)
-        linePainters.clear()
-        lineXEnd = 0f
-        separatorPending = false
-        chunkEnd = Float.NEGATIVE_INFINITY
+        lineGlyphs.clear()
         lineSegments.clear()
-        lineX = Float.MAX_VALUE
         lineY = 0f
-        lineFontSize = 0f
+        linePage = 0
     }
 
     private companion object {
-        /** Words further apart vertically than this start a new captured line. */
+        /** Glyphs further apart vertically than this sit on different lines. */
         const val SAME_LINE_TOLERANCE_PT = 2f
         /** A painted space needs this share of its own width clear between its neighbours to be a word break. */
         const val VISIBLE_SPACE_SHARE = 0.3f
-        /** The word gap, as a share of type size, a zero-width space glyph is measured against. */
+        /** A gap wider than this share of the type size is a word break, where no space was painted. */
         const val WORD_GAP_FACTOR = 0.2f
         /** A smaller glyph off the line's baseline by this share of its type size is raised or lowered. */
         const val RAISED_SHARE = 0.2f
+        /** A backward step no wider than this, right after the previous glyph, is kerning, not a new word. */
+        const val KERNING_OVERLAP_PT = 1.5f
     }
 }

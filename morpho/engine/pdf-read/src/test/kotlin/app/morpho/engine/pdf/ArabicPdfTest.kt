@@ -160,7 +160,43 @@ class ArabicPdfTest {
      * One untagged page painting الجزائر as two operations whose glyphs
      * overlap by a fraction of a point, the way the source document does.
      */
-    private fun kernedPdf(): ByteArray {
+    /**
+     * One untagged page painting a right-to-left line as two words: the
+     * first at the right, the second a word's width to its left, each
+     * painted left to right as a producer paints them.
+     */
+    private fun twoWordPdf(): ByteArray {
+        val bytes = ByteArrayOutputStream()
+        PDDocument().use { document ->
+            val page = PDPage(PDRectangle.A4)
+            document.addPage(page)
+            document.documentCatalog.language = "ar"
+            val font = PDType0Font.load(
+                document,
+                javaClass.getResourceAsStream("/fonts/NotoNaskhArabic-Regular.ttf")
+                    ?: error("test font missing"),
+                false,
+            )
+            val second = "في".reversed()
+            val secondWidth = font.getStringWidth(second) / 1000f * SIZE
+            PDPageContentStream(document, page).use { content ->
+                content.beginText()
+                content.setFont(font, SIZE)
+                content.newLineAtOffset(300f, 700f)
+                content.showText("الجزائر".reversed())
+                content.endText()
+                content.beginText()
+                content.setFont(font, SIZE)
+                content.newLineAtOffset(300f - secondWidth - WORD_GAP, 700f)
+                content.showText(second)
+                content.endText()
+            }
+            document.save(bytes)
+        }
+        return bytes.toByteArray()
+    }
+
+    private fun kernedPdf(gap: Float): ByteArray {
         val bytes = ByteArrayOutputStream()
         PDDocument().use { document ->
             val page = PDPage(PDRectangle.A4)
@@ -186,7 +222,7 @@ class ArabicPdfTest {
                 content.endText()
                 content.beginText()
                 content.setFont(font, SIZE)
-                content.newLineAtOffset(200f + headWidth - 0.4f, 700f)
+                content.newLineAtOffset(200f + headWidth + gap, 700f)
                 content.showText(tail)
                 content.endText()
             }
@@ -272,11 +308,19 @@ class ArabicPdfTest {
 
 
     @Test
-    fun `a kerned glyph does not split a word on the untagged path`() {
-        // The ا of الجزائر is painted a hair to the left of the ز, so the
-        // stripper is offered a word break where the page shows none.
-        val pdf = kernedPdf()
-        assertEquals("الجزائر", paragraphText(pdf))
+    fun `a kerned glyph keeps its place in the word on the untagged path`() {
+        // Painted in content order — ز then ا, the ا a fraction of a point
+        // to the left — and sorted strictly by x the two come back swapped,
+        // which is how الجزائر became الجازئر.
+        assertEquals("الجزائر", paragraphText(kernedPdf(gap = -0.4f)))
+    }
+
+    @Test
+    fun `a real step backwards is still the next word`() {
+        // A right-to-left line places its next word to the left: a step
+        // backwards of a whole word, which the kerning rule must not treat
+        // as a hair and glue on.
+        assertEquals("الجزائر في", paragraphText(twoWordPdf()))
     }
 
     @Test
