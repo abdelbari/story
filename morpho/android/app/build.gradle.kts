@@ -60,6 +60,18 @@ android {
         }
     }
 
+    // Play splits an App Bundle's resources by language and delivers only
+    // the ones matching the device's *system* locales. Morpho has its own
+    // in-app language picker, so an Arabic reader on an English-locale phone
+    // would switch to Arabic and find no Arabic strings had been installed —
+    // silently falling back to English, in the app whose reason to exist is
+    // Arabic. Five languages of strings cost kilobytes; ship them all.
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

@@ -50,21 +50,6 @@ fun HomeScreen(viewModel: ConvertViewModel) {
     // Local state: which screen is showing is not worth surviving process
     // death, unlike a conversion.
     var showAbout by remember { mutableStateOf(false) }
-    if (showAbout) {
-        AboutScreen(onClose = { showAbout = false })
-        return
-    }
-
-    val openReview = review
-    if (openReview != null) {
-        ReviewScreen(
-            state = openReview,
-            onReclassify = viewModel::reclassify,
-            onSaveCorrected = viewModel::saveCorrected,
-            onClose = viewModel::hideReview,
-        )
-        return
-    }
 
     val openLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -104,6 +89,24 @@ fun HomeScreen(viewModel: ConvertViewModel) {
             }
             else -> {}
         }
+    }
+
+    // Below the launchers and the save effect on purpose: a conversion that
+    // finishes while one of these screens is open still gets its save dialog.
+    if (showAbout) {
+        AboutScreen(onClose = { showAbout = false })
+        return
+    }
+
+    val openReview = review
+    if (openReview != null) {
+        ReviewScreen(
+            state = openReview,
+            onReclassify = viewModel::reclassify,
+            onSaveCorrected = viewModel::saveCorrected,
+            onClose = viewModel::hideReview,
+        )
+        return
     }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -171,7 +174,9 @@ private fun StateContent(state: ConvertUiState) {
 
         is ConvertUiState.Converting -> {
             if (state.pageCount > 0) {
-                PageProgress(state.page.toFloat() / state.pageCount)
+                // page is the one being read, so pages *finished* is one
+                // less: the bar should not sit at 100% during the last page.
+                PageProgress((state.page - 1).coerceAtLeast(0).toFloat() / state.pageCount)
                 Text(stringResource(R.string.converting_pages, state.page, state.pageCount))
             } else {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -316,6 +321,7 @@ private fun FailReason.messageRes(): Int = when (this) {
     FailReason.SCANNED_PDF -> R.string.scanned_pdf
     FailReason.ENCRYPTED_PDF -> R.string.encrypted_pdf
     FailReason.OCR_EMPTY -> R.string.ocr_empty
+    FailReason.TOO_LARGE -> R.string.too_large
     FailReason.READ_ERROR -> R.string.read_error
     FailReason.WRITE_ERROR -> R.string.write_error
 }

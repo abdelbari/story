@@ -54,7 +54,7 @@ sealed interface ConvertUiState {
 }
 
 enum class FailReason {
-    UNSUPPORTED_TYPE, SCANNED_PDF, ENCRYPTED_PDF, OCR_EMPTY, READ_ERROR, WRITE_ERROR
+    UNSUPPORTED_TYPE, SCANNED_PDF, ENCRYPTED_PDF, OCR_EMPTY, TOO_LARGE, READ_ERROR, WRITE_ERROR
 }
 
 /** What Review Mode shows: the report, and which blocks the reader corrected. */
@@ -118,6 +118,17 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         ocrCancelled.set(true)
     }
 
+    /**
+     * The recognizer runs a blocking native call with no suspension point,
+     * so cancelling [viewModelScope] cannot reach it. Without this, leaving
+     * the app mid-OCR leaves Tesseract chewing through a document nobody is
+     * waiting for.
+     */
+    override fun onCleared() {
+        super.onCleared()
+        ocrCancelled.set(true)
+    }
+
     private val _review = MutableStateFlow<ReviewState?>(null)
 
     /** Non-null while Review Mode is open, holding what it shows. */
@@ -160,6 +171,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         _review.value = null
         _state.value = ConvertUiState.Converting()
         viewModelScope.launch(Dispatchers.IO) {
+            // runCatching catches Throwable, so an OutOfMemoryError here is
+            // already a failed conversion rather than a dead process.
             val bytes = runCatching { write(model) }.getOrNull()
             if (bytes == null) {
                 _state.value = ConvertUiState.Failed(FailReason.WRITE_ERROR)
@@ -171,6 +184,16 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun onPicked(uri: Uri) {
+        // Synchronously, before the IO hop: a second document arriving from
+        // the share sheet must invalidate the previous conversion's model
+        // immediately, or a correction tap racing the query could write a
+        // report for a file that is no longer picked.
+        lastReport = null
+        lastModel = null
+        lastWriter = null
+        editedBlocks.clear()
+        _review.value = null
+
         viewModelScope.launch(Dispatchers.IO) {
             // DocumentsProviders can be slow (cloud providers, network
             // shares); never query them on the main thread.
@@ -191,16 +214,16 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                 isPdf = mime == "application/pdf" || name.lowercase().endsWith(".pdf"),
             )
             pickedFile = PickedFile(uri, state)
-            lastReport = null
-            lastModel = null
-            lastWriter = null
-            editedBlocks.clear()
-            _review.value = null
             _state.value = state
         }
     }
 
     fun convert() {
+        // Two taps inside one frame would start two conversions racing for
+        // outputBytes, and the save dialog would write the loser's bytes
+        // under the winner's name.
+        if (_state.value is ConvertUiState.Converting) return
+
         val (uri, source) = pickedFile ?: return
         lastOperation = ::convert
         _state.value = ConvertUiState.Converting()
@@ -269,14 +292,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
             return
         }
-        val output = try {
-            val model = read(input)
-            lastModel = model
-            lastWriter = write
-            lastMimeType = mimeType
-            lastReport = FidelityReport.of(model)
-            editedBlocks.clear()
-            write(model)
+        val model = try {
+            read(input)
         } catch (e: UnconvertibleContent) {
             _state.value = ConvertUiState.Failed(e.reason)
             return
@@ -286,8 +303,32 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         } catch (e: AndroidOcrReader.Cancelled) {
             _state.value = pickedFile?.meta ?: ConvertUiState.Idle
             return
+        } catch (e: OutOfMemoryError) {
+            // Rendering a page to a bitmap can exhaust the heap on a big
+            // document. An Error is not an Exception, so without this the
+            // process would simply die, taking the work and the error
+            // message with it.
+            _state.value = ConvertUiState.Failed(FailReason.TOO_LARGE)
+            return
         } catch (e: Exception) {
             _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
+            return
+        }
+        lastModel = model
+        lastWriter = write
+        lastMimeType = mimeType
+        lastReport = FidelityReport.of(model)
+        editedBlocks.clear()
+
+        val output = try {
+            write(model)
+        } catch (e: OutOfMemoryError) {
+            _state.value = ConvertUiState.Failed(FailReason.TOO_LARGE)
+            return
+        } catch (e: Exception) {
+            // Writing failed, not reading: saying "couldn't read that file"
+            // would send the user to re-pick a file that was read fine.
+            _state.value = ConvertUiState.Failed(FailReason.WRITE_ERROR)
             return
         }
         outputBytes = output
@@ -302,6 +343,11 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
      * but never leaves the device.
      */
     fun convertWithOcr() {
+        // Two taps inside one frame would start two conversions racing for
+        // outputBytes, and the save dialog would write the loser's bytes
+        // under the winner's name.
+        if (_state.value is ConvertUiState.Converting) return
+
         val (uri, source) = pickedFile ?: return
         lastOperation = ::convertWithOcr
         _state.value = ConvertUiState.Converting()
@@ -347,6 +393,11 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
 
     /** Text, Markdown or Word input → a real .pdf file via the save dialog. */
     fun exportPdf() {
+        // Two taps inside one frame would start two conversions racing for
+        // outputBytes, and the save dialog would write the loser's bytes
+        // under the winner's name.
+        if (_state.value is ConvertUiState.Converting) return
+
         val (uri, source) = pickedFile ?: return
         lastOperation = ::exportPdf
         _state.value = ConvertUiState.Converting()
@@ -361,6 +412,11 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
 
     /** Text, Markdown or Word input → print-ready HTML → the system print sheet. */
     fun printPdf() {
+        // Two taps inside one frame would start two conversions racing for
+        // outputBytes, and the save dialog would write the loser's bytes
+        // under the winner's name.
+        if (_state.value is ConvertUiState.Converting) return
+
         val (uri, source) = pickedFile ?: return
         lastOperation = ::printPdf
         _state.value = ConvertUiState.Converting()

@@ -55,4 +55,5 @@
     <string name="about_license_title">Licence Apache 2.0</string>
     <string name="encrypted_pdf">Ce PDF est protégé par un mot de passe. Ouvrez-le dans une application PDF, retirez la protection, puis réessayez.</string>
     <string name="ocr_empty">Rien n’a pu être lu sur ce document numérisé. Il est peut-être vide, ou dans une écriture pour laquelle Morpho n’a pas encore de modèle.</string>
+    <string name="too_large">Ce document demande plus de mémoire que cet appareil n’en a. Essayez un fichier plus petit, ou divisez-le.</string>
 </resources>

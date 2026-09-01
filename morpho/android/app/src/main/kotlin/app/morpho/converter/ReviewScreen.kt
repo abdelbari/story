@@ -28,6 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,9 +65,10 @@ fun ReviewScreen(
 
     val report = state.report
     val flagged = report.reviewables
-    // No key: the filter is the reader's choice and must survive a
-    // correction, which replaces the report with a recomputed one.
-    var flaggedOnly by remember { mutableStateOf(flagged.isNotEmpty()) }
+    // No key: the filter is the reader's choice and must survive both a
+    // correction (which replaces the report with a recomputed one) and a
+    // rotation, hence saveable.
+    var flaggedOnly by rememberSaveable { mutableStateOf(flagged.isNotEmpty()) }
     val shown = if (flaggedOnly) flagged else report.entries
 
     Column(

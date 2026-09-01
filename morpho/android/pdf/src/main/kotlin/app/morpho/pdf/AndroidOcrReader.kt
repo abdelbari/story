@@ -116,8 +116,17 @@ class AndroidOcrReader(private val context: Context) {
         for (language in languages.split('+')) {
             val target = File(tessdata, "$language$TRAINED_DATA_SUFFIX")
             if (target.length() > 0L) continue
+            // Copy aside and rename: these files run to megabytes, and a copy
+            // interrupted by the process dying would leave a short but
+            // non-empty file that the length check above skips forever after,
+            // breaking OCR permanently until the user clears app data.
+            val partial = File(tessdata, "$language$TRAINED_DATA_SUFFIX.part")
             context.assets.open("$TESSDATA_DIR/$language$TRAINED_DATA_SUFFIX").use { input ->
-                target.outputStream().use { output -> input.copyTo(output) }
+                partial.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (!partial.renameTo(target)) {
+                partial.delete()
+                error("Could not install the $language OCR model")
             }
         }
         return parent
