@@ -236,6 +236,8 @@ class TaggedPdfTest {
 
     @Test
     fun `an empty structure shell falls back to the position heuristics`() {
+        // The image is the trap: an empty tree plus a captured image must not
+        // become an images-only "tagged" model that silently drops the text.
         val pdf = PDDocument().use { doc ->
             val page = PDPage(PDRectangle.A4)
             doc.addPage(page)
@@ -247,12 +249,21 @@ class TaggedPdfTest {
                 content.newLineAtOffset(72f, 700f)
                 content.showText("untagged body text")
                 content.endText()
+                val awt = BufferedImage(20, 12, BufferedImage.TYPE_INT_RGB)
+                content.drawImage(LosslessFactory.createFromImage(doc, awt), 72f, 500f, 20f, 12f)
             }
             val out = ByteArrayOutputStream()
             doc.save(out)
             out.toByteArray()
         }
-        val paras = paragraphs(pdf)
-        assertEquals("untagged body text", paras.single().text)
+        val model = PdfReader().extract(pdf)
+        val para = model.blocks.filterIsInstance<Paragraph>().single()
+        assertEquals("untagged body text", para.text)
+        assertEquals(1, model.blocks.filterIsInstance<ImageBlock>().size)
+        // The heuristics did the work, so the score must say so.
+        assertTrue(
+            model.blocks.all { it.confidence == 0.6f },
+            "fallback of a tagged PDF scores as untagged extraction",
+        )
     }
 }

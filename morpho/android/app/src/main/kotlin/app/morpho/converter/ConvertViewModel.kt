@@ -6,6 +6,7 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.HtmlWriter
 import app.morpho.engine.layout.MarkdownWriter
 import app.morpho.engine.layout.PlainTextImporter
@@ -59,8 +60,17 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     private val _state = MutableStateFlow<ConvertUiState>(ConvertUiState.Idle)
     val state: StateFlow<ConvertUiState> = _state.asStateFlow()
 
-    private var pickedUri: Uri? = null
-    private var picked: ConvertUiState.Picked? = null
+    /**
+     * The picked document and its metadata, published as one reference so a
+     * second pick racing in (share sheet vs. picker result) can never pair
+     * one file's bytes with another file's type routing.
+     */
+    private data class PickedFile(val uri: Uri, val meta: ConvertUiState.Picked)
+
+    private var pickedFile: PickedFile? = null
+
+    /** Whichever conversion ran last — "Try again" repeats it, not convert(). */
+    private var lastOperation: (() -> Unit)? = null
     private var outputBytes: ByteArray? = null
     private var outputName: String = ""
 
@@ -77,7 +87,6 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                     }
             }
             val mime = runCatching { resolver.getType(uri) }.getOrNull()
-            pickedUri = uri
             val state = ConvertUiState.Picked(
                 fileName = name,
                 mime = mime,
@@ -85,26 +94,18 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                     name.lowercase().endsWith(".docx"),
                 isPdf = mime == "application/pdf" || name.lowercase().endsWith(".pdf"),
             )
-            picked = state
+            pickedFile = PickedFile(uri, state)
             _state.value = state
         }
     }
 
     fun convert() {
-        val uri = pickedUri ?: return
-        val source = picked ?: return
+        val (uri, source) = pickedFile ?: return
+        lastOperation = ::convert
         _state.value = ConvertUiState.Converting
         viewModelScope.launch(Dispatchers.IO) {
-            val mime = source.mime.orEmpty()
-            val lowerName = source.fileName.lowercase()
-            val isPdf = source.isPdf
-            // A null or blank provider MIME alone is no evidence of text — an
-            // unknown binary would convert to garbage. Extensions decide.
-            val looksTextual = mime.startsWith("text/") ||
-                listOf(".txt", ".md", ".markdown").any { lowerName.endsWith(it) }
-
             when {
-                isPdf -> convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
+                source.isPdf -> convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
                     val model = AndroidPdfReader(getApplication()).extract(bytes)
                     val hasText = model.blocks.filterIsInstance<Paragraph>()
                         .any { it.text.isNotBlank() }
@@ -114,12 +115,29 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                 source.isWordDocument -> convertPicked(uri, source, "md", MARKDOWN_MIME) { bytes ->
                     MarkdownWriter.write(DocxReader.read(bytes)).toByteArray(Charsets.UTF_8)
                 }
-                looksTextual -> convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
+                looksTextual(source) -> convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
                     DocxWriter.toByteArray(PlainTextImporter.import(bytes.toString(Charsets.UTF_8)))
                 }
                 else -> _state.value = ConvertUiState.Failed(FailReason.UNSUPPORTED_TYPE)
             }
         }
+    }
+
+    /**
+     * A null or blank provider MIME alone is no evidence of text — an
+     * unknown binary would convert to garbage. Extensions decide.
+     */
+    private fun looksTextual(source: ConvertUiState.Picked): Boolean {
+        val lowerName = source.fileName.lowercase()
+        return source.mime.orEmpty().startsWith("text/") ||
+            listOf(".txt", ".md", ".markdown").any { lowerName.endsWith(it) }
+    }
+
+    /** Model for the PDF-export paths; refuses inputs that aren't documents. */
+    private fun modelOf(bytes: ByteArray, source: ConvertUiState.Picked): DocumentModel = when {
+        source.isWordDocument -> DocxReader.read(bytes)
+        looksTextual(source) -> PlainTextImporter.import(bytes.toString(Charsets.UTF_8))
+        else -> throw UnconvertibleContent(FailReason.UNSUPPORTED_TYPE)
     }
 
     private fun convertPicked(
@@ -153,23 +171,20 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
 
     /** Text, Markdown or Word input → a real .pdf file via the save dialog. */
     fun exportPdf() {
-        val uri = pickedUri ?: return
-        val source = picked ?: return
+        val (uri, source) = pickedFile ?: return
+        lastOperation = ::exportPdf
         _state.value = ConvertUiState.Converting
         viewModelScope.launch(Dispatchers.IO) {
             convertPicked(uri, source, "pdf", PDF_MIME) { bytes ->
-                val model =
-                    if (source.isWordDocument) DocxReader.read(bytes)
-                    else PlainTextImporter.import(bytes.toString(Charsets.UTF_8))
-                PdfFileExporter.render(model)
+                PdfFileExporter.render(modelOf(bytes, source))
             }
         }
     }
 
     /** Text, Markdown or Word input → print-ready HTML → the system print sheet. */
     fun printPdf() {
-        val uri = pickedUri ?: return
-        val source = picked ?: return
+        val (uri, source) = pickedFile ?: return
+        lastOperation = ::printPdf
         _state.value = ConvertUiState.Converting
         viewModelScope.launch(Dispatchers.IO) {
             val input = runCatching {
@@ -181,23 +196,25 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                 return@launch
             }
             val jobName = source.fileName.substringBeforeLast('.').ifEmpty { "document" }
-            val html = runCatching {
-                val model =
-                    if (source.isWordDocument) DocxReader.read(input)
-                    else PlainTextImporter.import(input.toString(Charsets.UTF_8))
-                HtmlWriter.write(model, jobName)
-            }.getOrNull()
-            if (html == null) {
+            try {
+                val html = HtmlWriter.write(modelOf(input, source), jobName)
+                _state.value = ConvertUiState.ReadyToPrint(html, jobName)
+            } catch (e: UnconvertibleContent) {
+                _state.value = ConvertUiState.Failed(e.reason)
+            } catch (e: Exception) {
                 _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
-                return@launch
             }
-            _state.value = ConvertUiState.ReadyToPrint(html, jobName)
         }
+    }
+
+    /** Re-runs whichever conversion just failed. */
+    fun retry() {
+        lastOperation?.invoke()
     }
 
     /** The print job is with the system UI; return to the picked state. */
     fun onPrintHandedOff() {
-        _state.value = picked ?: ConvertUiState.Idle
+        _state.value = pickedFile?.meta ?: ConvertUiState.Idle
     }
 
     /** The UI has launched the system save dialog for the current result. */
@@ -223,7 +240,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
             }
-            _state.value = picked ?: ConvertUiState.Idle
+            _state.value = pickedFile?.meta ?: ConvertUiState.Idle
             return
         }
         viewModelScope.launch(Dispatchers.IO) {

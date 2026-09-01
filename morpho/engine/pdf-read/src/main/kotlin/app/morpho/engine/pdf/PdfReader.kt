@@ -20,9 +20,9 @@ import org.apache.pdfbox.text.PDFTextStripper
  * page, exotic PDF), extraction falls back to plain text routed through
  * [PlainTextImporter], so it never regresses below the naive path.
  *
- * Confidence encodes honesty about the current stage: blocks from a tagged
- * PDF get 0.9, untagged extraction gets 0.6, and the Fidelity Report surfaces
- * exactly that.
+ * Confidence encodes honesty about the path that actually ran: blocks read
+ * from the tags get 0.9; every heuristic path gets 0.6, even when a tree
+ * exists but yielded nothing. The Fidelity Report surfaces exactly that.
  */
 class PdfReader {
 
@@ -43,7 +43,6 @@ class PdfReader {
     fun extract(bytes: ByteArray): DocumentModel =
         PDDocument.load(bytes).use { doc ->
             val tagged = doc.documentCatalog.structureTreeRoot != null
-            val confidence = if (tagged) 0.9f else 0.6f
 
             val images = runCatching { ImageCapture().capture(doc) }.getOrDefault(emptyList())
 
@@ -52,6 +51,9 @@ class PdfReader {
             val fromTags =
                 if (tagged) runCatching { StructureTreeReader.read(doc, images) }.getOrNull() else null
             if (fromTags != null) return fromTags
+            // Everything below ran the position heuristics, so it scores as
+            // untagged — even when a tree exists but yielded nothing.
+            val confidence = 0.6f
             val lines = runCatching { PositionTextStripper().capture(doc) }
                 .getOrDefault(emptyList())
             if (lines.isNotEmpty()) {

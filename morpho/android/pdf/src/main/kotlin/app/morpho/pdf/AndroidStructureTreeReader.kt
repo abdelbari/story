@@ -177,6 +177,10 @@ internal object AndroidStructureTreeReader {
             Collections.newSetFromMap(IdentityHashMap<PdfImage, Boolean>())
 
         fun result(): DocumentModel? {
+            // A tree that yielded nothing (an empty shell) must not claim
+            // the document, images or not: the position heuristics see text
+            // and images alike, so falling back can only gain information.
+            if (!sawText) return null
             // Images the structure tree never referenced (drawn outside any
             // Figure) still belong to the document — appended at the end,
             // since the tagged path has no geometry to interleave them by.
@@ -191,7 +195,6 @@ internal object AndroidStructureTreeReader {
                     confidence = CONFIDENCE,
                 )
             }
-            if (!sawText && leftovers.isEmpty()) return null
             val paragraphs = blocks.filterIsInstance<Paragraph>()
             val rtl = paragraphs.count { it.style.direction == TextDirection.RTL }
             val defaultDirection =

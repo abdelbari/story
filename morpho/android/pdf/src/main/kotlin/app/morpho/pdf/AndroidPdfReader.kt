@@ -19,9 +19,10 @@ import com.tom_roush.pdfbox.text.PDFTextStripper
  * :engine:layout; only the ~100-line position stripper is mirrored. Keep the
  * twins in sync until the shared-source split lands.
  *
- * Confidence follows the engine convention: 0.9 for tagged PDFs, 0.6 for
- * untagged extraction. A scanned PDF (no text layer) yields a model with no
- * text — callers decide how to surface that until M3 brings OCR.
+ * Confidence follows the engine convention: 0.9 when the tags were actually
+ * read, 0.6 for every heuristic path — even when a tree exists but yielded
+ * nothing. A scanned PDF (no text layer) yields a model with no text —
+ * callers decide how to surface that until M3 brings OCR.
  */
 class AndroidPdfReader(context: Context) {
 
@@ -32,7 +33,6 @@ class AndroidPdfReader(context: Context) {
     fun extract(bytes: ByteArray): DocumentModel =
         PDDocument.load(bytes).use { doc ->
             val tagged = doc.documentCatalog.structureTreeRoot != null
-            val confidence = if (tagged) 0.9f else 0.6f
 
             val images = runCatching { AndroidImageCapture().capture(doc) }.getOrDefault(emptyList())
 
@@ -45,6 +45,9 @@ class AndroidPdfReader(context: Context) {
                     null
                 }
             if (fromTags != null) return fromTags
+            // Everything below ran the position heuristics, so it scores as
+            // untagged — even when a tree exists but yielded nothing.
+            val confidence = 0.6f
 
             val lines = runCatching { AndroidPositionTextStripper().capture(doc) }
                 .getOrDefault(emptyList())

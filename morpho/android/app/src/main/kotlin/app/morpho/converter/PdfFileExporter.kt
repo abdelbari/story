@@ -194,12 +194,17 @@ internal object PdfFileExporter {
         }
         for (row in block.rows) {
             val cellLayouts = row.cells.map { cell ->
+                // Numbered items restart per cell, same contiguity rule as
+                // the top-level walk.
+                var numbered = 0
                 cell.blocks.filterIsInstance<Paragraph>()
                     .filter { it.text.isNotEmpty() }
                     .map { para ->
+                        numbered =
+                            if (para.style.listMarker == ListMarker.NUMBERED) numbered + 1 else 0
                         val direction = para.style.direction ?: defaultDirection
                         layout(
-                            spannable(para, numberedCount = 0),
+                            spannable(para, numbered),
                             paintFor(para.style.kind),
                             direction,
                             para.style.alignment,

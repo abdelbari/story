@@ -111,6 +111,7 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                         onConvert = viewModel::convert,
                         onExportPdf = viewModel::exportPdf,
                         onPrint = viewModel::printPdf,
+                        onRetry = viewModel::retry,
                     )
                 }
             }
@@ -165,6 +166,7 @@ private fun StateActions(
     onConvert: () -> Unit,
     onExportPdf: () -> Unit,
     onPrint: () -> Unit,
+    onRetry: () -> Unit,
 ) {
     when (state) {
         is ConvertUiState.Idle ->
@@ -204,7 +206,9 @@ private fun StateActions(
                 Text(stringResource(R.string.pick_document))
             }
             if (state.reason == FailReason.READ_ERROR || state.reason == FailReason.WRITE_ERROR) {
-                TextButton(onClick = onConvert, modifier = Modifier.fillMaxWidth()) {
+                // Repeats whichever conversion failed — a failed PDF export
+                // must not retry as a Word conversion.
+                TextButton(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.retry))
                 }
             }
