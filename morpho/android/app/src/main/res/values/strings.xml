@@ -59,4 +59,6 @@
     <string name="too_large">This document needs more memory than this device has. Try a smaller file, or split it into parts.</string>
     <string name="converted_ready">Converted — ready to save.</string>
     <string name="save_file">Save file</string>
+    <string name="preview_title">Preview</string>
+    <string name="preview_open">Show the document</string>
 </resources>

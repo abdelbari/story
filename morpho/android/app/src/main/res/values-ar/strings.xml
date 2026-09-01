@@ -58,4 +58,6 @@
     <string name="too_large">يحتاج هذا المستند إلى ذاكرة أكبر مما يتوفر في هذا الجهاز. جرّب ملفًا أصغر أو قسّمه إلى أجزاء.</string>
     <string name="converted_ready">تم التحويل — جاهز للحفظ.</string>
     <string name="save_file">احفظ الملف</string>
+    <string name="preview_title">معاينة</string>
+    <string name="preview_open">عرض المستند</string>
 </resources>

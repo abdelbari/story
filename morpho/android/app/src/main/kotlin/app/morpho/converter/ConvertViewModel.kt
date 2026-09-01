@@ -50,6 +50,8 @@ sealed interface ConvertUiState {
         val mimeType: String,
         val bytes: ByteArray,
         val needsReview: Boolean = false,
+        /** The document rendered for the preview screen; what the file holds. */
+        val previewHtml: String = "",
     ) : ConvertUiState
 
     /** The reader asked to save; the UI opens the system dialog for this. */
@@ -143,6 +145,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
      * output without re-reading (or re-OCR-ing) the source.
      */
     private var lastModel: DocumentModel? = null
+    /** [lastModel] rendered once for the preview; refreshed with every correction. */
+    private var lastPreviewHtml: String = ""
     private var lastWriter: ((DocumentModel) -> ByteArray)? = null
     private var lastMimeType: String = DocxWriter.MIME_TYPE
     private val editedBlocks = mutableSetOf<Int>()
@@ -200,6 +204,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         val corrected = model.copy(blocks = blocks)
         val report = FidelityReport.of(corrected)
         lastModel = corrected
+        lastPreviewHtml = HtmlWriter.write(corrected, outputName)
         lastReport = report
         editedBlocks += index
         _review.value = ReviewState(report, editedBlocks.toSet())
@@ -236,6 +241,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         ocrCancelled.set(true)
         lastReport = null
         lastModel = null
+        lastPreviewHtml = ""
         lastWriter = null
         editedBlocks.clear()
         _review.value = null
@@ -371,6 +377,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         val base = source.fileName.substringBeforeLast('.').ifEmpty { "converted" }
         outputName = "$base.$extension"
         lastModel = model
+        lastPreviewHtml = HtmlWriter.write(model, outputName)
         lastWriter = write
         lastMimeType = mimeType
         lastReport = FidelityReport.of(model)
@@ -387,7 +394,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             publish(epoch, ConvertUiState.Failed(FailReason.WRITE_ERROR))
             return
         }
-        publish(epoch, ConvertUiState.Converted(outputName, mimeType, output, needsReview()))
+        publish(epoch, ConvertUiState.Converted(outputName, mimeType, output, needsReview(), lastPreviewHtml))
     }
 
     /**
@@ -550,7 +557,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             // Dismissing the dialog must not discard the conversion: offer
             // it again rather than making the reader convert a second time.
             _state.value = pending?.let {
-                ConvertUiState.Converted(it.suggestedName, it.mimeType, it.bytes, needsReview())
+                ConvertUiState.Converted(it.suggestedName, it.mimeType, it.bytes, needsReview(), lastPreviewHtml)
             } ?: pickedFile?.meta ?: ConvertUiState.Idle
             return
         }

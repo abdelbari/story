@@ -58,4 +58,6 @@
     <string name="too_large">Este documento necesita más memoria de la que tiene este dispositivo. Prueba con un archivo más pequeño o divídelo.</string>
     <string name="converted_ready">Convertido: listo para guardar.</string>
     <string name="save_file">Guardar archivo</string>
+    <string name="preview_title">Vista previa</string>
+    <string name="preview_open">Mostrar el documento</string>
 </resources>

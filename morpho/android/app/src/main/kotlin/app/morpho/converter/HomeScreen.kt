@@ -50,6 +50,10 @@ fun HomeScreen(viewModel: ConvertViewModel) {
     // Local state: which screen is showing is not worth surviving process
     // death, unlike a conversion.
     var showAbout by remember { mutableStateOf(false) }
+    // Opens on its own when a conversion finishes. Keyed on being in the
+    // Converted state, so closing it for this document does not keep it
+    // closed for the next one.
+    var showPreview by remember(state is ConvertUiState.Converted) { mutableStateOf(true) }
 
     val openLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -119,6 +123,20 @@ fun HomeScreen(viewModel: ConvertViewModel) {
         return
     }
 
+    // After Review on purpose: Review Mode opened from the preview shows on
+    // top of it, and closing Review lands back on the preview.
+    val converted = state as? ConvertUiState.Converted
+    if (converted != null && showPreview) {
+        PreviewScreen(
+            html = converted.previewHtml,
+            fileName = converted.suggestedName,
+            onSave = viewModel::requestSave,
+            onReview = viewModel::showReview,
+            onClose = { showPreview = false },
+        )
+        return
+    }
+
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
             modifier = Modifier
@@ -156,6 +174,7 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                         onReview = viewModel::showReview,
                         onCancel = viewModel::cancelOcr,
                         onSave = viewModel::requestSave,
+                        onPreview = { showPreview = true },
                     )
                 }
             }
@@ -275,6 +294,7 @@ private fun StateActions(
     onReview: () -> Unit,
     onCancel: () -> Unit,
     onSave: () -> Unit,
+    onPreview: () -> Unit,
 ) {
     when (state) {
         is ConvertUiState.Idle ->
@@ -316,6 +336,9 @@ private fun StateActions(
         is ConvertUiState.Converted -> {
             Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.save_file))
+            }
+            TextButton(onClick = onPreview, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.preview_open))
             }
             TextButton(onClick = onReview, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.review_open))
