@@ -40,6 +40,29 @@ class FidelityReportTest {
     }
 
     @Test
+    fun `sources name where each block came from`() {
+        val report = FidelityReport.of(
+            DocumentModel(
+                blocks = listOf(
+                    para("native", 1.0f),
+                    para("tagged", 0.9f),
+                    para("heuristic", 0.6f),
+                    para("ocr", 0.5f),
+                )
+            )
+        )
+        assertEquals(
+            listOf(
+                FidelityReport.Source.EXACT,
+                FidelityReport.Source.TAGGED,
+                FidelityReport.Source.RECONSTRUCTED,
+                FidelityReport.Source.RECOGNIZED,
+            ),
+            report.entries.map { it.source },
+        )
+    }
+
+    @Test
     fun `reviewables list the doubtful blocks, most doubtful first`() {
         val report = FidelityReport.of(
             DocumentModel(

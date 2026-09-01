@@ -19,4 +19,22 @@
     <string name="read_error">No se pudo leer el archivo. Intenta elegirlo de nuevo.</string>
     <string name="write_error">No se pudo guardar el archivo convertido.</string>
     <string name="privacy_line">Solo en el dispositivo: las conversiones de esta pantalla nunca tocan la red.</string>
+    <string name="review_open">Ver cómo se leyó</string>
+    <string name="review_title">Informe de fidelidad</string>
+    <string name="review_close">Cerrar</string>
+    <string name="review_overall">%1$d%% de confianza general</string>
+    <string name="review_all_exact">Todas las partes se leyeron exactamente del archivo original.</string>
+    <string name="review_some_flagged">%1$d de %2$d partes se reconstruyeron o se leyeron con OCR: conviene revisarlas.</string>
+    <string name="review_filter_all">Mostrar todo</string>
+    <string name="review_filter_flagged">Solo las partes por revisar</string>
+    <string name="review_confidence">%1$d%%</string>
+    <string name="review_image">(imagen)</string>
+    <string name="kind_heading">Título</string>
+    <string name="kind_paragraph">Párrafo</string>
+    <string name="kind_table">Tabla</string>
+    <string name="kind_image">Imagen</string>
+    <string name="source_exact">Leído exactamente del archivo original</string>
+    <string name="source_tagged">Leído de las etiquetas de estructura del PDF</string>
+    <string name="source_reconstructed">Reconstruido a partir de las posiciones del texto</string>
+    <string name="source_recognized">Reconocido de una imagen con OCR</string>
 </resources>

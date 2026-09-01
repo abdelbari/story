@@ -19,4 +19,22 @@
     <string name="read_error">تعذّرت قراءة الملف. جرّب اختياره مجددًا.</string>
     <string name="write_error">تعذّر حفظ الملف المحوَّل.</string>
     <string name="privacy_line">على الجهاز فقط — التحويلات في هذه الشاشة لا تمر عبر الشبكة أبدًا.</string>
+    <string name="review_open">اطّلع على طريقة القراءة</string>
+    <string name="review_title">تقرير الدقة</string>
+    <string name="review_close">إغلاق</string>
+    <string name="review_overall">الثقة الإجمالية: %1$d%%</string>
+    <string name="review_all_exact">قُرئت كل الأجزاء حرفيًا من الملف المصدر.</string>
+    <string name="review_some_flagged">أُعيد بناء %1$d من أصل %2$d جزءًا أو قُرئت بالتعرف الضوئي — يُنصح بمراجعتها.</string>
+    <string name="review_filter_all">اعرض كل الأجزاء</string>
+    <string name="review_filter_flagged">الأجزاء التي تحتاج مراجعة فقط</string>
+    <string name="review_confidence">%1$d%%</string>
+    <string name="review_image">(صورة)</string>
+    <string name="kind_heading">عنوان</string>
+    <string name="kind_paragraph">فقرة</string>
+    <string name="kind_table">جدول</string>
+    <string name="kind_image">صورة</string>
+    <string name="source_exact">قُرئ حرفيًا من الملف المصدر</string>
+    <string name="source_tagged">قُرئ من وسوم البنية في ملف PDF</string>
+    <string name="source_reconstructed">أُعيد بناؤه من مواضع النص</string>
+    <string name="source_recognized">تعرُّف ضوئي على صورة</string>
 </resources>

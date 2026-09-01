@@ -19,4 +19,22 @@
     <string name="read_error">Die Datei konnte nicht gelesen werden. Bitte erneut auswählen.</string>
     <string name="write_error">Die umgewandelte Datei konnte nicht gespeichert werden.</string>
     <string name="privacy_line">Nur auf dem Gerät — Umwandlungen auf diesem Bildschirm berühren nie das Netzwerk.</string>
+    <string name="review_open">Ansehen, wie gelesen wurde</string>
+    <string name="review_title">Genauigkeitsbericht</string>
+    <string name="review_close">Schließen</string>
+    <string name="review_overall">%1$d%% Gesamtsicherheit</string>
+    <string name="review_all_exact">Alle Teile wurden exakt aus der Quelldatei gelesen.</string>
+    <string name="review_some_flagged">%1$d von %2$d Teilen wurden rekonstruiert oder per OCR gelesen – bitte prüfen.</string>
+    <string name="review_filter_all">Alles anzeigen</string>
+    <string name="review_filter_flagged">Nur die zu prüfenden Teile</string>
+    <string name="review_confidence">%1$d%%</string>
+    <string name="review_image">(Bild)</string>
+    <string name="kind_heading">Überschrift</string>
+    <string name="kind_paragraph">Absatz</string>
+    <string name="kind_table">Tabelle</string>
+    <string name="kind_image">Bild</string>
+    <string name="source_exact">Exakt aus der Quelldatei gelesen</string>
+    <string name="source_tagged">Aus den Struktur-Tags des PDFs gelesen</string>
+    <string name="source_reconstructed">Aus Textpositionen rekonstruiert</string>
+    <string name="source_recognized">Per OCR aus einem Bild erkannt</string>
 </resources>

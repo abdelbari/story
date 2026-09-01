@@ -85,6 +85,20 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     /** Fidelity Report of the last conversion's model, for the Saved notice. */
     private var lastReport: FidelityReport.Report? = null
 
+    private val _review = MutableStateFlow<FidelityReport.Report?>(null)
+
+    /** Non-null while Review Mode is open, holding the report it shows. */
+    val review: StateFlow<FidelityReport.Report?> = _review.asStateFlow()
+
+    /** Opens Review Mode on the last conversion's report, if there is one. */
+    fun showReview() {
+        _review.value = lastReport
+    }
+
+    fun hideReview() {
+        _review.value = null
+    }
+
     /** Records the report of the model a conversion is about to write. */
     private fun reported(model: DocumentModel): DocumentModel {
         lastReport = FidelityReport.of(model)
@@ -113,6 +127,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             )
             pickedFile = PickedFile(uri, state)
             lastReport = null
+            _review.value = null
             _state.value = state
         }
     }

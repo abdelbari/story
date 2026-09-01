@@ -38,6 +38,13 @@ private val inputMimeTypes = arrayOf(
 @Composable
 fun HomeScreen(viewModel: ConvertViewModel) {
     val state by viewModel.state.collectAsState()
+    val review by viewModel.review.collectAsState()
+
+    val openReport = review
+    if (openReport != null) {
+        ReviewScreen(report = openReport, onClose = viewModel::hideReview)
+        return
+    }
 
     val openLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -113,6 +120,7 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                         onPrint = viewModel::printPdf,
                         onRetry = viewModel::retry,
                         onOcr = viewModel::convertWithOcr,
+                        onReview = viewModel::showReview,
                     )
                 }
             }
@@ -178,6 +186,7 @@ private fun StateActions(
     onPrint: () -> Unit,
     onRetry: () -> Unit,
     onOcr: () -> Unit,
+    onReview: () -> Unit,
 ) {
     when (state) {
         is ConvertUiState.Idle ->
@@ -207,10 +216,14 @@ private fun StateActions(
             }
         }
 
-        is ConvertUiState.Saved ->
+        is ConvertUiState.Saved -> {
             Button(onClick = onPick, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.convert_another))
             }
+            TextButton(onClick = onReview, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.review_open))
+            }
+        }
 
         is ConvertUiState.Failed -> {
             if (state.reason == FailReason.SCANNED_PDF) {

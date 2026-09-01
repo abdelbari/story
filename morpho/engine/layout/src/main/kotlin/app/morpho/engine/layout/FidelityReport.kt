@@ -17,6 +17,27 @@ object FidelityReport {
 
     enum class Band { HIGH, MEDIUM, LOW }
 
+    /**
+     * How a block's content was obtained, derived from the same confidence
+     * the readers record. A band says how much to worry; this says why —
+     * which is what a person actually needs in order to check the right
+     * thing. Keeping the mapping here means no caller has to interpret
+     * bare floats.
+     */
+    enum class Source {
+        /** Read exactly from a format that states its own structure (DOCX, Markdown). */
+        EXACT,
+
+        /** Read from a PDF's own structure tags. */
+        TAGGED,
+
+        /** Reconstructed from glyph positions in an untagged PDF. */
+        RECONSTRUCTED,
+
+        /** Recognized from an image by OCR. */
+        RECOGNIZED,
+    }
+
     data class Entry(
         /** Index of the block in [DocumentModel.blocks]. */
         val index: Int,
@@ -25,6 +46,7 @@ object FidelityReport {
         val excerpt: String,
         val confidence: Float,
         val band: Band,
+        val source: Source,
     )
 
     enum class Kind { HEADING, PARAGRAPH, TABLE, IMAGE }
@@ -48,6 +70,7 @@ object FidelityReport {
                 excerpt = excerptOf(block),
                 confidence = block.confidence,
                 band = bandOf(block.confidence),
+                source = sourceOf(block.confidence),
             )
         }
         var weightSum = 0L
@@ -69,6 +92,14 @@ object FidelityReport {
         confidence >= 0.85f -> Band.HIGH
         confidence >= 0.55f -> Band.MEDIUM
         else -> Band.LOW
+    }
+
+    /** The reader conventions, read backwards: 1.0 native, 0.9 tagged, 0.6 heuristics, 0.5 OCR. */
+    private fun sourceOf(confidence: Float): Source = when {
+        confidence >= 0.99f -> Source.EXACT
+        confidence >= 0.85f -> Source.TAGGED
+        confidence >= 0.55f -> Source.RECONSTRUCTED
+        else -> Source.RECOGNIZED
     }
 
     private fun kindOf(block: Block): Kind = when (block) {
