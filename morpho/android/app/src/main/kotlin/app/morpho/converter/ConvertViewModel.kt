@@ -49,8 +49,10 @@ private class UnconvertibleContent(val reason: FailReason) : Exception()
 
 /**
  * Drives the conversion slices, all fully on-device: text/Markdown → Word,
- * Word → Markdown, and PDF → Word (text PDFs; scanned ones await the M3 OCR
- * milestone). This process has no network permission at all.
+ * Word → Markdown, PDF → Word (text PDFs; scanned ones await the M3 OCR
+ * milestone), and text/Markdown/Word → PDF — as a saved file
+ * ([PdfFileExporter]) or through the system print sheet. This process has
+ * no network permission at all.
  */
 class ConvertViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -149,8 +151,23 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         _state.value = ConvertUiState.ReadyToSave(outputName, mimeType)
     }
 
-    /** Text, Markdown or Word input → print-ready HTML → system "Save as PDF". */
+    /** Text, Markdown or Word input → a real .pdf file via the save dialog. */
     fun exportPdf() {
+        val uri = pickedUri ?: return
+        val source = picked ?: return
+        _state.value = ConvertUiState.Converting
+        viewModelScope.launch(Dispatchers.IO) {
+            convertPicked(uri, source, "pdf", PDF_MIME) { bytes ->
+                val model =
+                    if (source.isWordDocument) DocxReader.read(bytes)
+                    else PlainTextImporter.import(bytes.toString(Charsets.UTF_8))
+                PdfFileExporter.render(model)
+            }
+        }
+    }
+
+    /** Text, Markdown or Word input → print-ready HTML → the system print sheet. */
+    fun printPdf() {
         val uri = pickedUri ?: return
         val source = picked ?: return
         _state.value = ConvertUiState.Converting
@@ -228,5 +245,6 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
 
     companion object {
         const val MARKDOWN_MIME = "text/markdown"
+        const val PDF_MIME = "application/pdf"
     }
 }

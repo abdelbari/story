@@ -51,15 +51,21 @@ fun HomeScreen(viewModel: ConvertViewModel) {
         ActivityResultContracts.CreateDocument(ConvertViewModel.MARKDOWN_MIME)
     ) { uri -> viewModel.onSaveTarget(uri) }
 
+    val savePdfLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(ConvertViewModel.PDF_MIME)
+    ) { uri -> viewModel.onSaveTarget(uri) }
+
     val context = LocalContext.current
     val printLauncher = remember { PdfPrintLauncher(context) }
 
     LaunchedEffect(state) {
         when (val current = state) {
             is ConvertUiState.ReadyToSave -> {
-                val launcher =
-                    if (current.mimeType == ConvertViewModel.MARKDOWN_MIME) saveMarkdownLauncher
-                    else saveDocxLauncher
+                val launcher = when (current.mimeType) {
+                    ConvertViewModel.MARKDOWN_MIME -> saveMarkdownLauncher
+                    ConvertViewModel.PDF_MIME -> savePdfLauncher
+                    else -> saveDocxLauncher
+                }
                 launcher.launch(current.suggestedName)
                 // Leave ReadyToSave immediately: recreation (rotation, process
                 // restore) must not launch a second save dialog over the open one.
@@ -104,6 +110,7 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                         onPick = { openLauncher.launch(inputMimeTypes) },
                         onConvert = viewModel::convert,
                         onExportPdf = viewModel::exportPdf,
+                        onPrint = viewModel::printPdf,
                     )
                 }
             }
@@ -157,6 +164,7 @@ private fun StateActions(
     onPick: () -> Unit,
     onConvert: () -> Unit,
     onExportPdf: () -> Unit,
+    onPrint: () -> Unit,
 ) {
     when (state) {
         is ConvertUiState.Idle ->
@@ -176,6 +184,9 @@ private fun StateActions(
             if (!state.isPdf) {
                 TextButton(onClick = onExportPdf, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.convert_to_pdf))
+                }
+                TextButton(onClick = onPrint, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.print_document))
                 }
             }
             TextButton(onClick = onPick, modifier = Modifier.fillMaxWidth()) {
