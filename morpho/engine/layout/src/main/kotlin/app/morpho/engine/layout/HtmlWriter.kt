@@ -231,9 +231,14 @@ object HtmlWriter {
      */
     private fun pageCss(page: PageSetup?): String {
         if (page == null) return ""
-        return "@page{size:${pt(page.widthPt)} ${pt(page.heightPt)};" +
-            "margin:${pt(page.marginTopPt)} ${pt(page.marginRightPt)} ${pt(page.marginBottomPt)} ${pt(page.marginLeftPt)};}" +
-            "body{margin:${pt(page.marginTopPt)} ${pt(page.marginRightPt)} ${pt(page.marginBottomPt)} ${pt(page.marginLeftPt)};}"
+        val margins = "${pt(page.marginTopPt)} ${pt(page.marginRightPt)} " +
+            "${pt(page.marginBottomPt)} ${pt(page.marginLeftPt)}"
+        // The margins belong to the sheet when this is printed — the app
+        // prints it to make a PDF, with the framework's own margins turned
+        // off — and to the body only on screen, where there is no sheet.
+        // Setting both unconditionally would print every margin twice.
+        return "@page{size:${pt(page.widthPt)} ${pt(page.heightPt)};margin:$margins;}" +
+            "@media screen{body{margin:$margins;}}"
     }
 
     private fun pt(points: Float): String = "%.1fpt".format(java.util.Locale.ROOT, points)
