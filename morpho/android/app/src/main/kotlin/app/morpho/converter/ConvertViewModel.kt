@@ -181,6 +181,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
 
     /** Writes the corrected model out again, straight to the save dialog. */
     fun saveCorrected() {
+        if (_state.value is ConvertUiState.Converting) return
         val model = lastModel ?: return
         val write = lastWriter ?: return
         _review.value = null
