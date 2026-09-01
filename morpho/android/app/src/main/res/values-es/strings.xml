@@ -39,4 +39,11 @@
     <string name="source_recognized">Reconocido de una imagen con OCR</string>
     <string name="converting_pages">Leyendo la página %1$d de %2$d…</string>
     <string name="cancel">Cancelar</string>
+    <string name="review_save_corrected">Guardar archivo corregido (%1$d corregidos)</string>
+    <string name="review_edited">Corregido por ti</string>
+    <string name="review_correct_hint">¿Incorrecto? Indica qué debería ser:</string>
+    <string name="review_as_body">Cuerpo</string>
+    <string name="review_as_h1">T1</string>
+    <string name="review_as_h2">T2</string>
+    <string name="review_as_h3">T3</string>
 </resources>

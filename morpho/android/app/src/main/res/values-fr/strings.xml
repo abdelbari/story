@@ -39,4 +39,11 @@
     <string name="source_recognized">Reconnu sur une image par OCR</string>
     <string name="converting_pages">Lecture de la page %1$d sur %2$d…</string>
     <string name="cancel">Annuler</string>
+    <string name="review_save_corrected">Enregistrer le fichier corrigé (%1$d corrigé(s))</string>
+    <string name="review_edited">Corrigé par vous</string>
+    <string name="review_correct_hint">Incorrect ? Indiquez ce que ce devrait être :</string>
+    <string name="review_as_body">Corps</string>
+    <string name="review_as_h1">T1</string>
+    <string name="review_as_h2">T2</string>
+    <string name="review_as_h3">T3</string>
 </resources>

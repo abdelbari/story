@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -34,14 +35,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.morpho.engine.layout.FidelityReport
+import app.morpho.engine.layout.ParagraphKind
 import kotlin.math.roundToInt
 
 /**
- * Review Mode (plan §4.1): what the Fidelity Report knows, shown plainly.
- * Every block is listed with where its content actually came from — read
- * exactly, read from PDF tags, reconstructed from glyph positions, or
- * recognized by OCR — so a person can check the parts that were guessed
- * instead of discovering the guesses after sharing the file.
+ * Review Mode (plan §4.1): what the Fidelity Report knows, shown plainly,
+ * and fixable on the spot. Every block is listed with where its content
+ * actually came from — read exactly, read from PDF tags, reconstructed from
+ * glyph positions, or recognized by OCR — so a person can check the parts
+ * that were guessed instead of discovering the guesses after sharing the
+ * file. A block the reader mislabelled can be corrected here and the file
+ * written again, which is the difference between a report and a repair.
  *
  * Colors are fixed rather than taken from the dynamic palette: a
  * confidence signal has to mean the same thing on every device, and it is
@@ -49,11 +53,19 @@ import kotlin.math.roundToInt
  * words.
  */
 @Composable
-fun ReviewScreen(report: FidelityReport.Report, onClose: () -> Unit) {
+fun ReviewScreen(
+    state: ReviewState,
+    onReclassify: (index: Int, kind: ParagraphKind) -> Unit,
+    onSaveCorrected: () -> Unit,
+    onClose: () -> Unit,
+) {
     BackHandler(onBack = onClose)
 
+    val report = state.report
     val flagged = report.reviewables
-    var flaggedOnly by remember(report) { mutableStateOf(flagged.isNotEmpty()) }
+    // No key: the filter is the reader's choice and must survive a
+    // correction, which replaces the report with a recomputed one.
+    var flaggedOnly by remember { mutableStateOf(flagged.isNotEmpty()) }
     val shown = if (flaggedOnly) flagged else report.entries
 
     Column(
@@ -77,6 +89,12 @@ fun ReviewScreen(report: FidelityReport.Report, onClose: () -> Unit) {
 
         Summary(report)
 
+        if (state.edited.isNotEmpty()) {
+            Button(onClick = onSaveCorrected, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.review_save_corrected, state.edited.size))
+            }
+        }
+
         if (flagged.isNotEmpty()) {
             TextButton(onClick = { flaggedOnly = !flaggedOnly }) {
                 Text(
@@ -96,7 +114,13 @@ fun ReviewScreen(report: FidelityReport.Report, onClose: () -> Unit) {
                 .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(shown, key = { it.index }) { entry -> EntryRow(entry) }
+            items(shown, key = { it.index }) { entry ->
+                EntryRow(
+                    entry = entry,
+                    edited = entry.index in state.edited,
+                    onReclassify = { kind -> onReclassify(entry.index, kind) },
+                )
+            }
         }
     }
 }
@@ -147,7 +171,11 @@ private fun BandBar(report: FidelityReport.Report) {
 }
 
 @Composable
-private fun EntryRow(entry: FidelityReport.Entry) {
+private fun EntryRow(
+    entry: FidelityReport.Entry,
+    edited: Boolean,
+    onReclassify: (ParagraphKind) -> Unit,
+) {
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(14.dp),
@@ -184,7 +212,42 @@ private fun EntryRow(entry: FidelityReport.Entry) {
                 text = entry.excerpt.ifEmpty { stringResource(R.string.review_image) },
                 style = MaterialTheme.typography.bodyMedium,
             )
+
+            if (edited) {
+                Text(
+                    text = stringResource(R.string.review_edited),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+
+            // Only text blocks can be relabelled, and only the doubtful ones
+            // are worth the clutter — a block read exactly from the source
+            // has nothing to correct.
+            val correctable = entry.band != FidelityReport.Band.HIGH &&
+                (entry.kind == FidelityReport.Kind.PARAGRAPH ||
+                    entry.kind == FidelityReport.Kind.HEADING)
+            if (correctable) {
+                Text(
+                    text = stringResource(R.string.review_correct_hint),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    KindButton(R.string.review_as_body, ParagraphKind.BODY, onReclassify)
+                    KindButton(R.string.review_as_h1, ParagraphKind.HEADING_1, onReclassify)
+                    KindButton(R.string.review_as_h2, ParagraphKind.HEADING_2, onReclassify)
+                    KindButton(R.string.review_as_h3, ParagraphKind.HEADING_3, onReclassify)
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun KindButton(labelRes: Int, kind: ParagraphKind, onReclassify: (ParagraphKind) -> Unit) {
+    TextButton(onClick = { onReclassify(kind) }) {
+        Text(stringResource(labelRes), style = MaterialTheme.typography.labelMedium)
     }
 }
 

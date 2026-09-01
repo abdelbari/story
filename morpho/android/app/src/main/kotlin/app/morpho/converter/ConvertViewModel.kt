@@ -13,6 +13,7 @@ import app.morpho.engine.layout.MarkdownWriter
 import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.ooxml.DocxReader
 import app.morpho.engine.layout.Paragraph
+import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.ooxml.DocxWriter
 import app.morpho.pdf.AndroidOcrReader
 import app.morpho.pdf.AndroidPdfReader
@@ -54,6 +55,12 @@ sealed interface ConvertUiState {
 
 enum class FailReason { UNSUPPORTED_TYPE, SCANNED_PDF, READ_ERROR, WRITE_ERROR }
 
+/** What Review Mode shows: the report, and which blocks the reader corrected. */
+data class ReviewState(
+    val report: FidelityReport.Report,
+    val edited: Set<Int> = emptySet(),
+)
+
 /** Thrown inside a conversion to surface a specific, honest failure reason. */
 private class UnconvertibleContent(val reason: FailReason) : Exception()
 
@@ -88,6 +95,16 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     private var lastReport: FidelityReport.Report? = null
 
     /**
+     * The last conversion's model, how to write it again, and what to call
+     * the result — kept so Review Mode can correct a block and re-write the
+     * output without re-reading (or re-OCR-ing) the source.
+     */
+    private var lastModel: DocumentModel? = null
+    private var lastWriter: ((DocumentModel) -> ByteArray)? = null
+    private var lastMimeType: String = DocxWriter.MIME_TYPE
+    private val editedBlocks = mutableSetOf<Int>()
+
+    /**
      * Set by [cancelOcr]; the recognizer reads it between pages. An
      * AtomicBoolean rather than job cancellation because the work sits in a
      * native call that Kotlin cannot interrupt mid-page.
@@ -99,24 +116,56 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         ocrCancelled.set(true)
     }
 
-    private val _review = MutableStateFlow<FidelityReport.Report?>(null)
+    private val _review = MutableStateFlow<ReviewState?>(null)
 
-    /** Non-null while Review Mode is open, holding the report it shows. */
-    val review: StateFlow<FidelityReport.Report?> = _review.asStateFlow()
+    /** Non-null while Review Mode is open, holding what it shows. */
+    val review: StateFlow<ReviewState?> = _review.asStateFlow()
 
     /** Opens Review Mode on the last conversion's report, if there is one. */
     fun showReview() {
-        _review.value = lastReport
+        val report = lastReport ?: return
+        _review.value = ReviewState(report, editedBlocks.toSet())
     }
 
     fun hideReview() {
         _review.value = null
     }
 
-    /** Records the report of the model a conversion is about to write. */
-    private fun reported(model: DocumentModel): DocumentModel {
-        lastReport = FidelityReport.of(model)
-        return model
+    /**
+     * Corrects what a block was taken to be — a heading the reader recorded
+     * as body text, say. Confidence is deliberately left alone: the reader's
+     * doubt was about the characters, and relabelling a block does not make
+     * them any more certain, so the report keeps telling the truth.
+     */
+    fun reclassify(index: Int, kind: ParagraphKind) {
+        val model = lastModel ?: return
+        val block = model.blocks.getOrNull(index) as? Paragraph ?: return
+        if (block.style.kind == kind) return
+        val blocks = model.blocks.toMutableList()
+        blocks[index] = block.copy(style = block.style.copy(kind = kind))
+        val corrected = model.copy(blocks = blocks)
+        val report = FidelityReport.of(corrected)
+        lastModel = corrected
+        lastReport = report
+        editedBlocks += index
+        _review.value = ReviewState(report, editedBlocks.toSet())
+    }
+
+    /** Writes the corrected model out again, straight to the save dialog. */
+    fun saveCorrected() {
+        val model = lastModel ?: return
+        val write = lastWriter ?: return
+        _review.value = null
+        _state.value = ConvertUiState.Converting()
+        viewModelScope.launch(Dispatchers.IO) {
+            val bytes = runCatching { write(model) }.getOrNull()
+            if (bytes == null) {
+                _state.value = ConvertUiState.Failed(FailReason.WRITE_ERROR)
+                return@launch
+            }
+            outputBytes = bytes
+            _state.value = ConvertUiState.ReadyToSave(outputName, lastMimeType)
+        }
     }
 
     fun onPicked(uri: Uri) {
@@ -141,6 +190,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             )
             pickedFile = PickedFile(uri, state)
             lastReport = null
+            lastModel = null
+            lastWriter = null
+            editedBlocks.clear()
             _review.value = null
             _state.value = state
         }
@@ -152,22 +204,27 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         _state.value = ConvertUiState.Converting()
         viewModelScope.launch(Dispatchers.IO) {
             when {
-                source.isPdf -> convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
-                    val model = reported(AndroidPdfReader(getApplication()).extract(bytes))
-                    val hasText = model.blocks.filterIsInstance<Paragraph>()
-                        .any { it.text.isNotBlank() }
-                    if (!hasText) throw UnconvertibleContent(FailReason.SCANNED_PDF)
-                    DocxWriter.toByteArray(model)
-                }
-                source.isWordDocument -> convertPicked(uri, source, "md", MARKDOWN_MIME) { bytes ->
-                    MarkdownWriter.write(reported(DocxReader.read(bytes)))
-                        .toByteArray(Charsets.UTF_8)
-                }
-                looksTextual(source) -> convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
-                    DocxWriter.toByteArray(
-                        reported(PlainTextImporter.import(bytes.toString(Charsets.UTF_8)))
-                    )
-                }
+                source.isPdf -> convertPicked(
+                    uri, source, "docx", DocxWriter.MIME_TYPE,
+                    read = { bytes ->
+                        val model = AndroidPdfReader(getApplication()).extract(bytes)
+                        val hasText = model.blocks.filterIsInstance<Paragraph>()
+                            .any { it.text.isNotBlank() }
+                        if (!hasText) throw UnconvertibleContent(FailReason.SCANNED_PDF)
+                        model
+                    },
+                    write = { model -> DocxWriter.toByteArray(model) },
+                )
+                source.isWordDocument -> convertPicked(
+                    uri, source, "md", MARKDOWN_MIME,
+                    read = { bytes -> DocxReader.read(bytes) },
+                    write = { model -> MarkdownWriter.write(model).toByteArray(Charsets.UTF_8) },
+                )
+                looksTextual(source) -> convertPicked(
+                    uri, source, "docx", DocxWriter.MIME_TYPE,
+                    read = { bytes -> PlainTextImporter.import(bytes.toString(Charsets.UTF_8)) },
+                    write = { model -> DocxWriter.toByteArray(model) },
+                )
                 else -> _state.value = ConvertUiState.Failed(FailReason.UNSUPPORTED_TYPE)
             }
         }
@@ -190,12 +247,18 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         else -> throw UnconvertibleContent(FailReason.UNSUPPORTED_TYPE)
     }
 
+    /**
+     * Every conversion is the same shape — read the input into a model, then
+     * write the model out — and keeping the halves apart is what lets Review
+     * Mode re-write a corrected model without touching the source again.
+     */
     private fun convertPicked(
         uri: Uri,
         source: ConvertUiState.Picked,
         extension: String,
         mimeType: String,
-        transform: (ByteArray) -> ByteArray,
+        read: (ByteArray) -> DocumentModel,
+        write: (DocumentModel) -> ByteArray,
     ) {
         val input = runCatching {
             getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() }
@@ -205,7 +268,13 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         val output = try {
-            transform(input)
+            val model = read(input)
+            lastModel = model
+            lastWriter = write
+            lastMimeType = mimeType
+            lastReport = FidelityReport.of(model)
+            editedBlocks.clear()
+            write(model)
         } catch (e: UnconvertibleContent) {
             _state.value = ConvertUiState.Failed(e.reason)
             return
@@ -233,17 +302,20 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         _state.value = ConvertUiState.Converting()
         ocrCancelled.set(false)
         viewModelScope.launch(Dispatchers.IO) {
-            convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
-                val model = AndroidOcrReader(getApplication()).recognize(
-                    bytes = bytes,
-                    languages = ocrLanguages(),
-                    onPage = { page, pageCount ->
-                        _state.value = ConvertUiState.Converting(page, pageCount)
-                    },
-                    shouldContinue = { !ocrCancelled.get() },
-                )
-                DocxWriter.toByteArray(reported(model))
-            }
+            convertPicked(
+                uri, source, "docx", DocxWriter.MIME_TYPE,
+                read = { bytes ->
+                    AndroidOcrReader(getApplication()).recognize(
+                        bytes = bytes,
+                        languages = ocrLanguages(),
+                        onPage = { page, pageCount ->
+                            _state.value = ConvertUiState.Converting(page, pageCount)
+                        },
+                        shouldContinue = { !ocrCancelled.get() },
+                    )
+                },
+                write = { model -> DocxWriter.toByteArray(model) },
+            )
         }
     }
 
@@ -267,9 +339,11 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         lastOperation = ::exportPdf
         _state.value = ConvertUiState.Converting()
         viewModelScope.launch(Dispatchers.IO) {
-            convertPicked(uri, source, "pdf", PDF_MIME) { bytes ->
-                PdfFileExporter.render(reported(modelOf(bytes, source)))
-            }
+            convertPicked(
+                uri, source, "pdf", PDF_MIME,
+                read = { bytes -> modelOf(bytes, source) },
+                write = { model -> PdfFileExporter.render(model) },
+            )
         }
     }
 

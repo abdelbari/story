@@ -45,9 +45,14 @@ fun HomeScreen(viewModel: ConvertViewModel) {
     val state by viewModel.state.collectAsState()
     val review by viewModel.review.collectAsState()
 
-    val openReport = review
-    if (openReport != null) {
-        ReviewScreen(report = openReport, onClose = viewModel::hideReview)
+    val openReview = review
+    if (openReview != null) {
+        ReviewScreen(
+            state = openReview,
+            onReclassify = viewModel::reclassify,
+            onSaveCorrected = viewModel::saveCorrected,
+            onClose = viewModel::hideReview,
+        )
         return
     }
 

@@ -40,4 +40,11 @@
     <string name="source_recognized">Recognized from an image by OCR</string>
     <string name="converting_pages">Reading page %1$d of %2$d…</string>
     <string name="cancel">Cancel</string>
+    <string name="review_save_corrected">Save corrected file (%1$d fixed)</string>
+    <string name="review_edited">Corrected by you</string>
+    <string name="review_correct_hint">Wrong? Set what it should be:</string>
+    <string name="review_as_body">Body</string>
+    <string name="review_as_h1">H1</string>
+    <string name="review_as_h2">H2</string>
+    <string name="review_as_h3">H3</string>
 </resources>

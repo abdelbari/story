@@ -39,4 +39,11 @@
     <string name="source_recognized">Per OCR aus einem Bild erkannt</string>
     <string name="converting_pages">Seite %1$d von %2$d wird gelesen…</string>
     <string name="cancel">Abbrechen</string>
+    <string name="review_save_corrected">Korrigierte Datei speichern (%1$d korrigiert)</string>
+    <string name="review_edited">Von Ihnen korrigiert</string>
+    <string name="review_correct_hint">Falsch? Legen Sie fest, was es sein soll:</string>
+    <string name="review_as_body">Fließtext</string>
+    <string name="review_as_h1">Ü1</string>
+    <string name="review_as_h2">Ü2</string>
+    <string name="review_as_h3">Ü3</string>
 </resources>
