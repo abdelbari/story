@@ -105,6 +105,7 @@ coalesced `SetGrade` intents, the store commits, the engine swaps a
 per-frame item recomposition, entry/exit churn, and N scroll states to sync
 during pinch-zoom. Instead:
 
+- Five lanes: main video, PiP video, text, stickers, audio.
 - `TimelineGeometry` — pure time↔pixel math + manual hit-testing; reads the
   viewport *at call time* so it's only ever evaluated in draw/gesture phases.
 - `TimelineCanvas` — ruler with adaptive tick density, filmstrip thumbnails,
@@ -150,9 +151,13 @@ during pinch-zoom. Instead:
 - Per-clip speed and volume envelopes are applied by a 10 Hz control tick in
   preview (`setPlaybackSpeed`, `volume`) — the export applies them
   sample-exactly.
-- Overlay audio tracks play on **slave ExoPlayers** phase-locked to the master
-  (re-seek on >80 ms drift); text/stickers preview as a Compose layer above the
-  `SurfaceView` (zero GL cost while editing).
+- Overlay audio **and PiP video** tracks play on **slave ExoPlayers** phase-locked
+  to the master (re-seek on >80 ms drift). A PiP gets its own `SurfaceView`, laid
+  out by Compose from the same `PipSpec` the export compositor uses — so the box
+  on screen is the box that renders. Compositing both streams into one GL surface
+  just to preview them would cost a full render pass per frame for no visual
+  difference. Text/stickers preview as a Compose layer above everything, matching
+  the export layer order (compositor first, `OverlayEffect` last).
 
 ## 4. Export (`engine/CompositionMapper.kt`, `engine/ExportEngine.kt`)
 
@@ -163,6 +168,11 @@ during pinch-zoom. Instead:
   clip-local source time, placed *before* `SpeedChangeEffect`), then
   `SonicAudioProcessor(speed)` + `VolumeEnvelopeAudioProcessor` (which runs in
   clip *timeline* time — same domain the keyframes are authored in).
+- Each **VIDEO_OVERLAY (PiP) track → its own video sequence**, positioned in
+  time by leading gaps and in space by `PipCompositorSettings`, which maps
+  compositor input ids (0 = main track, 1..n = overlays) to each track's
+  `PipSpec`. The output size is pinned to the composition canvas, so adding a
+  PiP can never change the exported frame size.
 - Each AUDIO track → an audio-only sequence with `addGap()` silences;
   `experimentalSetForceAudioTrack` guarantees a mixable primary stream.
 - TEXT/STICKER tracks → one composition-level `OverlayEffect` with
@@ -273,6 +283,11 @@ Pinned to `media3 = 1.8.0`. If you move:
   `OverlaySettings.Builder`.
 - `EditedMediaItemSequence.Builder` (`addItem`/`addGap`) — 1.6+. On older
   versions use the list constructors.
+- `Composition.Builder.setVideoCompositorSettings` and the
+  `VideoCompositorSettings` interface (`effects/PipCompositor.kt`) — 1.4+, and
+  the interface has gained methods over time. This is the least-settled surface
+  the project touches; if PiP fails to compile, check `getOutputSize` /
+  `getOverlaySettings` against your media3 version first.
 - Most Transformer/effect surfaces are `@UnstableApi`; the module opts in
   globally via `-opt-in` in `app/build.gradle.kts`.
 
@@ -282,10 +297,6 @@ Pinned to `media3 = 1.8.0`. If you move:
   set per-segment speeds) — the same rendering strategy CapCut uses for its
   curve presets. A `SpeedProvider`-based continuous ramp can replace
   `SpeedChangeEffect` later without touching the model.
-- **Video overlay (PiP) track** is modeled (`TrackType.VIDEO_OVERLAY`) but not
-  yet mapped to export: that requires a multi-sequence `Composition` with
-  `VideoCompositorSettings` for placement. The mapper is the only file that
-  changes.
 - **True A/B cross-dissolves** need overlapping streams (compositor); the three
   shipped transitions are single-stream by design and export-identical.
 - Trim commits currently snap to whole milliseconds on the source frame grid

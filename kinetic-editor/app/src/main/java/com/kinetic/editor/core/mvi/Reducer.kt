@@ -81,6 +81,7 @@ private fun reduceAdd(state: TimelineState, intent: EditorIntent.AddClip): Timel
         startMs = intent.startMs,
         text = intent.text,
         sticker = intent.sticker,
+        pip = intent.pip,
     )
     return mapTracks(state) { t ->
         if (t.id != intent.trackId) t

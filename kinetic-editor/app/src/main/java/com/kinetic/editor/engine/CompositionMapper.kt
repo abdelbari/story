@@ -10,21 +10,24 @@ import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.SpeedChangeEffect
+import androidx.media3.effect.VideoCompositorSettings
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import com.kinetic.editor.audio.VolumeEnvelopeAudioProcessor
+import com.kinetic.editor.core.model.PipSpec
 import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.Track
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.TransitionType
-import com.kinetic.editor.core.model.planAudioSequence
+import com.kinetic.editor.core.model.planSequence
 import com.kinetic.editor.core.model.transitionWindowsUs
 import com.kinetic.editor.effects.ClipGradeProvider
 import com.kinetic.editor.effects.GradeGlEffect
+import com.kinetic.editor.effects.PipCompositorSettings
 
 data class ExportSpec(
     val width: Int = 1080,
@@ -45,6 +48,8 @@ data class ExportSpec(
  *    audio speed via Sonic + envelope AFTER it (clip TIMELINE time).
  *  - AUDIO tracks      -> one audio-only sequence each; placement gaps become
  *    addGap() silences. Composition mixes all sequences sample-accurately.
+ *  - VIDEO_OVERLAY     -> one extra video sequence each, placed in time by gaps
+ *    and in space by PipCompositorSettings (input id 0 is the main track).
  *  - TEXT/STICKER      -> composition-level OverlayEffect windows (timeline time).
  *  - Canvas size       -> Presentation.createForWidthAndHeight at composition level.
  */
@@ -67,6 +72,17 @@ object CompositionMapper {
         }
         sequences += mainBuilder.build()
 
+        // Secondary VIDEO sequences come first so their input ids (1..n) line up
+        // with the placement list handed to the compositor; audio sequences carry
+        // no video and are never composited, so they can follow.
+        val overlayPlacements = ArrayList<PipSpec>()
+        for (track in state.tracks) {
+            if (track.type != TrackType.VIDEO_OVERLAY || track.clips.isEmpty()) continue
+            sequences += overlaySequence(context, state, track, lutCache)
+            // One placement per sequence; a track's first clip defines its frame.
+            overlayPlacements += track.clips.first().pip ?: PipSpec()
+        }
+
         for (track in state.tracks) {
             if (track.type != TrackType.AUDIO || track.muted || track.clips.isEmpty()) continue
             sequences += audioSequence(state, track)
@@ -79,6 +95,13 @@ object CompositionMapper {
 
         return Composition.Builder(sequences)
             .setEffects(Effects(/* audioProcessors= */ emptyList(), compositionVideoEffects))
+            .setVideoCompositorSettings(
+                if (overlayPlacements.isEmpty()) {
+                    VideoCompositorSettings.DEFAULT
+                } else {
+                    PipCompositorSettings(spec.width, spec.height, overlayPlacements)
+                },
+            )
             // Audio sequences may lead with gaps and main clips may be muted or
             // video-only; force a (possibly silent) audio track so mixing always
             // has a primary stream to align to.
@@ -148,9 +171,77 @@ object CompositionMapper {
             .build()
     }
 
+    /**
+     * A VIDEO_OVERLAY track becomes its own video sequence, positioned in time by
+     * leading gaps and in space by the compositor. Grade/LUT apply per clip just
+     * as on the main track; transitions do not, because a transition is a cut
+     * between neighbours on one track and a PiP has no cut to sit on.
+     */
+    private fun overlaySequence(
+        context: Context,
+        state: TimelineState,
+        track: Track,
+        lutCache: MutableMap<String, Bitmap?>,
+    ): EditedMediaItemSequence {
+        val builder = EditedMediaItemSequence.Builder()
+        for (plan in planSequence(state.placements(track))) {
+            val clip = plan.clip
+            if (plan.gapBeforeMs > 0) builder.addGap(plan.gapBeforeMs * 1_000L)
+
+            val mediaItem = MediaItem.Builder()
+                .setUri(clip.media.uri)
+                .setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(plan.trimInMs)
+                        .setEndPositionMs(plan.trimOutMs)
+                        .build(),
+                )
+                .build()
+
+            val lutBitmap = clip.lut?.let { lut ->
+                lutCache.getOrPut(lut.assetPath) {
+                    runCatching {
+                        context.assets.open(lut.assetPath).use(BitmapFactory::decodeStream)
+                    }.getOrNull()
+                }
+            }
+
+            val videoEffects = buildList<Effect> {
+                add(
+                    GradeGlEffect(
+                        ClipGradeProvider(
+                            grade = clip.grade,
+                            lutBitmap = lutBitmap,
+                            lutIntensity = clip.lut?.intensity ?: 0f,
+                            transOutType = TransitionType.NONE,
+                            transOutStartUs = 0L,
+                            transOutEndUs = 0L,
+                            transInType = TransitionType.NONE,
+                            transInEndUs = 0L,
+                        ),
+                    ),
+                )
+                if (clip.speed != 1f) add(SpeedChangeEffect(clip.speed))
+            }
+
+            val processors = buildList<AudioProcessor> {
+                if (clip.speed != 1f) add(SonicAudioProcessor().apply { setSpeed(clip.speed) })
+                add(VolumeEnvelopeAudioProcessor(clip.volume * track.volume, clip.volumeKeyframes))
+            }
+
+            builder.addItem(
+                EditedMediaItem.Builder(mediaItem)
+                    .setEffects(Effects(processors, videoEffects))
+                    .setRemoveAudio(track.muted || !clip.media.hasAudio)
+                    .build(),
+            )
+        }
+        return builder.build()
+    }
+
     private fun audioSequence(state: TimelineState, track: Track): EditedMediaItemSequence {
         val builder = EditedMediaItemSequence.Builder()
-        for (plan in planAudioSequence(state.placements(track))) {
+        for (plan in planSequence(state.placements(track))) {
             val clip = plan.clip
             if (plan.gapBeforeMs > 0) builder.addGap(plan.gapBeforeMs * 1_000L)
 

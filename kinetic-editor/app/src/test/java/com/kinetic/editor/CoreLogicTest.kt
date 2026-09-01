@@ -5,17 +5,19 @@ import com.kinetic.editor.core.model.ClipModel
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.MediaRef
 import com.kinetic.editor.core.model.LutSpec
+import com.kinetic.editor.core.model.PipSpec
 import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.ProjectCodec
 import com.kinetic.editor.core.model.TextSpec
 import com.kinetic.editor.core.model.TransitionSpec
-import com.kinetic.editor.core.model.planAudioSequence
+import com.kinetic.editor.core.model.planSequence
 import com.kinetic.editor.core.model.transitionWindowsUs
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.TransitionType
 import com.kinetic.editor.core.model.VolumeKeyframe
 import com.kinetic.editor.core.model.audioStructureHash
+import com.kinetic.editor.core.model.overlayStructureHash
 import com.kinetic.editor.core.model.gainAt
 import com.kinetic.editor.core.model.snapToFrame
 import com.kinetic.editor.core.model.videoStructureHash
@@ -212,18 +214,18 @@ class CoreLogicTest {
     fun audioPlanHeadTrimsOverlapsAndDropsCoveredClips() {
         val x = clip("x", 4_000, start = 1_000)
         val y = clip("y", 4_000, start = 3_000)
-        val plans = planAudioSequence(listOf(PlacedClip(x, 1_000), PlacedClip(y, 3_000)))
+        val plans = planSequence(listOf(PlacedClip(x, 1_000), PlacedClip(y, 3_000)))
         assertEquals(2, plans.size)
         assertEquals(1_000L, plans[0].gapBeforeMs)
         assertEquals(5_000L, plans[1].startMs)
         assertEquals(2_000L, plans[1].trimInMs)
 
-        val covered = planAudioSequence(
+        val covered = planSequence(
             listOf(PlacedClip(clip("big", 10_000), 0), PlacedClip(clip("c", 1_000, start = 2_000), 2_000)),
         )
         assertEquals(1, covered.size)
 
-        val fast = planAudioSequence(
+        val fast = planSequence(
             listOf(PlacedClip(clip("pre", 2_000), 0), PlacedClip(clip("f", 8_000, speed = 2f), 1_000)),
         )
         assertEquals(2_000L, fast[1].trimInMs)
@@ -288,6 +290,25 @@ class CoreLogicTest {
             tracks = ok.tracks.filterNot { it.type == TrackType.VIDEO_MAIN }.toPersistentList(),
         )
         assertNull(ProjectCodec.decode(ProjectCodec.encode(noMain)))
+    }
+
+    @Test
+    fun overlayEditsAreStructuralForPipOnly() {
+        val s0 = stateWith(listOf(clip("a", 5_000)))
+        val overlayId = s0.tracks.first { it.type == TrackType.VIDEO_OVERLAY }.id
+        val s1 = reduce(
+            s0,
+            EditorIntent.AddClip(overlayId, media(4_000), startMs = 1_000, pip = PipSpec()),
+        )
+        assertTrue(s1.overlayStructureHash() != s0.overlayStructureHash())
+        assertEquals(s0.videoStructureHash(), s1.videoStructureHash())
+        assertEquals(PipSpec(), s1.tracks.first { it.type == TrackType.VIDEO_OVERLAY }.clips[0].pip)
+
+        val decoded = ProjectCodec.decode(ProjectCodec.encode(s1))
+        assertEquals(
+            PipSpec(),
+            decoded!!.tracks.first { it.type == TrackType.VIDEO_OVERLAY }.clips[0].pip,
+        )
     }
 
     @Test

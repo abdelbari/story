@@ -289,6 +289,10 @@ private fun ToolBar(
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let { vm.addMusic(it, viewport.playheadMs) } }
 
+    val pipPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let { vm.addPictureInPicture(it, viewport.playheadMs) } }
+
     val micPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -308,6 +312,7 @@ private fun ToolBar(
     ) {
         ToolButton("+ Video") { videoPicker.launch(arrayOf("video/*")) }
         ToolButton("+ Music") { musicPicker.launch(arrayOf("audio/*")) }
+        ToolButton("+ PiP") { pipPicker.launch(arrayOf("video/*")) }
         ToolButton("+ Text") { vm.addText(viewport.playheadMs) }
         ToolButton(if (recording) "■ Stop" else "● Rec") {
             if (recording) {

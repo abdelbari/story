@@ -65,16 +65,16 @@ fun transitionWindowsUs(clip: ClipModel, previousTransition: TransitionSpec?): T
 }
 
 /**
- * One item in a serial audio sequence: what to play, from where, and how much
- * silence precedes it.
+ * One item in a serial sequence: what to play, from where, and how much blank
+ * time precedes it. Used for both audio tracks and video-overlay (PiP) tracks —
+ * a Media3 sequence is serial regardless of what it carries.
  *
- * A Media3 EditedMediaItemSequence is strictly serial, so overlapping clips on
- * one AUDIO track cannot be mixed within it. Rather than let a later clip slide
- * right (which desyncs the whole tail from the preview), the overlap is removed
- * from the HEAD of the later clip: the audio that does play stays exactly where
- * the timeline says it should be.
+ * Because a sequence is strictly serial, overlapping clips on one track cannot
+ * be mixed within it. Rather than let a later clip slide right (which desyncs
+ * the whole tail from the preview), the overlap is removed from the HEAD of the
+ * later clip: what does play stays exactly where the timeline says it should be.
  */
-data class AudioItemPlan(
+data class SequenceItemPlan(
     val clip: ClipModel,
     val gapBeforeMs: Long,
     val trimInMs: Long,
@@ -86,8 +86,8 @@ data class AudioItemPlan(
         get() = ((trimOutMs - trimInMs) / clip.speed.toDouble()).roundToLong()
 }
 
-fun planAudioSequence(placements: List<PlacedClip>): List<AudioItemPlan> {
-    val out = ArrayList<AudioItemPlan>(placements.size)
+fun planSequence(placements: List<PlacedClip>): List<SequenceItemPlan> {
+    val out = ArrayList<SequenceItemPlan>(placements.size)
     var cursorMs = 0L
     for (placed in placements.sortedBy { it.startMs }) {
         val clip = placed.clip
@@ -101,7 +101,7 @@ fun planAudioSequence(placements: List<PlacedClip>): List<AudioItemPlan> {
             if (trimInMs >= clip.trimOutMs) continue // fully covered by the previous clip
         }
 
-        val plan = AudioItemPlan(
+        val plan = SequenceItemPlan(
             clip = clip,
             gapBeforeMs = startMs - cursorMs,
             trimInMs = trimInMs,

@@ -4,6 +4,7 @@ import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.MediaRef
+import com.kinetic.editor.core.model.PipSpec
 import com.kinetic.editor.core.model.StickerSpec
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TextSpec
@@ -32,6 +33,7 @@ sealed interface EditorIntent {
         val trimOutMs: Long = media.durationMs,
         val text: TextSpec? = null,
         val sticker: StickerSpec? = null,
+        val pip: PipSpec? = null,
     ) : EditorIntent
 
     data class RemoveClip(val clipId: ClipId) : EditorIntent

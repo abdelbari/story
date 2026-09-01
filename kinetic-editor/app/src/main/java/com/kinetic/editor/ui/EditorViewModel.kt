@@ -11,11 +11,13 @@ import androidx.lifecycle.viewModelScope
 import com.kinetic.editor.audio.VoiceRecorder
 import com.kinetic.editor.core.model.MediaProbe
 import com.kinetic.editor.core.model.MediaRef
+import com.kinetic.editor.core.model.PipSpec
 import com.kinetic.editor.core.model.ProjectCodec
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TextSpec
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.audioStructureHash
+import com.kinetic.editor.core.model.overlayStructureHash
 import com.kinetic.editor.core.model.videoStructureHash
 import com.kinetic.editor.core.mvi.EditorIntent
 import com.kinetic.editor.core.mvi.EditorStore
@@ -81,8 +83,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (prev.videoStructureHash() != next.videoStructureHash()) {
             preview.setTimeline(next, keepTimelineMs = keepTimelineMs)
         }
-        if (prev.audioStructureHash() != next.audioStructureHash()) {
-            preview.rescheduleAudio(next)
+        if (prev.audioStructureHash() != next.audioStructureHash() ||
+            prev.overlayStructureHash() != next.overlayStructureHash()
+        ) {
+            preview.rescheduleSlaves(next)
         }
     }
 
@@ -99,6 +103,24 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             } else if (ref.hasAudio) {
                 addToAudioTrack(ref, atMs = 0L)
             }
+        }
+    }
+
+    /** Adds a video to the picture-in-picture lane at the playhead. */
+    fun addPictureInPicture(uri: Uri, atMs: Long) {
+        viewModelScope.launch {
+            persistReadAccess(uri)
+            val ref = MediaProbe.probe(getApplication(), uri)
+            if (!ref.hasVideo || ref.durationMs <= 0) return@launch
+            val track = store.timeline.value.tracks.first { it.type == TrackType.VIDEO_OVERLAY }
+            store.dispatch(
+                EditorIntent.AddClip(
+                    trackId = track.id,
+                    media = ref,
+                    startMs = atMs,
+                    pip = PipSpec(),
+                ),
+            )
         }
     }
 

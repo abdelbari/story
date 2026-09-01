@@ -91,6 +91,17 @@ data class TextSpec(
     val anchorY: Float = -0.6f,
 )
 
+/** Placement of a picture-in-picture video overlay. Null on a clip = full frame. */
+@Serializable
+@Immutable
+data class PipSpec(
+    // Normalized device coords, [-1, 1]; (0, 0) is frame center.
+    val anchorX: Float = 0.55f,
+    val anchorY: Float = 0.55f,
+    val scale: Float = 0.35f,
+    val rotationDeg: Float = 0f,
+)
+
 @Serializable
 @Immutable
 data class StickerSpec(
@@ -125,6 +136,8 @@ data class ClipModel(
     val volumeKeyframes: PersistentList<VolumeKeyframe> = persistentListOf(),
     val text: TextSpec? = null,
     val sticker: StickerSpec? = null,
+    /** Set on VIDEO_OVERLAY clips; drives both the preview surface and the compositor. */
+    val pip: PipSpec? = null,
 ) {
     /** Source-domain span (what the decoder actually reads). */
     val sourceSpanMs: Long get() = trimOutMs - trimInMs
@@ -196,6 +209,7 @@ data class TimelineState(
         fun empty(): TimelineState = TimelineState(
             tracks = listOf(
                 Track(TrackId("main"), TrackType.VIDEO_MAIN, persistentListOf()),
+                Track(TrackId("overlay"), TrackType.VIDEO_OVERLAY, persistentListOf()),
                 Track(TrackId("text"), TrackType.TEXT, persistentListOf()),
                 Track(TrackId("sticker"), TrackType.STICKER, persistentListOf()),
                 Track(TrackId("audio"), TrackType.AUDIO, persistentListOf()),
@@ -222,6 +236,21 @@ fun TimelineState.videoStructureHash(): Int {
         h = 31 * h + c.media.uri.hashCode()
         h = 31 * h + c.trimInMs.toInt()
         h = 31 * h + c.trimOutMs.toInt()
+    }
+    return h
+}
+
+fun TimelineState.overlayStructureHash(): Int {
+    var h = 17
+    for (t in tracks) {
+        if (t.type != TrackType.VIDEO_OVERLAY) continue
+        h = 31 * h + t.id.value.hashCode()
+        for (c in t.clips) {
+            h = 31 * h + c.media.uri.hashCode()
+            h = 31 * h + c.trimInMs.toInt()
+            h = 31 * h + c.trimOutMs.toInt()
+            h = 31 * h + c.startMs.toInt()
+        }
     }
     return h
 }

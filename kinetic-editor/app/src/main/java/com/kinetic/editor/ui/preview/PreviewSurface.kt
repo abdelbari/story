@@ -9,10 +9,15 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -24,6 +29,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
@@ -59,7 +65,48 @@ fun PreviewSurface(
                 onRelease = { engine.detachSurface() },
                 modifier = Modifier.fillMaxSize(),
             )
+            PipLayer(engine)
             PreviewOverlayLayer(state, viewport, Modifier.fillMaxSize())
+        }
+    }
+}
+
+/**
+ * Picture-in-picture preview: one surface per PiP track, laid out from the same
+ * PipSpec the export compositor uses, so the box the user drags is the box that
+ * renders. Each surface sits above the main video and below text/stickers, which
+ * matches the export layer order (compositor first, OverlayEffect last).
+ */
+@Composable
+private fun PipLayer(engine: PreviewEngine) {
+    val overlays by engine.overlays.collectAsState()
+    for (overlay in overlays) {
+        key(overlay.trackId) {
+            val pip = overlay.pip
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .layout { measurable, constraints ->
+                        val w = (constraints.maxWidth * pip.scale).toInt().coerceAtLeast(1)
+                        val h = (constraints.maxHeight * pip.scale).toInt().coerceAtLeast(1)
+                        val placeable = measurable.measure(Constraints.fixed(w, h))
+                        layout(constraints.maxWidth, constraints.maxHeight) {
+                            // NDC anchor -> pixel center, y up-positive.
+                            val cx = (pip.anchorX * 0.5f + 0.5f) * constraints.maxWidth
+                            val cy = (-pip.anchorY * 0.5f + 0.5f) * constraints.maxHeight
+                            placeable.place((cx - w / 2f).toInt(), (cy - h / 2f).toInt())
+                        }
+                    }
+                    .rotate(pip.rotationDeg),
+            ) {
+                AndroidView(
+                    factory = { ctx ->
+                        SurfaceView(ctx).also { engine.attachOverlaySurface(overlay.trackId, it) }
+                    },
+                    onRelease = { engine.detachOverlaySurface(overlay.trackId) },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
     }
 }

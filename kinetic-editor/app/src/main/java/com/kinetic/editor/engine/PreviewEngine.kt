@@ -12,6 +12,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.source.ConcatenatingMediaSource2
+import com.kinetic.editor.core.model.PipSpec
 import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.Track
@@ -90,9 +91,16 @@ class PreviewEngine(
     private val _timelineDurationMs = MutableStateFlow(0L)
     val timelineDurationMs: StateFlow<Long> = _timelineDurationMs.asStateFlow()
 
+    /** PiP tracks currently loaded, so the UI can host a surface for each. */
+    private val _overlays = MutableStateFlow<List<OverlayHandle>>(emptyList())
+    val overlays: StateFlow<List<OverlayHandle>> = _overlays.asStateFlow()
+
+    /** Identifies one PiP preview surface and where it should sit in the frame. */
+    data class OverlayHandle(val trackId: String, val pip: PipSpec)
+
     private var latestState: TimelineState = TimelineState.empty()
     private var segments: PreviewSegments = PreviewSegments(emptyList())
-    private val slaves = LinkedHashMap<String, SlaveAudio>()
+    private val slaves = LinkedHashMap<String, SlavePlayer>()
     private val lutCache = HashMap<String, Bitmap>()
 
     // Scrub conflation state (main thread only).
@@ -108,6 +116,20 @@ class PreviewEngine(
     fun attachSurface(view: SurfaceView) = player.setVideoSurfaceView(view)
 
     fun detachSurface() = player.clearVideoSurface()
+
+    /**
+     * PiP preview is a second player drawn into its own SurfaceView, laid out by
+     * Compose from the same PipSpec the export compositor uses. Compositing two
+     * decoded streams into one GL surface just to preview them would cost a full
+     * render pass per frame for no visual difference.
+     */
+    fun attachOverlaySurface(trackId: String, view: SurfaceView) {
+        slaves[trackId]?.player?.setVideoSurfaceView(view)
+    }
+
+    fun detachOverlaySurface(trackId: String) {
+        slaves[trackId]?.player?.clearVideoSurface()
+    }
 
     fun release() {
         ticker?.cancel()
@@ -158,8 +180,8 @@ class PreviewEngine(
         for (slave in slaves.values) slave.refresh(state)
     }
 
-    /** Audio-structural change: recreate slave playlists, keep the master alone. */
-    fun rescheduleAudio(state: TimelineState) {
+    /** Slave-structural change (audio or PiP): rebuild those playlists only. */
+    fun rescheduleSlaves(state: TimelineState) {
         latestState = state
         rebuildSlaves(state)
     }
@@ -373,23 +395,29 @@ class PreviewEngine(
     /* ----------------------------- slave audio ----------------------------- */
 
     private fun rebuildSlaves(state: TimelineState) {
-        val audioTracks = state.tracks.filter { it.type == TrackType.AUDIO }
-        val wantedIds = audioTracks.map { it.id.value }.toSet()
+        val slaveTracks = state.tracks.filter {
+            (it.type == TrackType.AUDIO || it.type == TrackType.VIDEO_OVERLAY) && it.clips.isNotEmpty()
+        }
+        val wantedIds = slaveTracks.map { it.id.value }.toSet()
         slaves.keys.retainAll { id ->
             (id in wantedIds).also { keep -> if (!keep) slaves[id]?.player?.release() }
         }
-        for (track in audioTracks) {
-            val slave = slaves.getOrPut(track.id.value) { SlaveAudio(ExoPlayer.Builder(context).build()) }
+        for (track in slaveTracks) {
+            val slave = slaves.getOrPut(track.id.value) { SlavePlayer(ExoPlayer.Builder(context).build()) }
             slave.rebuild(state, track)
         }
+        _overlays.value = slaveTracks
+            .filter { it.type == TrackType.VIDEO_OVERLAY }
+            .map { OverlayHandle(it.id.value, it.clips.first().pip ?: PipSpec()) }
     }
 
     /**
-     * One lightweight audio-only player per AUDIO track, slaved to the master
-     * clock: re-seeked on item boundaries and whenever phase drift exceeds 80ms.
-     * (Export replaces this with sample-accurate Composition mixing.)
+     * One lightweight player per AUDIO or VIDEO_OVERLAY track, slaved to the
+     * master clock: re-seeked on item boundaries and whenever phase drift exceeds
+     * 80ms. (Export replaces this with sample-accurate Composition mixing and a
+     * real video compositor.)
      */
-    private inner class SlaveAudio(val player: ExoPlayer) {
+    private inner class SlavePlayer(val player: ExoPlayer) {
         private var track: Track? = null
         private var placements: List<PlacedClip> = emptyList()
 
