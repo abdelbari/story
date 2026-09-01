@@ -39,9 +39,25 @@ sealed interface ConvertUiState {
     /** Page counts are 0 for work that is not page-by-page (everything but OCR). */
     data class Converting(val page: Int = 0, val pageCount: Int = 0) : ConvertUiState
 
-    /** Conversion done and the system save dialog is on screen. */
-    data object AwaitingSave : ConvertUiState
-    data class ReadyToSave(val suggestedName: String, val mimeType: String) : ConvertUiState
+    /**
+     * A finished conversion, carrying its own bytes rather than leaving the
+     * save handler to read a field that a later conversion may have
+     * replaced: whatever the dialog was opened for is what gets written.
+     * Array identity is the right equality here, and what the data class
+     * generates.
+     */
+    data class ReadyToSave(
+        val suggestedName: String,
+        val mimeType: String,
+        val bytes: ByteArray,
+    ) : ConvertUiState
+
+    /** The same payload, with the system save dialog now on screen. */
+    data class AwaitingSave(
+        val suggestedName: String,
+        val mimeType: String,
+        val bytes: ByteArray,
+    ) : ConvertUiState
 
     /** Print-ready HTML for the system print sheet's "Save as PDF". */
     data class ReadyToPrint(val html: String, val jobName: String) : ConvertUiState
@@ -90,7 +106,6 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
 
     /** Whichever conversion ran last — "Try again" repeats it, not convert(). */
     private var lastOperation: (() -> Unit)? = null
-    private var outputBytes: ByteArray? = null
     private var outputName: String = ""
 
     /** Fidelity Report of the last conversion's model, for the Saved notice. */
@@ -178,8 +193,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                 _state.value = ConvertUiState.Failed(FailReason.WRITE_ERROR)
                 return@launch
             }
-            outputBytes = bytes
-            _state.value = ConvertUiState.ReadyToSave(outputName, lastMimeType)
+            _state.value = ConvertUiState.ReadyToSave(outputName, lastMimeType, bytes)
         }
     }
 
@@ -219,9 +233,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun convert() {
-        // Two taps inside one frame would start two conversions racing for
-        // outputBytes, and the save dialog would write the loser's bytes
-        // under the winner's name.
+        // Two taps inside one frame would otherwise start two conversions
+        // at once, for no benefit and to the user's confusion.
         if (_state.value is ConvertUiState.Converting) return
 
         val (uri, source) = pickedFile ?: return
@@ -331,10 +344,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             _state.value = ConvertUiState.Failed(FailReason.WRITE_ERROR)
             return
         }
-        outputBytes = output
         val base = source.fileName.substringBeforeLast('.').ifEmpty { "converted" }
         outputName = "$base.$extension"
-        _state.value = ConvertUiState.ReadyToSave(outputName, mimeType)
+        _state.value = ConvertUiState.ReadyToSave(outputName, mimeType, output)
     }
 
     /**
@@ -343,9 +355,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
      * but never leaves the device.
      */
     fun convertWithOcr() {
-        // Two taps inside one frame would start two conversions racing for
-        // outputBytes, and the save dialog would write the loser's bytes
-        // under the winner's name.
+        // Two taps inside one frame would otherwise start two conversions
+        // at once, for no benefit and to the user's confusion.
         if (_state.value is ConvertUiState.Converting) return
 
         val (uri, source) = pickedFile ?: return
@@ -393,9 +404,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
 
     /** Text, Markdown or Word input → a real .pdf file via the save dialog. */
     fun exportPdf() {
-        // Two taps inside one frame would start two conversions racing for
-        // outputBytes, and the save dialog would write the loser's bytes
-        // under the winner's name.
+        // Two taps inside one frame would otherwise start two conversions
+        // at once, for no benefit and to the user's confusion.
         if (_state.value is ConvertUiState.Converting) return
 
         val (uri, source) = pickedFile ?: return
@@ -412,9 +422,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
 
     /** Text, Markdown or Word input → print-ready HTML → the system print sheet. */
     fun printPdf() {
-        // Two taps inside one frame would start two conversions racing for
-        // outputBytes, and the save dialog would write the loser's bytes
-        // under the winner's name.
+        // Two taps inside one frame would otherwise start two conversions
+        // at once, for no benefit and to the user's confusion.
         if (_state.value is ConvertUiState.Converting) return
 
         val (uri, source) = pickedFile ?: return
@@ -453,14 +462,17 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
 
     /** The UI has launched the system save dialog for the current result. */
     fun onSaveDialogLaunched() {
-        if (_state.value is ConvertUiState.ReadyToSave) {
-            _state.value = ConvertUiState.AwaitingSave
-        }
+        val ready = _state.value as? ConvertUiState.ReadyToSave ?: return
+        _state.value =
+            ConvertUiState.AwaitingSave(ready.suggestedName, ready.mimeType, ready.bytes)
     }
 
     /** Result of the system "create document" dialog; null = user cancelled. */
     fun onSaveTarget(target: Uri?) {
-        val bytes = outputBytes
+        // The payload of the dialog that just closed — not whatever the most
+        // recent conversion happens to have left behind.
+        val awaiting = _state.value as? ConvertUiState.AwaitingSave
+        val bytes = awaiting?.bytes
         if (target == null || bytes == null) {
             if (target != null) {
                 // The dialog created a document but the conversion is gone
@@ -488,7 +500,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             }.getOrDefault(false)
             _state.value = if (ok) {
                 ConvertUiState.Saved(
-                    fileName = outputName,
+                    fileName = awaiting.suggestedName,
                     needsReview = lastReport?.reviewables?.isNotEmpty() == true,
                 )
             } else {
