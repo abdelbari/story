@@ -35,13 +35,6 @@ class AndroidOcrReader(private val context: Context) {
         AndroidPdfReader.ensureInitialized(context)
     }
 
-    /** True when every language pack in [languages] is bundled. */
-    fun supports(languages: String): Boolean = languages.split('+').all { language ->
-        runCatching {
-            context.assets.open("$TESSDATA_DIR/$language$TRAINED_DATA_SUFFIX").use { }
-        }.isSuccess
-    }
-
     /**
      * Recognizes every page of a PDF with no usable text layer. Returns the
      * document model of the recognized text; throws on unreadable input or
