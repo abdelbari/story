@@ -28,7 +28,7 @@ object PlainTextImporter {
 
         fun flush() {
             if (buffer.isEmpty()) return
-            blocks += paragraph(buffer.joinToString(" "), ParagraphKind.BODY, listMarker = null)
+            blocks += paragraph(LineJoiner.join(buffer), ParagraphKind.BODY, listMarker = null)
             buffer.clear()
         }
 

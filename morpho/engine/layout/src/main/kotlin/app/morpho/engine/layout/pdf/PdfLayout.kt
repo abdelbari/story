@@ -4,6 +4,7 @@ import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
+import app.morpho.engine.layout.LineJoiner
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.ParagraphStyle
@@ -25,7 +26,7 @@ import kotlin.math.roundToInt
  * A new paragraph starts on a page break, on a vertical gap larger than
  * [PARAGRAPH_GAP_FACTOR] times the page's median line pitch, on a marked
  * font-size change, or on a marked left-edge indentation shift; every other
- * line break is treated as a soft wrap and unwrapped with a single space.
+ * line break is treated as a soft wrap and unwrapped by [LineJoiner].
  * The indent check reads the left edge, which for right-to-left lines is the
  * ragged side, so it is skipped when either neighbouring line starts with a
  * right-to-left character; it also cannot tell a first-line indent from a
@@ -98,7 +99,7 @@ object PdfLayout {
             positioned += Positioned(
                 first.page,
                 first.baselineY,
-                paragraph(clusterLines.joinToString(" ") { it.text }, kind, confidence),
+                paragraph(LineJoiner.join(clusterLines.map { it.text }), kind, confidence),
             )
         }
         val textCount = positioned.size
