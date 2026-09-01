@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Kinetic mark: a play triangle cut by a scrub line — the app is about moving
+  the playhead, not just pressing play. Drawn inside the 72dp safe zone of the
+  108dp adaptive canvas.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#35C4B5"
+        android:pathData="M43,32 L74,54 L43,76 Z" />
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,50 h48 v8 h-48 z" />
+
+    <path
+        android:fillColor="#FFC145"
+        android:pathData="M50,26 h5 v56 h-5 z" />
+</vector>

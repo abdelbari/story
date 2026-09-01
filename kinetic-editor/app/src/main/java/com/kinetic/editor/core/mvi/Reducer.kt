@@ -59,6 +59,8 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
     is EditorIntent.SetTrackMuted -> mapTracks(state) { t ->
         if (t.id == intent.trackId) t.copy(muted = intent.muted) else t
     }
+    // A restored project keeps its own revision counter continuity via the store.
+    is EditorIntent.Replace -> intent.state
     // Undo/Redo are handled by the store's history, never by the reducer.
     EditorIntent.Undo, EditorIntent.Redo -> state
 }

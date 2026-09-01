@@ -5,6 +5,7 @@ import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.MediaRef
 import com.kinetic.editor.core.model.StickerSpec
+import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TextSpec
 import com.kinetic.editor.core.model.TrackId
 import com.kinetic.editor.core.model.TransitionSpec
@@ -78,6 +79,9 @@ sealed interface EditorIntent {
     }
 
     data class SetTrackMuted(val trackId: TrackId, val muted: Boolean) : EditorIntent
+
+    /** Replaces the whole document (project restore). Clears undo history. */
+    data class Replace(val state: TimelineState) : EditorIntent
 
     data object Undo : EditorIntent
     data object Redo : EditorIntent

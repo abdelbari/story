@@ -9,3 +9,6 @@ captures/
 .cxx/
 *.apk
 *.aab
+
+# The Gradle wrapper JAR IS committed on purpose (that is the point of a wrapper).
+!gradle/wrapper/gradle-wrapper.jar

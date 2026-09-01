@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      The editor is edge-to-edge and always dark: video grading is judged
+      against a neutral dark ground, so the app does not follow the system
+      light theme. Compose supplies all in-app color; this theme only needs to
+      paint the window before the first frame and keep the bars transparent.
+    -->
+    <style name="Theme.Kinetic" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/kinetic_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

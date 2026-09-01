@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirrors the Compose Palette in TimelineCanvas.kt / MainActivity.kt. -->
+    <color name="kinetic_background">#FF0E0F13</color>
+    <color name="kinetic_accent">#FF35C4B5</color>
+    <color name="kinetic_on_background">#FFEDEDF2</color>
+</resources>

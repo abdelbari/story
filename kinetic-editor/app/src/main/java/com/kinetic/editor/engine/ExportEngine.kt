@@ -22,6 +22,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.kinetic.editor.core.model.ProjectCodec
 import com.kinetic.editor.core.model.TimelineState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -112,27 +113,25 @@ class ExportEngine(private val context: Context) {
 /* ------------------------------ background job ----------------------------- */
 
 /**
- * In-memory handoff to the worker. A production build persists the project
- * document (serialize TimelineState) so an export can survive process death and
- * be retried by WorkManager; the pipeline below is unchanged by that swap.
+ * The worker is handed a FILE, not an object: WorkManager can run (or retry) it
+ * after the editor process is gone, which a static field would not survive.
  */
-object ExportSession {
-    data class Request(val state: TimelineState, val spec: ExportSpec)
-
-    @Volatile
-    private var pending: Request? = null
-
-    fun put(request: Request) { pending = request }
-    fun take(): Request? = pending.also { pending = null }
-}
-
 class ExportWorker(
     appContext: Context,
     params: WorkerParameters,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
-        val request = ExportSession.take() ?: return Result.failure()
+        val projectPath = inputData.getString(KEY_PROJECT) ?: return Result.failure()
+        val state = ProjectCodec.load(File(projectPath))
+            ?: return Result.failure(workDataOf(KEY_ERROR to "Project file missing or corrupt"))
+        if (state.mainTrack.clips.isEmpty()) {
+            return Result.failure(workDataOf(KEY_ERROR to "Nothing to export"))
+        }
+        val spec = ExportSpec(
+            width = inputData.getInt(KEY_WIDTH, state.outputWidth),
+            height = inputData.getInt(KEY_HEIGHT, state.outputHeight),
+        )
         setForeground(foregroundInfo(0))
 
         val dir = applicationContext.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
@@ -144,7 +143,7 @@ class ExportWorker(
         // Collect on Main: Transformer's contract, see ExportEngine.export.
         withContext(Dispatchers.Main) {
             ExportEngine(applicationContext)
-                .export(request.state, request.spec, outputFile)
+                .export(state, spec, outputFile)
                 .catch { result = Result.failure(workDataOf(KEY_ERROR to it.message)) }
                 .collect { event ->
                     when (event) {
@@ -201,15 +200,32 @@ class ExportWorker(
         const val KEY_PROGRESS = "progress"
         const val KEY_OUTPUT = "output"
         const val KEY_ERROR = "error"
+        private const val KEY_PROJECT = "project"
+        private const val KEY_WIDTH = "width"
+        private const val KEY_HEIGHT = "height"
         private const val CHANNEL_ID = "export"
         private const val NOTIFICATION_ID = 42
 
+        /**
+         * Snapshots the document to its own file first: the user may keep editing
+         * (or leave) while the render runs, and the export must render what was
+         * on screen when they pressed the button.
+         */
         fun enqueue(context: Context, state: TimelineState, spec: ExportSpec) {
-            ExportSession.put(ExportSession.Request(state, spec))
+            val snapshot = File(context.filesDir, "export_project.json")
+            ProjectCodec.save(snapshot, state)
             WorkManager.getInstance(context).enqueueUniqueWork(
                 WORK_NAME,
                 ExistingWorkPolicy.REPLACE,
-                OneTimeWorkRequestBuilder<ExportWorker>().build(),
+                OneTimeWorkRequestBuilder<ExportWorker>()
+                    .setInputData(
+                        workDataOf(
+                            KEY_PROJECT to snapshot.absolutePath,
+                            KEY_WIDTH to spec.width,
+                            KEY_HEIGHT to spec.height,
+                        ),
+                    )
+                    .build(),
             )
         }
     }

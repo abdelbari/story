@@ -14,9 +14,10 @@
 
     <application
         android:name=".KineticApp"
-        android:label="Kinetic"
-        android:icon="@android:drawable/ic_media_play"
-        android:theme="@android:style/Theme.Material.NoActionBar"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:theme="@style/Theme.Kinetic"
         android:supportsRtl="true"
         android:largeHeap="false">
 

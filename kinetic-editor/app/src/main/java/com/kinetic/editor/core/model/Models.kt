@@ -1,8 +1,8 @@
 package com.kinetic.editor.core.model
 
 import androidx.compose.runtime.Immutable
-import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.PersistentList
+import kotlinx.serialization.Serializable
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
 import java.util.UUID
@@ -15,11 +15,13 @@ import kotlin.math.roundToLong
  *  - All keyframe times are relative to the clip's TIMELINE span (post-speed).
  */
 
+@Serializable
 @JvmInline
 value class ClipId(val value: String) {
     companion object { fun random() = ClipId(UUID.randomUUID().toString()) }
 }
 
+@Serializable
 @JvmInline
 value class TrackId(val value: String) {
     companion object { fun random() = TrackId(UUID.randomUUID().toString()) }
@@ -28,6 +30,7 @@ value class TrackId(val value: String) {
 enum class TrackType { VIDEO_MAIN, VIDEO_OVERLAY, TEXT, STICKER, AUDIO }
 
 /** Immutable description of a source media file. Probed once at import. */
+@Serializable
 @Immutable
 data class MediaRef(
     val uri: String,
@@ -39,6 +42,7 @@ data class MediaRef(
     val height: Int = 0,
 )
 
+@Serializable
 @Immutable
 data class ColorGradeSpec(
     val brightness: Float = 0f,   // [-0.5, 0.5] additive
@@ -53,6 +57,7 @@ data class ColorGradeSpec(
 }
 
 /** A 64x64x64 cube LUT packed into a 512x512 PNG (8x8 grid of 64x64 B-slices). */
+@Serializable
 @Immutable
 data class LutSpec(
     val assetPath: String,       // e.g. "luts/teal_orange.png"
@@ -61,18 +66,21 @@ data class LutSpec(
 
 enum class TransitionType { NONE, DIP_TO_BLACK, WIPE_LEFT, ZOOM_PUNCH }
 
+@Serializable
 @Immutable
 data class TransitionSpec(
     val type: TransitionType,
     val durationMs: Long = 500L,
 )
 
+@Serializable
 @Immutable
 data class VolumeKeyframe(
     val atMs: Long,   // relative to clip timeline start
     val gain: Float,  // [0, 2] linear
 )
 
+@Serializable
 @Immutable
 data class TextSpec(
     val text: String,
@@ -83,6 +91,7 @@ data class TextSpec(
     val anchorY: Float = -0.6f,
 )
 
+@Serializable
 @Immutable
 data class StickerSpec(
     val assetPath: String,
@@ -92,6 +101,7 @@ data class StickerSpec(
     val rotationDeg: Float = 0f,
 )
 
+@Serializable
 @Immutable
 data class ClipModel(
     val id: ClipId,
@@ -111,7 +121,8 @@ data class ClipModel(
     /** Transition played across this clip's END boundary into the next clip. */
     val transitionOut: TransitionSpec? = null,
     val volume: Float = 1f,
-    val volumeKeyframes: ImmutableList<VolumeKeyframe> = persistentListOf(),
+    @Serializable(with = PersistentListSerializer::class)
+    val volumeKeyframes: PersistentList<VolumeKeyframe> = persistentListOf(),
     val text: TextSpec? = null,
     val sticker: StickerSpec? = null,
 ) {
@@ -127,11 +138,13 @@ data class ClipModel(
     }
 }
 
+@Serializable
 @Immutable
 data class Track(
     val id: TrackId,
     val type: TrackType,
     // PersistentList (not just ImmutableList) so the reducer can use mutate {}.
+    @Serializable(with = PersistentListSerializer::class)
     val clips: PersistentList<ClipModel>,
     val muted: Boolean = false,
     val volume: Float = 1f,
@@ -144,9 +157,11 @@ data class PlacedClip(val clip: ClipModel, val startMs: Long) {
     operator fun contains(timelineMs: Long) = timelineMs in startMs until endMs
 }
 
+@Serializable
 @Immutable
 data class TimelineState(
-    val tracks: ImmutableList<Track>,
+    @Serializable(with = PersistentListSerializer::class)
+    val tracks: PersistentList<Track>,
     val outputWidth: Int = 1080,
     val outputHeight: Int = 1920,
     val projectFps: Float = 30f,

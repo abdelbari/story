@@ -55,6 +55,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.kinetic.editor.core.model.ClipModel
 import com.kinetic.editor.core.model.ColorGradeSpec
+import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.TransitionType
 import com.kinetic.editor.core.mvi.EditorIntent
@@ -310,6 +311,7 @@ private fun ToolBar(
             )
         }
         ToolButton("+ Music") { musicPicker.launch("audio/*") }
+        ToolButton("+ Text") { vm.addText(viewport.playheadMs) }
         ToolButton(if (recording) "■ Stop" else "● Rec") {
             if (recording) {
                 vm.stopVoiceover(voiceoverStartMs)
@@ -383,6 +385,21 @@ private fun ClipInspector(
                 TransitionType.WIPE_LEFT -> TransitionType.ZOOM_PUNCH
                 TransitionType.ZOOM_PUNCH -> TransitionType.NONE
             }
+            val lutOn = clip.lut != null
+            TextButton(onClick = {
+                dispatch(
+                    EditorIntent.SetLut(
+                        clip.id,
+                        if (lutOn) null else LutSpec(FILM_LUT_ASSET, intensity = 0.85f),
+                    ),
+                )
+            }) {
+                Text(
+                    if (lutOn) "Film ✓" else "Film",
+                    fontSize = 12.sp,
+                    color = if (lutOn) Color(0xFF35C4B5) else Color(0xFF9A9AA5),
+                )
+            }
             TextButton(onClick = {
                 dispatch(
                     EditorIntent.SetTransition(
@@ -416,6 +433,9 @@ private fun androidx.compose.foundation.layout.RowScope.InspectorSlider(
         modifier = Modifier.weight(1f).padding(end = 8.dp),
     )
 }
+
+/** Ships in app/src/main/assets — a 64-cube teal/orange film LUT. */
+private const val FILM_LUT_ASSET = "luts/teal_orange.png"
 
 private fun formatMs(ms: Long): String {
     val tenths = (ms % 1000) / 100

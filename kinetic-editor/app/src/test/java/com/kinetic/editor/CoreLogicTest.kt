@@ -4,7 +4,10 @@ import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ClipModel
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.MediaRef
+import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.PlacedClip
+import com.kinetic.editor.core.model.ProjectCodec
+import com.kinetic.editor.core.model.TextSpec
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.planAudioSequence
 import com.kinetic.editor.core.model.transitionWindowsUs
@@ -234,6 +237,47 @@ class CoreLogicTest {
         assertTrue(reduce(s0, EditorIntent.SetVolume(c.id, c.volume)) === s0)
         assertTrue(reduce(s0, EditorIntent.SetGrade(c.id, c.grade)) === s0)
         assertTrue(reduce(s0, EditorIntent.SetSpeed(c.id, 2f)) !== s0)
+    }
+
+    @Test
+    fun projectCodecRoundTripsAFullDocument() {
+        val c1 = clip("a", 10_000, 1_000, 9_000, speed = 1.5f).copy(
+            grade = ColorGradeSpec(brightness = 0.2f, saturation = 1.3f),
+            lut = LutSpec("luts/teal_orange.png", 0.85f),
+            transitionOut = TransitionSpec(TransitionType.WIPE_LEFT, 600),
+            volume = 1.4f,
+            volumeKeyframes = persistentListOf(VolumeKeyframe(0, 0f), VolumeKeyframe(2_000, 1f)),
+        )
+        val text = ClipModel(
+            ClipId("t1"),
+            MediaRef("kinetic://text", 3_000, false, false, 0f),
+            0, 3_000, startMs = 1_500,
+            text = TextSpec("Hello", anchorY = -0.4f),
+        )
+        val base = stateWith(listOf(c1), audio = listOf(clip("m", 5_000, start = 500)))
+        val original = base.copy(
+            tracks = base.tracks.map { tr ->
+                if (tr.type == TrackType.TEXT) tr.copy(clips = persistentListOf(text)) else tr
+            }.toPersistentList(),
+            outputWidth = 1920, outputHeight = 1080, projectFps = 60f,
+        )
+
+        val decoded = ProjectCodec.decode(ProjectCodec.encode(original))
+        assertEquals(original, decoded)
+        assertEquals("luts/teal_orange.png", decoded!!.mainTrack.clips[0].lut?.assetPath)
+        assertEquals(2, decoded.mainTrack.clips[0].volumeKeyframes.size)
+        assertEquals("Hello", decoded.tracks.first { it.type == TrackType.TEXT }.clips[0].text?.text)
+        // The decoded lists must still be persistent enough for the reducer.
+        val edited = reduce(decoded, EditorIntent.SetVolume(decoded.mainTrack.clips[0].id, 0.5f))
+        assertEquals(0.5f, edited.mainTrack.clips[0].volume, 1e-3f)
+    }
+
+    @Test
+    fun projectCodecFailsSoftAndToleratesUnknownKeys() {
+        assertNull(ProjectCodec.decode("{ not json"))
+        assertNull(ProjectCodec.decode(""))
+        val json = ProjectCodec.encode(stateWith(listOf(clip("a", 4_000))))
+        assertTrue(ProjectCodec.decode(json.dropLast(1) + ",\"futureField\":123}") != null)
     }
 
     @Test

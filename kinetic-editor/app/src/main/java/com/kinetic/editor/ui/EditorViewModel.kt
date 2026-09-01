@@ -9,7 +9,9 @@ import androidx.lifecycle.viewModelScope
 import com.kinetic.editor.audio.VoiceRecorder
 import com.kinetic.editor.core.model.MediaProbe
 import com.kinetic.editor.core.model.MediaRef
+import com.kinetic.editor.core.model.ProjectCodec
 import com.kinetic.editor.core.model.TimelineState
+import com.kinetic.editor.core.model.TextSpec
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.audioStructureHash
 import com.kinetic.editor.core.model.videoStructureHash
@@ -20,7 +22,12 @@ import com.kinetic.editor.engine.ExportWorker
 import com.kinetic.editor.engine.PreviewEngine
 import com.kinetic.editor.engine.ThumbnailEngine
 import com.kinetic.editor.engine.WaveformEngine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -33,6 +40,7 @@ import java.io.File
  *   video structure  -> rebuild concatenated source         (costly, rare,
  *                        position-preserving)
  */
+@OptIn(FlowPreview::class)
 class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     val thumbnails = ThumbnailEngine(app, viewModelScope)
@@ -41,6 +49,24 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     val recorder = VoiceRecorder(viewModelScope)
 
     val store = EditorStore(viewModelScope) { prev, next -> route(prev, next) }
+
+    private val projectFile = File(app.filesDir, "project.json")
+
+    init {
+        // Restore the last session, then autosave every commit (debounced so a
+        // slider drag writes once, not sixty times).
+        ProjectCodec.load(projectFile)?.let { restored ->
+            store.dispatch(EditorIntent.Replace(restored))
+        }
+        viewModelScope.launch {
+            store.timeline
+                .drop(1)
+                .debounce(AUTOSAVE_DEBOUNCE_MS)
+                .collect { state ->
+                    withContext(Dispatchers.IO) { ProjectCodec.save(projectFile, state) }
+                }
+        }
+    }
 
     private fun route(prev: TimelineState, next: TimelineState) {
         // Read the position BEFORE updateCosmetics: it swaps in segments built
@@ -83,6 +109,30 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         store.dispatch(EditorIntent.AddClip(trackId = audioTrack.id, media = ref, startMs = atMs))
     }
 
+    /**
+     * Text is a first-class clip on the TEXT track: a synthetic MediaRef gives it
+     * a duration so the same trim/move/split machinery applies, while preview
+     * draws it as a Compose layer and export renders it as an OverlayEffect.
+     */
+    fun addText(atMs: Long, text: String = "Your text here") {
+        val track = store.timeline.value.tracks.first { it.type == TrackType.TEXT }
+        store.dispatch(
+            EditorIntent.AddClip(
+                trackId = track.id,
+                media = MediaRef(
+                    uri = SYNTHETIC_TEXT_URI,
+                    durationMs = DEFAULT_TEXT_DURATION_MS,
+                    hasVideo = false,
+                    hasAudio = false,
+                    fps = 0f,
+                ),
+                startMs = atMs,
+                trimOutMs = DEFAULT_TEXT_DURATION_MS,
+                text = TextSpec(text = text),
+            ),
+        )
+    }
+
     /* ------------------------------ voiceover ------------------------------ */
 
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
@@ -121,6 +171,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             state,
             ExportSpec(width = state.outputWidth, height = state.outputHeight),
         )
+    }
+
+    private companion object {
+        /** Text clips carry no decodable media; the URI is a marker, never opened. */
+        const val SYNTHETIC_TEXT_URI = "kinetic://text"
+        const val DEFAULT_TEXT_DURATION_MS = 3_000L
+        const val AUTOSAVE_DEBOUNCE_MS = 700L
     }
 
     override fun onCleared() {

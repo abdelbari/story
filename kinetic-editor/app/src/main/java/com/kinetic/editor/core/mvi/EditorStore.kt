@@ -63,6 +63,12 @@ class EditorStore(
         val next: TimelineState = when (intent) {
             EditorIntent.Undo -> history.undo(prev) ?: return
             EditorIntent.Redo -> history.redo(prev) ?: return
+            is EditorIntent.Replace -> {
+                // A restored project is a new document, not an edit: undoing back
+                // into the pre-restore session would be meaningless.
+                history.clear()
+                intent.state
+            }
             else -> {
                 val reduced = reduce(prev, intent)
                 if (reduced === prev) return
@@ -113,6 +119,12 @@ private class UndoStack(private val capacity: Int) {
         if (coalesce) return
         undo.addLast(beforeIntent)
         if (undo.size > capacity) undo.removeFirst()
+    }
+
+    fun clear() {
+        undo.clear()
+        redo.clear()
+        lastKey = null
     }
 
     fun undo(current: TimelineState): TimelineState? {
