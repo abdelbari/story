@@ -2,6 +2,7 @@ package com.kinetic.editor.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -372,6 +373,12 @@ private fun ToolBar(
         }
     }
 
+    // The render runs as a foreground job whose progress lives in the shade;
+    // from API 33 that shade needs permission. The export starts either way.
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { vm.startExport() }
+
     Row(
         Modifier
             .fillMaxWidth()
@@ -418,7 +425,16 @@ private fun ToolBar(
             val next = CANVAS_PRESETS[(preset + 1) % CANVAS_PRESETS.size]
             vm.store.dispatch(EditorIntent.SetCanvas(next.width, next.height))
         }
-        ToolButton("Export") { vm.startExport() }
+        ToolButton("Export") {
+            if (Build.VERSION.SDK_INT >= 33 &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                vm.startExport()
+            }
+        }
     }
 }
 
