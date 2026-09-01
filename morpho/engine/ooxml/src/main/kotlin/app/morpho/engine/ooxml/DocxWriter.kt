@@ -31,8 +31,10 @@ import java.util.zip.ZipOutputStream
  * list gets its own `w:num` instance so its numbering restarts at 1), simple
  * tables, per-paragraph and per-run right-to-left direction
  * (`w:bidi`/`w:rtl`), and run languages.
- * Images land with the M1 media-part work and are rejected loudly until then —
- * silently dropping content is never acceptable.
+ * PNG and JPEG [ImageBlock]s are written as media parts with inline
+ * `w:drawing` markup, scaled down to the content area when oversized; any
+ * other image type is rejected loudly — silently dropping content is never
+ * acceptable.
  */
 object DocxWriter {
 
@@ -49,21 +51,29 @@ object DocxWriter {
 
     fun write(document: DocumentModel, output: OutputStream) {
         val numbering = NumberingPlan(document)
+        val images = ImagePlan(document)
         ZipOutputStream(output).use { zip ->
             zip.part("[Content_Types].xml", contentTypesXml())
             zip.part("_rels/.rels", packageRelsXml())
-            zip.part("word/_rels/document.xml.rels", documentRelsXml())
-            zip.part("word/document.xml", documentXml(document, numbering))
+            zip.part("word/_rels/document.xml.rels", documentRelsXml(images))
+            zip.part("word/document.xml", documentXml(document, numbering, images))
             zip.part("word/styles.xml", stylesXml())
             zip.part("word/numbering.xml", numberingXml(numbering))
             zip.part("docProps/core.xml", corePropsXml())
             zip.part("docProps/app.xml", appPropsXml())
+            for (entry in images.entries) {
+                zip.partBytes("word/media/${entry.fileName}", entry.block.bytes)
+            }
         }
     }
 
     private fun ZipOutputStream.part(name: String, content: String) {
+        partBytes(name, content.toByteArray(StandardCharsets.UTF_8))
+    }
+
+    private fun ZipOutputStream.partBytes(name: String, bytes: ByteArray) {
         putNextEntry(ZipEntry(name))
-        write(content.toByteArray(StandardCharsets.UTF_8))
+        write(bytes)
         closeEntry()
     }
 
@@ -122,15 +132,75 @@ object DocxWriter {
     }
 
     // ------------------------------------------------------------------
+    // Image assignment
+    // ------------------------------------------------------------------
+
+    private val EXTENSION_BY_MIME = mapOf("image/png" to "png", "image/jpeg" to "jpeg")
+
+    /**
+     * Media file names and relationship ids for every [ImageBlock], assigned
+     * in one pre-pass (blocks in table cells included) so the writer itself
+     * stays stateless. Only PNG and JPEG are supported; anything else fails
+     * loudly rather than silently dropping content.
+     */
+    private class ImagePlan(document: DocumentModel) {
+        class Entry(
+            val block: ImageBlock,
+            val relId: String,
+            val fileName: String,
+            val docPrId: Int,
+        )
+
+        val entries = mutableListOf<Entry>()
+        private val byBlock = IdentityHashMap<ImageBlock, Entry>()
+
+        init {
+            assign(document.blocks)
+        }
+
+        fun entryFor(block: ImageBlock): Entry = byBlock.getValue(block)
+
+        private fun assign(blocks: List<Block>) {
+            for (block in blocks) {
+                when (block) {
+                    is ImageBlock -> {
+                        val extension = EXTENSION_BY_MIME[block.mimeType]
+                            ?: throw UnsupportedOperationException(
+                                "Image type ${block.mimeType} is not supported yet (PNG and " +
+                                    "JPEG are). Refusing to write a document that would " +
+                                    "silently lose content."
+                            )
+                        val index = entries.size + 1
+                        val entry = Entry(
+                            block = block,
+                            relId = "rIdImg$index",
+                            fileName = "image$index.$extension",
+                            docPrId = index,
+                        )
+                        entries += entry
+                        byBlock[block] = entry
+                    }
+                    is Table -> for (row in block.rows) for (cell in row.cells) assign(cell.blocks)
+                    is Paragraph -> {}
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // word/document.xml
     // ------------------------------------------------------------------
 
-    private fun documentXml(document: DocumentModel, numbering: NumberingPlan): String {
+    private fun documentXml(
+        document: DocumentModel,
+        numbering: NumberingPlan,
+        images: ImagePlan,
+    ): String {
         val sb = StringBuilder(16 * 1024)
         sb.append(XML_DECL)
         sb.append("""<w:document xmlns:w="$W"><w:body>""")
         for (block in document.blocks) {
-            appendBlock(sb, block, document, numbering)
+            appendBlock(sb, block, document, numbering, images)
         }
         sb.append(sectPr())
         sb.append("</w:body></w:document>")
@@ -142,14 +212,12 @@ object DocxWriter {
         block: Block,
         document: DocumentModel,
         numbering: NumberingPlan,
+        images: ImagePlan,
     ) {
         when (block) {
             is Paragraph -> appendParagraph(sb, block, document, numbering)
-            is Table -> appendTable(sb, block, document, numbering)
-            is ImageBlock -> throw UnsupportedOperationException(
-                "ImageBlock is not supported yet: the media part lands with milestone M1. " +
-                    "Refusing to write a document that would silently lose content."
-            )
+            is Table -> appendTable(sb, block, document, numbering, images)
+            is ImageBlock -> appendImage(sb, images.entryFor(block))
         }
     }
 
@@ -239,6 +307,7 @@ object DocxWriter {
         table: Table,
         document: DocumentModel,
         numbering: NumberingPlan,
+        images: ImagePlan,
     ) {
         if (table.rows.isEmpty()) return
         val columnCount = table.rows.maxOf { it.cells.size }.coerceAtLeast(1)
@@ -259,11 +328,11 @@ object DocxWriter {
         for (row in table.rows) {
             sb.append("<w:tr>")
             for (cell in row.cells) {
-                appendCell(sb, cell, document, numbering)
+                appendCell(sb, cell, document, numbering, images)
             }
             // Pad short rows so every row has the full column count.
             repeat(columnCount - row.cells.size) {
-                appendCell(sb, TableCell(emptyList()), document, numbering)
+                appendCell(sb, TableCell(emptyList()), document, numbering, images)
             }
             sb.append("</w:tr>")
         }
@@ -277,17 +346,59 @@ object DocxWriter {
         cell: TableCell,
         document: DocumentModel,
         numbering: NumberingPlan,
+        images: ImagePlan,
     ) {
         sb.append("<w:tc>")
         sb.append("""<w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>""")
         for (block in cell.blocks) {
-            appendBlock(sb, block, document, numbering)
+            appendBlock(sb, block, document, numbering, images)
         }
         // Every table cell must end with a paragraph. A trailing nested table
         // already appended its own spacer paragraph after </w:tbl>.
         val last = cell.blocks.lastOrNull()
         if (last !is Paragraph && last !is Table) sb.append("<w:p/>")
         sb.append("</w:tc>")
+    }
+
+    private const val EMU_PER_PX = 9525L
+    /** Content area inside the A4 margins, in EMU. */
+    private const val MAX_CX_EMU = 5_731_933L
+    private const val MAX_CY_EMU = 8_863_330L
+
+    private const val WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+    private const val A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    private const val PIC_NS = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+    private const val R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+    /** An image as its own paragraph with an inline w:drawing. */
+    private fun appendImage(sb: StringBuilder, entry: ImagePlan.Entry) {
+        var cx = entry.block.widthPx.coerceAtLeast(1) * EMU_PER_PX
+        var cy = entry.block.heightPx.coerceAtLeast(1) * EMU_PER_PX
+        // Scale into the content area, preserving aspect ratio.
+        if (cx > MAX_CX_EMU) {
+            cy = cy * MAX_CX_EMU / cx
+            cx = MAX_CX_EMU
+        }
+        if (cy > MAX_CY_EMU) {
+            cx = cx * MAX_CY_EMU / cy
+            cy = MAX_CY_EMU
+        }
+        cx = cx.coerceAtLeast(1)
+        cy = cy.coerceAtLeast(1)
+
+        val name = xmlEscape("Image ${entry.docPrId}")
+        sb.append("<w:p><w:r><w:drawing>")
+        sb.append("""<wp:inline xmlns:wp="$WP_NS" distT="0" distB="0" distL="0" distR="0">""")
+        sb.append("""<wp:extent cx="$cx" cy="$cy"/>""")
+        sb.append("""<wp:docPr id="${entry.docPrId}" name="$name"/>""")
+        sb.append("""<a:graphic xmlns:a="$A_NS">""")
+        sb.append("""<a:graphicData uri="$PIC_NS">""")
+        sb.append("""<pic:pic xmlns:pic="$PIC_NS">""")
+        sb.append("""<pic:nvPicPr><pic:cNvPr id="${entry.docPrId}" name="$name"/><pic:cNvPicPr/></pic:nvPicPr>""")
+        sb.append("""<pic:blipFill><a:blip xmlns:r="$R_NS" r:embed="${entry.relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>""")
+        sb.append("""<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="$cx" cy="$cy"/></a:xfrm>""")
+        sb.append("""<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>""")
+        sb.append("</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>")
     }
 
     private fun sectPr(): String =
@@ -304,6 +415,8 @@ object DocxWriter {
         """<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">""" +
         """<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>""" +
         """<Default Extension="xml" ContentType="application/xml"/>""" +
+        """<Default Extension="png" ContentType="image/png"/>""" +
+        """<Default Extension="jpeg" ContentType="image/jpeg"/>""" +
         """<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>""" +
         """<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>""" +
         """<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>""" +
@@ -318,11 +431,19 @@ object DocxWriter {
         """<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>""" +
         """</Relationships>"""
 
-    private fun documentRelsXml(): String = XML_DECL +
-        """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""" +
-        """<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>""" +
-        """<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>""" +
-        """</Relationships>"""
+    private fun documentRelsXml(images: ImagePlan): String {
+        val sb = StringBuilder(XML_DECL)
+        sb.append("""<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""")
+        sb.append("""<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>""")
+        sb.append("""<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>""")
+        for (entry in images.entries) {
+            sb.append(
+                """<Relationship Id="${entry.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${entry.fileName}"/>"""
+            )
+        }
+        sb.append("</Relationships>")
+        return sb.toString()
+    }
 
     private fun corePropsXml(): String = XML_DECL +
         """<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" """ +

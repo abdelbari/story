@@ -13,7 +13,9 @@ package app.morpho.engine.layout
  *
  * Honest losses, stated rather than hidden: Markdown has no underline (the
  * flag is dropped), no text direction markup (RTL survives in the characters
- * themselves, not in syntax), and no per-run language tags.
+ * themselves, not in syntax), and no per-run language tags. Images become
+ * self-contained data-URI image syntax — large but faithful, and one-way:
+ * [PlainTextImporter] reads such a line back as literal text, not an image.
  */
 object MarkdownWriter {
 
@@ -52,10 +54,16 @@ object MarkdownWriter {
                     previousWasListItem = false
                     numberedCount = 0
                 }
-                is ImageBlock -> throw UnsupportedOperationException(
-                    "ImageBlock is not supported yet: image extraction lands with milestone M1. " +
-                        "Refusing to write a document that would silently lose content."
-                )
+                is ImageBlock -> {
+                    if (out.isNotEmpty()) out.append("\n\n")
+                    out.append("![image](data:")
+                        .append(block.mimeType)
+                        .append(";base64,")
+                        .append(java.util.Base64.getEncoder().encodeToString(block.bytes))
+                        .append(")")
+                    previousWasListItem = false
+                    numberedCount = 0
+                }
             }
         }
         if (out.isNotEmpty()) out.append("\n")

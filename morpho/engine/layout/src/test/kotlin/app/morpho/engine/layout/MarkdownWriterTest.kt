@@ -1,7 +1,6 @@
 package app.morpho.engine.layout
 
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -91,9 +90,16 @@ class MarkdownWriterTest {
     }
 
     @Test
-    fun `images are rejected loudly instead of dropped`() {
-        val model = DocumentModel(listOf(ImageBlock(byteArrayOf(1), "image/png", 1, 1)))
-        assertThrows(UnsupportedOperationException::class.java) { MarkdownWriter.write(model) }
+    fun `images become self-contained data-uri image syntax`() {
+        val model = DocumentModel(
+            listOf(
+                body("before"),
+                ImageBlock(byteArrayOf(1, 2, 3), "image/png", 4, 4),
+                body("after"),
+            )
+        )
+        val markdown = MarkdownWriter.write(model)
+        assertEquals("before\n\n![image](data:image/png;base64,AQID)\n\nafter\n", markdown)
     }
 
     @Test

@@ -3,6 +3,7 @@ package app.morpho.engine.ooxml
 import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
+import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.ListMarker
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
@@ -59,8 +60,12 @@ import javax.xml.parsers.DocumentBuilderFactory
  *   explicitly LTR — in OOXML the absence of `w:rtl` means left-to-right,
  *   while the IR's null means "inherit", which there would mean RTL.
  * - A missing or malformed word/numbering.xml merely loses list markers.
- * - Non-text run content (drawings, breaks, fields) is dropped; images land
- *   with the M1 media-part work.
+ * - PNG and JPEG images referenced by `w:drawing` are read back as
+ *   [ImageBlock]s emitted after their paragraph's text (inline position is
+ *   not modeled yet); other media types (EMF/WMF vector images from Word,
+ *   for instance) are skipped like any other unknown content. Media parts
+ *   are capped at [MAX_MEDIA_PART_BYTES] each and [MAX_TOTAL_MEDIA_BYTES]
+ *   overall. Other non-text run content (breaks, fields) is dropped.
  * - Every block gets confidence 1: this is a native-format read.
  */
 object DocxReader {
@@ -68,7 +73,16 @@ object DocxReader {
     private const val W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
     private const val MAX_NESTING_DEPTH = 64
     private const val MAX_PART_BYTES = 32 * 1024 * 1024
-    private val NEEDED_PARTS = setOf("word/document.xml", "word/numbering.xml")
+    private const val MAX_MEDIA_PART_BYTES = 16 * 1024 * 1024
+    private const val MAX_TOTAL_MEDIA_BYTES = 64 * 1024 * 1024
+    private val NEEDED_PARTS =
+        setOf("word/document.xml", "word/numbering.xml", "word/_rels/document.xml.rels")
+    private const val REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+    private const val A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    private const val WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+    private const val R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    private const val EMU_PER_PX = 9525L
+    private val MIME_BY_EXTENSION = mapOf("png" to "image/png", "jpeg" to "image/jpeg", "jpg" to "image/jpeg")
     private val RUN_CONTAINERS = setOf("hyperlink", "ins", "smartTag", "sdt", "sdtContent")
 
     fun read(bytes: ByteArray): DocumentModel = read(ByteArrayInputStream(bytes))
@@ -80,9 +94,10 @@ object DocxReader {
             val documentPart = parts["word/document.xml"]
                 ?: throw IllegalArgumentException("Not a .docx package: word/document.xml is missing.")
             val numbering = parts["word/numbering.xml"]?.let(::parseNumbering).orEmpty()
+            val media = MediaStore(parts)
             val body = firstChild(parseXml(documentPart).documentElement, "body")
                 ?: return DocumentModel(blocks = emptyList())
-            return DocumentModel(blocks = parseBlocks(body, numbering, depth = 0))
+            return DocumentModel(blocks = parseBlocks(body, numbering, media, depth = 0))
         } catch (e: IllegalArgumentException) {
             throw e
         } catch (e: Exception) {
@@ -92,11 +107,19 @@ object DocxReader {
 
     private fun readNeededParts(input: InputStream): Map<String, ByteArray> {
         val parts = mutableMapOf<String, ByteArray>()
+        var totalMedia = 0L
         ZipInputStream(input).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
                 if (!entry.isDirectory && entry.name in NEEDED_PARTS) {
-                    parts[entry.name] = readBounded(zip, entry.name)
+                    parts[entry.name] = readBounded(zip, entry.name, MAX_PART_BYTES)
+                } else if (!entry.isDirectory && entry.name.startsWith("word/media/")) {
+                    val bytes = readBounded(zip, entry.name, MAX_MEDIA_PART_BYTES)
+                    totalMedia += bytes.size
+                    require(totalMedia <= MAX_TOTAL_MEDIA_BYTES) {
+                        "Media parts inflate beyond $MAX_TOTAL_MEDIA_BYTES bytes in total; refusing to read them."
+                    }
+                    parts[entry.name] = bytes
                 }
                 zip.closeEntry()
             }
@@ -104,18 +127,55 @@ object DocxReader {
         return parts
     }
 
-    private fun readBounded(zip: ZipInputStream, name: String): ByteArray {
+    private fun readBounded(zip: ZipInputStream, name: String, maxBytes: Int): ByteArray {
         val out = ByteArrayOutputStream()
         val buffer = ByteArray(64 * 1024)
         while (true) {
             val n = zip.read(buffer)
             if (n < 0) break
             out.write(buffer, 0, n)
-            require(out.size() <= MAX_PART_BYTES) {
-                "Part $name inflates beyond $MAX_PART_BYTES bytes; refusing to read it."
+            require(out.size() <= maxBytes) {
+                "Part $name inflates beyond $maxBytes bytes; refusing to read it."
             }
         }
         return out.toByteArray()
+    }
+
+    /** Image relationships plus the media bytes they point at. */
+    private class MediaStore(parts: Map<String, ByteArray>) {
+        private val targetByRelId: Map<String, String> =
+            parts["word/_rels/document.xml.rels"]?.let(::parseRelationships).orEmpty()
+        private val parts = parts
+
+        fun imageFor(relId: String): Triple<ByteArray, String, Unit>? {
+            val target = targetByRelId[relId] ?: return null
+            val extension = target.substringAfterLast('.', "").lowercase()
+            val mime = MIME_BY_EXTENSION[extension] ?: return null
+            val normalized = when {
+                target.startsWith("/") -> target.removePrefix("/")
+                else -> "word/$target"
+            }
+            val bytes = parts[normalized] ?: return null
+            return Triple(bytes, mime, Unit)
+        }
+
+        private fun parseRelationships(bytes: ByteArray): Map<String, String> = try {
+            val root = DocumentBuilderFactory.newInstance().apply {
+                isNamespaceAware = true
+                setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            }.newDocumentBuilder().parse(ByteArrayInputStream(bytes)).documentElement
+            buildMap {
+                val relationships = root.getElementsByTagNameNS(REL_NS, "Relationship")
+                for (i in 0 until relationships.length) {
+                    val relationship = relationships.item(i) as Element
+                    val id = relationship.getAttribute("Id")
+                    val target = relationship.getAttribute("Target")
+                    if (id.isNotEmpty() && target.isNotEmpty()) put(id, target)
+                }
+            }
+        } catch (_: Exception) {
+            emptyMap() // broken rels lose images, never the document
+        }
     }
 
     // ------------------------------------------------------------------
@@ -125,6 +185,7 @@ object DocxReader {
     private fun parseBlocks(
         parent: Element,
         numbering: Map<String, ListMarker>,
+        media: MediaStore,
         depth: Int,
     ): List<Block> {
         require(depth <= MAX_NESTING_DEPTH) {
@@ -133,12 +194,44 @@ object DocxReader {
         val blocks = mutableListOf<Block>()
         for (child in children(parent)) {
             when (child.localName) {
-                "p" -> parseParagraph(child, numbering)?.let(blocks::add)
-                "tbl" -> parseTable(child, numbering, depth)?.let(blocks::add)
+                "p" -> {
+                    parseParagraph(child, numbering)?.let(blocks::add)
+                    blocks += parseImages(child, media)
+                }
+                "tbl" -> parseTable(child, numbering, media, depth)?.let(blocks::add)
                 else -> {} // sectPr, bookmarks, anything the reader does not know
             }
         }
         return blocks
+    }
+
+    /** PNG/JPEG drawings in a paragraph, emitted after its text. */
+    private fun parseImages(p: Element, media: MediaStore): List<ImageBlock> {
+        val images = mutableListOf<ImageBlock>()
+        for (drawing in descendantsNS(p, W, "drawing")) {
+            val blip = descendantsNS(drawing, A_NS, "blip").firstOrNull() ?: continue
+            val relId = blip.getAttributeNS(R_NS, "embed").ifEmpty { null } ?: continue
+            val (bytes, mime) = media.imageFor(relId)?.let { it.first to it.second } ?: continue
+            val extent = descendantsNS(drawing, WP_NS, "extent").firstOrNull()
+            val cx = extent?.getAttribute("cx")?.toLongOrNull() ?: 0L
+            val cy = extent?.getAttribute("cy")?.toLongOrNull() ?: 0L
+            images += ImageBlock(
+                bytes = bytes,
+                mimeType = mime,
+                widthPx = (cx / EMU_PER_PX).toInt().coerceAtLeast(1),
+                heightPx = (cy / EMU_PER_PX).toInt().coerceAtLeast(1),
+                confidence = 1f,
+            )
+        }
+        return images
+    }
+
+    /** All descendants in [ns] with [localName], any depth, document order. */
+    private fun descendantsNS(parent: Element, ns: String, localName: String): List<Element> {
+        val result = mutableListOf<Element>()
+        val nodes = parent.getElementsByTagNameNS(ns, localName)
+        for (i in 0 until nodes.length) result += nodes.item(i) as Element
+        return result
     }
 
     private fun parseParagraph(p: Element, numbering: Map<String, ListMarker>): Paragraph? {
@@ -219,12 +312,13 @@ object DocxReader {
     private fun parseTable(
         tbl: Element,
         numbering: Map<String, ListMarker>,
+        media: MediaStore,
         depth: Int,
     ): Table? {
         val rows = children(tbl, "tr").map { tr ->
             TableRow(
                 children(tr, "tc").map { tc ->
-                    TableCell(parseBlocks(tc, numbering, depth + 1))
+                    TableCell(parseBlocks(tc, numbering, media, depth + 1))
                 }
             )
         }

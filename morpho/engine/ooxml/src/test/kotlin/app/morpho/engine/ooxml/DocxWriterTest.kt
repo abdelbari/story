@@ -321,9 +321,9 @@ class DocxWriterTest {
     }
 
     @Test
-    fun `images are rejected loudly instead of being dropped`() {
+    fun `unsupported image types are rejected loudly instead of being dropped`() {
         val withImage = DocumentModel(
-            blocks = listOf(ImageBlock(byteArrayOf(1, 2, 3), "image/png", 10, 10)),
+            blocks = listOf(ImageBlock(byteArrayOf(1, 2, 3), "image/gif", 10, 10)),
         )
         assertThrows(UnsupportedOperationException::class.java) {
             DocxWriter.toByteArray(withImage)
