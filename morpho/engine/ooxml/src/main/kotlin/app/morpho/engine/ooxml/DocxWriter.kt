@@ -1,10 +1,12 @@
 package app.morpho.engine.ooxml
 
+import kotlin.math.roundToInt
 import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.ListMarker
+import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.Table
@@ -202,7 +204,7 @@ object DocxWriter {
         for (block in document.blocks) {
             appendBlock(sb, block, document, numbering, images)
         }
-        sb.append(sectPr())
+        sb.append(sectPr(document.pageSetup))
         sb.append("</w:body></w:document>")
         return sb.toString()
     }
@@ -262,30 +264,91 @@ object DocxWriter {
             Alignment.START, null -> null
         }
         val rtl = effectiveDirection == TextDirection.RTL
+        val spacing = spacingXml(style)
+        val indent = indentXml(style)
+        val tabs = style.tabStopsPt?.filter { it > 0f }?.takeIf { it.isNotEmpty() }
 
-        if (styleId == null && numId == null && jc == null && !rtl) return
+        if (styleId == null && numId == null && jc == null && !rtl && spacing == null && indent == null && tabs == null) return
 
         sb.append("<w:pPr>")
         if (styleId != null) sb.append("""<w:pStyle w:val="$styleId"/>""")
         if (numId != null) {
             sb.append("""<w:numPr><w:ilvl w:val="0"/><w:numId w:val="$numId"/></w:numPr>""")
         }
+        if (tabs != null) {
+            sb.append("<w:tabs>")
+            for (stop in tabs.sorted()) sb.append("""<w:tab w:val="left" w:pos="${twips(stop)}"/>""")
+            sb.append("</w:tabs>")
+        }
         if (rtl) sb.append("<w:bidi/>")
+        spacing?.let(sb::append)
+        indent?.let(sb::append)
         if (jc != null) sb.append("""<w:jc w:val="$jc"/>""")
         sb.append("</w:pPr>")
     }
 
+    /**
+     * The paragraph's measured spacing, when a reader supplied any. A line
+     * pitch is written as a minimum, not an exact height: a face Word
+     * substitutes for one it lacks may need more, and clipped ascenders are
+     * worse than a slightly taller line.
+     */
+    private fun spacingXml(style: app.morpho.engine.layout.ParagraphStyle): String? {
+        val before = style.spaceBeforePt?.let(::twips)
+        val after = style.spaceAfterPt?.let(::twips)
+        val line = style.linePitchPt?.takeIf { it > 0f }?.let(::twips)
+        if (before == null && after == null && line == null) return null
+        val sb = StringBuilder("<w:spacing")
+        before?.let { sb.append(""" w:before="$it"""") }
+        after?.let { sb.append(""" w:after="$it"""") }
+        line?.let { sb.append(""" w:line="$it" w:lineRule="atLeast"""") }
+        return sb.append("/>").toString()
+    }
+
+    /**
+     * The paragraph's indents. `w:left` is the start edge — Word lays a
+     * bidi paragraph's "left" indent along its right margin — so one
+     * attribute serves both directions; `w:hanging` pulls the first line
+     * back out by that much, `w:firstLine` pushes it further in.
+     */
+    private fun indentXml(style: app.morpho.engine.layout.ParagraphStyle): String? {
+        val start = style.startIndentPt?.let(::twips)
+        val hanging = style.hangingIndentPt?.takeIf { it > 0f }?.let(::twips)
+        val firstLine = style.firstLineIndentPt?.takeIf { it > 0f }?.let(::twips)
+        if (start == null && hanging == null && firstLine == null) return null
+        val sb = StringBuilder("<w:ind")
+        start?.let { sb.append(""" w:left="$it"""") }
+        if (hanging != null) sb.append(""" w:hanging="$hanging"""")
+        else firstLine?.let { sb.append(""" w:firstLine="$it"""") }
+        return sb.append("/>").toString()
+    }
+
+    /** Points to twentieths of a point, the unit OOXML measures in. */
+    private fun twips(points: Float): Int = (points * 20f).roundToInt().coerceAtLeast(0)
+
     /** Children of w:rPr are emitted in the order the OOXML schema requires. */
     private fun appendRun(sb: StringBuilder, run: TextRun, paragraphDirection: TextDirection) {
         val rtl = (run.direction ?: paragraphDirection) == TextDirection.RTL
-        val hasProps = run.bold || run.italic || run.underline || rtl || run.language != null
+        val family = run.fontFamily?.takeIf { it.isNotBlank() }
+        val halfPoints = run.fontSizePt?.takeIf { it > 0f }?.let { (it * 2).roundToInt() }
+        val hasProps = run.bold || run.italic || run.underline || rtl || run.language != null ||
+            family != null || halfPoints != null || run.superscript || run.subscript
 
         sb.append("<w:r>")
         if (hasProps) {
             sb.append("<w:rPr>")
+            // rFonts leads and sz precedes u: the schema fixes the order, and
+            // Word rejects a file that breaks it.
+            family?.let { f ->
+                val name = xmlEscape(f)
+                sb.append("""<w:rFonts w:ascii="$name" w:hAnsi="$name" w:cs="$name"/>""")
+            }
             if (run.bold) sb.append("<w:b/><w:bCs/>")
             if (run.italic) sb.append("<w:i/><w:iCs/>")
+            halfPoints?.let { sb.append("""<w:sz w:val="$it"/><w:szCs w:val="$it"/>""") }
             if (run.underline) sb.append("""<w:u w:val="single"/>""")
+            if (run.superscript) sb.append("""<w:vertAlign w:val="superscript"/>""")
+            else if (run.subscript) sb.append("""<w:vertAlign w:val="subscript"/>""")
             if (rtl) sb.append("<w:rtl/>")
             run.language?.let { lang ->
                 val attr = xmlEscape(lang)
@@ -297,9 +360,17 @@ object DocxWriter {
             }
             sb.append("</w:rPr>")
         }
-        sb.append("""<w:t xml:space="preserve">""")
-        sb.append(xmlEscape(run.text))
-        sb.append("</w:t></w:r>")
+        // A tab is an element of its own; the character itself has no
+        // meaning in w:t.
+        val pieces = run.text.split('\t')
+        for ((index, piece) in pieces.withIndex()) {
+            if (index > 0) sb.append("<w:tab/>")
+            if (piece.isEmpty()) continue
+            sb.append("""<w:t xml:space="preserve">""")
+            sb.append(xmlEscape(piece))
+            sb.append("</w:t>")
+        }
+        sb.append("</w:r>")
     }
 
     private fun appendTable(
@@ -401,11 +472,20 @@ object DocxWriter {
         sb.append("</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>")
     }
 
-    private fun sectPr(): String =
-        // A4 portrait, 2.54 cm margins (values in twentieths of a point).
-        """<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>""" +
-            """<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" """ +
+    private fun sectPr(page: PageSetup?): String {
+        // The source's own page when the reader measured it; else A4
+        // portrait with 2.54 cm margins (values in twentieths of a point).
+        if (page == null) {
+            return """<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>""" +
+                """<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" """ +
+                """w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>"""
+        }
+        val landscape = if (page.widthPt > page.heightPt) """ w:orient="landscape"""" else ""
+        return """<w:sectPr><w:pgSz w:w="${twips(page.widthPt)}" w:h="${twips(page.heightPt)}"$landscape/>""" +
+            """<w:pgMar w:top="${twips(page.marginTopPt)}" w:right="${twips(page.marginRightPt)}" """ +
+            """w:bottom="${twips(page.marginBottomPt)}" w:left="${twips(page.marginLeftPt)}" """ +
             """w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>"""
+    }
 
     // ------------------------------------------------------------------
     // Static parts

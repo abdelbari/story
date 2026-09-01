@@ -88,4 +88,14 @@ class VisualToLogicalTest {
         assertEquals("الصفحات 12-15", Bidi.visualToLogical(visual, TextDirection.RTL))
     }
 
+
+    @Test
+    fun `an arabic comma between two numbers keeps them in reading order`() {
+        // A citation reads (author، year، page). Painted, the page number is
+        // leftmost. Classed as a number separator, the comma fused the two
+        // into one left-to-right unit and the page came before the year.
+        val visual = ")186،2000،" + "الرشيدي".reversed() + "("
+        assertEquals("(الرشيدي،2000،186)", Bidi.visualToLogical(visual, TextDirection.RTL))
+    }
+
 }

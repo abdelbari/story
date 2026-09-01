@@ -14,6 +14,8 @@ data class DocumentModel(
     val blocks: List<Block>,
     val defaultLanguage: String? = null,
     val defaultDirection: TextDirection = TextDirection.LTR,
+    /** The page the source was laid out on, when the reader could measure it. */
+    val pageSetup: PageSetup? = null,
 )
 
 enum class TextDirection { LTR, RTL }
@@ -36,6 +38,22 @@ data class ParagraphStyle(
     val direction: TextDirection? = null,
     val listMarker: ListMarker? = null,
     val alignment: Alignment? = null,
+    /**
+     * How the paragraph sits on its page, in points, as a reader measured
+     * it: how far its first line starts in from the margin, how far every
+     * line does, how far the lines after the first hang in past it, the
+     * space left before and after it, and the least distance between its
+     * baselines. Null where the source did not say or the reader could not
+     * tell, and the writer's defaults apply.
+     */
+    val firstLineIndentPt: Float? = null,
+    val startIndentPt: Float? = null,
+    val hangingIndentPt: Float? = null,
+    val spaceBeforePt: Float? = null,
+    val spaceAfterPt: Float? = null,
+    val linePitchPt: Float? = null,
+    /** Positions, in points from the start margin, of the tab stops the paragraph's tabs advance to. */
+    val tabStopsPt: List<Float>? = null,
 )
 
 enum class ParagraphKind { TITLE, HEADING_1, HEADING_2, HEADING_3, BODY }
@@ -53,6 +71,13 @@ data class TextRun(
     val language: String? = null,
     /** null = inherit the paragraph's effective direction. */
     val direction: TextDirection? = null,
+    /** Typeface family as the source named it ("Simplified Arabic"); null = the document default. */
+    val fontFamily: String? = null,
+    /** Type size in points; null = the document default. */
+    val fontSizePt: Float? = null,
+    /** Raised or lowered off the baseline, the way a footnote mark or a chemical formula is set. */
+    val superscript: Boolean = false,
+    val subscript: Boolean = false,
 )
 
 data class Table(
@@ -90,3 +115,18 @@ class ImageBlock(
         return result
     }
 }
+
+/**
+ * A page's size and margins in points — the sheet the writer lays the
+ * document out on. Readers that can measure the source's page fill this in
+ * so the converted file keeps the same page; otherwise writers use A4 with
+ * one-inch margins.
+ */
+data class PageSetup(
+    val widthPt: Float,
+    val heightPt: Float,
+    val marginTopPt: Float,
+    val marginBottomPt: Float,
+    val marginLeftPt: Float,
+    val marginRightPt: Float,
+)

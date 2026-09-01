@@ -30,7 +30,7 @@ object HtmlWriter {
         sb.append("<!DOCTYPE html>\n")
         sb.append("""<html dir="$dir"$lang><head><meta charset="utf-8"/>""")
         sb.append("<title>").append(escape(title ?: "Document")).append("</title>")
-        sb.append("<style>").append(CSS).append("</style></head><body>\n")
+        sb.append("<style>").append(CSS).append(pageCss(document.pageSetup)).append("</style></head><body>\n")
 
         appendBlocks(sb, document.blocks, defaultDirection)
 
@@ -119,13 +119,80 @@ object HtmlWriter {
                 ParagraphKind.BODY -> "p" to ""
             }
         }
-        sb.append("<").append(tag).append(classAttr).append(dirAttr).append(">")
-        for (run in paragraph.runs) appendRun(sb, run, effective)
+        val styles = buildList {
+            when (paragraph.style.alignment) {
+                Alignment.CENTER -> add("text-align:center")
+                Alignment.JUSTIFY -> add("text-align:justify")
+                Alignment.END -> add("text-align:end")
+                Alignment.START, null -> {}
+            }
+            // What the reader measured on the page, so the preview sits the
+            // way the source did: a hanging indent is a start padding with
+            // the first line pulled back out of it.
+            val style = paragraph.style
+            val hanging = style.hangingIndentPt?.takeIf { it > 0f }
+            val start = style.startIndentPt?.takeIf { it > 0f }
+            if (start != null) add("padding-inline-start:${pt(start)}")
+            if (hanging != null) add("text-indent:-${pt(hanging)}")
+            else style.firstLineIndentPt?.takeIf { it > 0f }?.let { add("text-indent:${pt(it)}") }
+            style.spaceBeforePt?.let { add("margin-top:${pt(it)}") }
+            style.spaceAfterPt?.let { add("margin-bottom:${pt(it)}") }
+            style.linePitchPt?.takeIf { it > 0f }?.let { add("line-height:${pt(it)}") }
+            // A tab character only advances when white space is kept; where
+            // the paragraph knows its stops, the text after each tab is
+            // placed at its stop instead (see appendTabbed).
+            if (paragraph.runs.any { '\t' in it.text }) {
+                if (style.tabStopsPt.isNullOrEmpty()) add("white-space:pre-wrap") else add("position:relative")
+            }
+        }
+        val styleAttr = if (styles.isEmpty()) "" else """ style="${styles.joinToString(";")}""""
+        sb.append("<").append(tag).append(classAttr).append(dirAttr).append(styleAttr).append(">")
+        val stops = paragraph.style.tabStopsPt?.filter { it > 0f }?.sorted().orEmpty()
+        if (stops.isNotEmpty() && paragraph.runs.any { '\t' in it.text }) {
+            appendTabbed(sb, paragraph.runs, stops, effective)
+        } else {
+            for (run in paragraph.runs) appendRun(sb, run, effective)
+        }
         sb.append("</").append(tag).append(">\n")
+    }
+
+    /**
+     * A paragraph set to tab stops — three dates spread across a line —
+     * with each stretch after a tab placed at its stop from the start
+     * edge, which is where a tab takes the text in Word. HTML has no tab
+     * stops of its own; a stretch past the last stop follows the one
+     * before it.
+     */
+    private fun appendTabbed(
+        sb: StringBuilder,
+        runs: List<TextRun>,
+        stops: List<Float>,
+        paragraphDirection: TextDirection,
+    ) {
+        val segments = mutableListOf<MutableList<TextRun>>(mutableListOf())
+        for (run in runs) {
+            val pieces = run.text.split('\t')
+            for ((index, piece) in pieces.withIndex()) {
+                if (index > 0) segments.add(mutableListOf())
+                if (piece.isNotEmpty()) segments.last() += run.copy(text = piece)
+            }
+        }
+        for ((index, segment) in segments.withIndex()) {
+            val stop = stops.getOrNull(index - 1)
+            if (index > 0 && stop != null) {
+                sb.append("""<span style="position:absolute;inset-inline-start:${pt(stop)}">""")
+            } else if (index > 0) {
+                sb.append(" ")
+            }
+            for (run in segment) appendRun(sb, run, paragraphDirection)
+            if (index > 0 && stop != null) sb.append("</span>")
+        }
     }
 
     private fun appendRun(sb: StringBuilder, run: TextRun, paragraphDirection: TextDirection) {
         var html = escape(run.text)
+        if (run.superscript) html = "<sup>$html</sup>"
+        else if (run.subscript) html = "<sub>$html</sub>"
         if (run.underline) html = "<u>$html</u>"
         if (run.italic) html = "<em>$html</em>"
         if (run.bold) html = "<strong>$html</strong>"
@@ -133,7 +200,16 @@ object HtmlWriter {
         val runDirection = run.direction
         val needsDir = runDirection != null && runDirection != paragraphDirection
         val needsLang = run.language != null
-        if (needsDir || needsLang) {
+        // The preview shows the document in its own type, so what the reader
+        // sees is what the file will hold: the family the source named and
+        // its size in points, with the body stack as the fallback.
+        val styles = buildList {
+            run.fontFamily?.takeIf { it.isNotBlank() }?.let {
+                add("font-family:'${escape(it.replace("'", ""))}','Noto Naskh Arabic','Times New Roman',serif")
+            }
+            run.fontSizePt?.takeIf { it > 0f }?.let { add("font-size:${pt(it)}") }
+        }
+        if (needsDir || needsLang || styles.isNotEmpty()) {
             val dirAttr =
                 if (needsDir) {
                     """ dir="${if (runDirection == TextDirection.RTL) "rtl" else "ltr"}""""
@@ -141,10 +217,24 @@ object HtmlWriter {
                     ""
                 }
             val langAttr = if (needsLang) """ lang="${escape(run.language!!)}"""" else ""
-            html = "<span$dirAttr$langAttr>$html</span>"
+            val styleAttr = if (styles.isNotEmpty()) """ style="${styles.joinToString(";")}"""" else ""
+            html = "<span$dirAttr$langAttr$styleAttr>$html</span>"
         }
         sb.append(html)
     }
+
+    /**
+     * The source's page, when a reader measured it, as the sheet the print
+     * framework lays this out on and the margins the preview keeps.
+     */
+    private fun pageCss(page: PageSetup?): String {
+        if (page == null) return ""
+        return "@page{size:${pt(page.widthPt)} ${pt(page.heightPt)};" +
+            "margin:${pt(page.marginTopPt)} ${pt(page.marginRightPt)} ${pt(page.marginBottomPt)} ${pt(page.marginLeftPt)};}" +
+            "body{margin:${pt(page.marginTopPt)} ${pt(page.marginRightPt)} ${pt(page.marginBottomPt)} ${pt(page.marginLeftPt)};}"
+    }
+
+    private fun pt(points: Float): String = "%.1fpt".format(java.util.Locale.ROOT, points)
 
     private fun appendTable(sb: StringBuilder, table: Table, defaultDirection: TextDirection) {
         if (table.rows.isEmpty()) return

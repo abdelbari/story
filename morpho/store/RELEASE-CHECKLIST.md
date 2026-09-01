@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 219 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 240 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -33,6 +33,12 @@ Work through, in this order — each exercises a path nothing else covers:
       larger text, not Word's heading styles). Headings should still come
       out as headings. A bold line that is not a heading — a byline, say —
       may be promoted, which is what Review Mode is for.
+- [ ] **The look of the Arabic paper**, converted and opened in Word beside the
+      PDF. The bold label at the head of the abstract, the raised author
+      mark, first-line indents, the three dates spread on tab stops, the
+      spacing between paragraphs and the page's own margins should all
+      match the page; nothing should be split or joined that the page does
+      not split or join.
 - [ ] **A scanned PDF → OCR → Word.** Watch the page counter advance; try
       Cancel mid-way and confirm nothing is saved. Judge the recognition
       quality — this is the number one thing to tune (see §5).

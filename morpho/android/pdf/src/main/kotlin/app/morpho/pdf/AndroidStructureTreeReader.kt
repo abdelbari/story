@@ -1,11 +1,13 @@
 package app.morpho.pdf
 
+import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ExtractedText
 import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.ListMarker
+import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.ParagraphStyle
@@ -31,6 +33,7 @@ import com.tom_roush.pdfbox.text.PDFMarkedContentExtractor
 import com.tom_roush.pdfbox.text.TextPosition
 import java.util.Collections
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import java.util.IdentityHashMap
 
 /**
@@ -66,6 +69,65 @@ import java.util.IdentityHashMap
  */
 private class Glyph(val position: TextPosition, val x: Float)
 
+/**
+ * The look of one painted character — what a paragraph's runs are split
+ * by. [raised] is +1 for a superscript, -1 for a subscript, 0 on the line.
+ */
+private data class Look(
+    val bold: Boolean,
+    val italic: Boolean,
+    val family: String?,
+    val sizePt: Float,
+    val raised: Int,
+)
+
+/** An element's text in logical order with its looks, and the tab stops its lines were set to. */
+private class StyledText(val logical: ExtractedText.Logical<Look>, val tabStopsPt: List<Float>)
+
+/** [styled] without the blank characters at either end, painters kept in step. */
+private fun trimmed(styled: ExtractedText.Logical<Look>): ExtractedText.Logical<Look> {
+    val text = styled.text
+    var start = 0
+    var end = text.length
+    while (start < end && text[start].isWhitespace()) start++
+    while (end > start && text[end - 1].isWhitespace()) end--
+    if (start == 0 && end == text.length) return styled
+    return ExtractedText.Logical(text.substring(start, end), styled.painters.subList(start, end))
+}
+
+/** Where an element's lines sit on the page, measured so a writer can put them back the same way. */
+private class Placement(
+    val firstPage: Int,
+    val lastPage: Int,
+    val alignment: Alignment?,
+    val firstLineIndentPt: Float?,
+    val startIndentPt: Float?,
+    val hangingIndentPt: Float?,
+    val firstBaseline: Float,
+    val lastBaseline: Float,
+    /** Distance between the element's own baselines, or null for a single line. */
+    val pitchPt: Float?,
+)
+
+/** The extent of a page's text — every glyph the structure tree can reach, so headers and footers stay out. */
+private class InkBox {
+    var left = Float.POSITIVE_INFINITY
+    var right = Float.NEGATIVE_INFINITY
+    var top = Float.POSITIVE_INFINITY
+    var bottom = Float.NEGATIVE_INFINITY
+    val isEmpty get() = left > right || top > bottom
+    fun add(glyph: TextPosition) {
+        left = minOf(left, glyph.xDirAdj)
+        right = maxOf(right, glyph.xDirAdj + glyph.widthDirAdj)
+        top = minOf(top, glyph.yDirAdj - glyph.heightDir)
+        bottom = maxOf(bottom, glyph.yDirAdj + DESCENT_SHARE_OF_SIZE * glyph.fontSizeInPt)
+    }
+
+    private companion object {
+        const val DESCENT_SHARE_OF_SIZE = 0.25f
+    }
+}
+
 internal object AndroidStructureTreeReader {
 
     private const val MAX_DEPTH = 128
@@ -79,6 +141,28 @@ internal object AndroidStructureTreeReader {
     private const val SUPERSCRIPT_REACH = 0.5f
     /** A backward step no wider than this, right after the previous glyph, is kerning, not a new word. */
     private const val KERNING_OVERLAP_PT = 1.5f
+    /** A line whose middle is within this share of the page width of the text block's middle is centred… */
+    private const val CENTRE_TOLERANCE = 0.015f
+    /** …provided it is shorter than this share of the block; a full line is not centred, just full. */
+    private const val CENTRED_MAX_SHARE = 0.7f
+    /** Lines whose edges agree within this are flush — a justified paragraph, or a margin. */
+    private const val FLUSH_TOLERANCE_PT = 4f
+    /** An edge at least this far in from the margin is an indent; nearer is the margin itself. */
+    private const val INDENT_MIN_PT = 6f
+    /** An indent past this share of the block is not one: the line is set against the far edge. */
+    private const val INDENT_MAX_SHARE = 0.4f
+    /** A smaller glyph raised or lowered by this share of the line's type size is a super- or subscript. */
+    private const val RAISED_SHARE = 0.2f
+    /** A painted space needs this share of its own width clear between its neighbours to be a word break. */
+    private const val VISIBLE_SPACE_SHARE = 0.3f
+    /** This many painted spaces in a row, or a gap as wide as them, is a tab, not spacing. */
+    private const val TAB_MIN_SPACES = 3
+    /** Space after a paragraph past this is a page's worth of gap, not the paragraph's own. */
+    private const val SPACE_AFTER_MAX_PT = 60f
+    /** Line pitch as a share of type size, for a face no two-line paragraph could measure. */
+    private const val DEFAULT_PITCH_SHARE = 1.2f
+    /** How far below its baseline a glyph reaches, as a share of type size, for want of font metrics. */
+    private const val DESCENT_SHARE = 0.25f
     private const val CONFIDENCE = 0.9f
 
     fun read(doc: PDDocument, images: List<PdfImage> = emptyList()): DocumentModel? {
@@ -135,6 +219,10 @@ internal object AndroidStructureTreeReader {
      */
     private class MarkedContentIndex(doc: PDDocument) {
         private val pageIndexByPage = IdentityHashMap<COSDictionary, Int>()
+        private val pageWidthByIndex = HashMap<Int, Float>()
+        private val pageHeightByIndex = HashMap<Int, Float>()
+        /** The reach of each page's tagged text: the block the margins and indents are measured from. */
+        private val inkByPageIndex = HashMap<Int, InkBox>()
         private val glyphsByPageAndMcid = HashMap<Long, List<Glyph>>()
         private val textByPageAndMcid = HashMap<Long, String>()
         private val sizeByPageAndMcid = HashMap<Long, Float>()
@@ -154,6 +242,8 @@ internal object AndroidStructureTreeReader {
         init {
             for ((index, page) in doc.pages.withIndex()) {
                 pageIndexByPage[page.cosObject] = index
+                pageWidthByIndex[index] = runCatching { page.mediaBox.width }.getOrDefault(0f)
+                pageHeightByIndex[index] = runCatching { page.mediaBox.height }.getOrDefault(0f)
                 val extractor = ResolvingMarkedContentExtractor()
                 runCatching { extractor.processPage(page) }
                 for (content in extractor.markedContents.orEmpty()) {
@@ -176,7 +266,10 @@ internal object AndroidStructureTreeReader {
                         is TextPosition -> {
                             glyphs += item
                             size = maxOf(size, item.fontSizeInPt)
-                            if (!item.unicode.isNullOrBlank() && !isBold(item)) bold = false
+                            // Judged on letters: "2-تعريف" is a bold heading
+                            // whose digit is set in a regular Latin face, and
+                            // a digit or bracket must not veto the letters.
+                            if (hasLetter(item.unicode) && !isBold(item)) bold = false
                         }
                         is PDMarkedContent -> gather(item)
                     }
@@ -185,6 +278,8 @@ internal object AndroidStructureTreeReader {
             gather(content)
             if (content.mcid >= 0 && glyphs.any { !it.unicode.isNullOrEmpty() }) {
                 glyphsByPageAndMcid[key(pageIndex, content.mcid)] = positioned(glyphs)
+                val ink = inkByPageIndex.getOrPut(pageIndex) { InkBox() }
+                for (glyph in glyphs) if (!glyph.unicode.isNullOrBlank()) ink.add(glyph)
                 sizeByPageAndMcid[key(pageIndex, content.mcid)] = size
                 boldByPageAndMcid[key(pageIndex, content.mcid)] = bold
             }
@@ -245,12 +340,44 @@ internal object AndroidStructureTreeReader {
          * with the Arabic beside it in view — alone, it stays put and ends up
          * doubled on one side of the word and missing on the other.
          */
-        fun readOffThePage(glyphs: List<Pair<Int, Glyph>>): String {
-            if (glyphs.isEmpty()) return ""
-            // Pages in order, then lines top to bottom within each; a line
-            // never spans a page break however close the baselines land.
-            val lines = mutableListOf<MutableList<Glyph>>()
-            for ((_, onPage) in glyphs.groupBy { it.first }.toSortedMap()) {
+        fun readOffThePage(glyphs: List<Pair<Int, Glyph>>): String = readStyled(glyphs).logical.text
+
+        /**
+         * [readOffThePage] with the look of every character beside it, so
+         * the paragraph can be split into runs: the bold label at the head
+         * of an abstract, the raised footnote mark after an author's name.
+         * Lines are joined with a space that no glyph painted.
+         */
+        fun readStyled(glyphs: List<Pair<Int, Glyph>>): StyledText {
+            if (glyphs.isEmpty()) return StyledText(ExtractedText.Logical("", emptyList()), emptyList())
+            val text = StringBuilder()
+            val looks = ArrayList<Look?>()
+            val tabStops = sortedSetOf<Float>()
+            for ((page, line) in linesByPage(glyphs)) {
+                // Each line trimmed on its own: a line's last glyph is often
+                // a space, and joined edge to edge it would double up.
+                val logical = trimmed(lineText(page, line, tabStops))
+                if (logical.text.isEmpty()) continue
+                if (text.isNotEmpty()) {
+                    text.append(' ')
+                    looks += null
+                }
+                text.append(logical.text)
+                looks += logical.painters
+            }
+            return StyledText(ExtractedText.Logical(text.toString(), looks), tabStops.toList())
+        }
+
+        /**
+         * Pages in order, then lines top to bottom within each; a line never
+         * spans a page break however close the baselines land.
+         */
+        fun linesOf(glyphs: List<Pair<Int, Glyph>>): List<List<Glyph>> =
+            linesByPage(glyphs).map { it.second }
+
+        private fun linesByPage(glyphs: List<Pair<Int, Glyph>>): List<Pair<Int, List<Glyph>>> {
+            val lines = mutableListOf<Pair<Int, MutableList<Glyph>>>()
+            for ((page, onPage) in glyphs.groupBy { it.first }.toSortedMap()) {
                 var line: MutableList<Glyph>? = null
                 var lineSize = 0f
                 for (glyph in onPage.map { it.second }.sortedBy { it.position.yDirAdj }) {
@@ -268,38 +395,244 @@ internal object AndroidStructureTreeReader {
                         current += glyph
                         lineSize = maxOf(lineSize, size)
                     } else {
-                        line = mutableListOf(glyph).also { lines += it }
+                        line = mutableListOf(glyph).also { lines += page to it }
                         lineSize = size
                     }
                 }
             }
-            // Not trimmed: the space between two words often belongs to the
-            // edge of one run, and runs are joined edge to edge by textOf.
-            // Trimming here glued "ربيحة نبار" into one word. The paragraph
-            // is trimmed once, where it is emitted.
-            return lines.joinToString(separator = " ") { line ->
-                val visual = StringBuilder()
-                var previous: TextPosition? = null
-                // A producer that painted its spaces is trusted on where the
-                // words are. Only one that painted none has its word breaks
-                // read from the gaps, as PDFBox's own stripper does — a
-                // kerning gap inside a word is otherwise easy to mistake for
-                // one, and did split الجزائر in two.
-                val inferBreaks = line.none { glyphText.of(it.position).let { u -> u.isNotEmpty() && u.isBlank() } }
-                for (glyph in line.sortedBy { it.x }) {
-                    val position = glyph.position
-                    val unicode = ExtractedText.paintedForm(glyphText.of(position))
-                    if (inferBreaks && previous != null && previous.widthDirAdj > 0f &&
-                        unicode.isNotBlank() && !visual.endsWith(' ')
-                    ) {
-                        val gap = position.xDirAdj - (previous.xDirAdj + previous.widthDirAdj)
-                        if (gap > WORD_GAP_FACTOR * position.fontSizeInPt) visual.append(' ')
+            return lines
+        }
+
+        /**
+         * One line, read left to right off the page and put back into
+         * logical order, each character carrying the look of the glyph that
+         * painted it. Not trimmed: the space between two words often
+         * belongs to the edge of one run, and runs are joined edge to edge.
+         * The paragraph is trimmed once, where it is emitted.
+         */
+        private fun lineText(page: Int, line: List<Glyph>, tabStops: MutableSet<Float>): ExtractedText.Logical<Look> {
+            val visual = StringBuilder()
+            val painters = ArrayList<Look?>()
+            val ordered = line.sortedBy { it.x }
+            val block = inkByPageIndex[page]
+            val baseline = dominantBaseline(ordered)
+            val lineSize = ordered.filter { abs(it.position.yDirAdj - baseline) <= SAME_LINE_TOLERANCE_PT }
+                .maxOfOrNull { it.position.fontSizeInPt } ?: 0f
+            var previous: TextPosition? = null
+            // A producer that painted its spaces is trusted on where the
+            // words are. Only one that painted none has its word breaks
+            // read from the gaps, as PDFBox's own stripper does — a
+            // kerning gap inside a word is otherwise easy to mistake for
+            // one, and did split الجزائر in two.
+            val inferBreaks = ordered.none { glyphText.of(it.position).let { u -> u.isNotEmpty() && u.isBlank() } }
+            var spaces = 0
+            for ((index, glyph) in ordered.withIndex()) {
+                val position = glyph.position
+                val unicode = ExtractedText.paintedForm(glyphText.of(position))
+                if (unicode.isNotEmpty() && unicode.isBlank() && isSwallowed(ordered, index)) continue
+                // A stretch of spaces wide enough to be a tab — the three
+                // dates Word spread across a line with two — is one, and the
+                // text after it is where a tab stop sits: measured from the
+                // block's start edge to the edge nearest it, which for a
+                // right-to-left line is its right edge.
+                if (unicode.isNotEmpty() && unicode.isBlank()) {
+                    spaces++
+                } else {
+                    if (spaces >= TAB_MIN_SPACES && visual.isNotBlank() && block != null && !block.isEmpty) {
+                        repeat(spaces) { visual.setLength(visual.length - 1); painters.removeAt(painters.size - 1) }
+                        visual.append('\t')
+                        painters += null
+                        // The text the tab leads to is the ink on its far
+                        // side in reading order: to the right of the gap on
+                        // a left-to-right line, to the left of it on a
+                        // right-to-left one.
+                        val stop = if (baseDirection == TextDirection.RTL) {
+                            block.right - inkExtent(ordered.subList(0, index - spaces)).second
+                        } else {
+                            inkExtent(ordered.subList(index, ordered.size)).first - block.left
+                        }
+                        if (stop > 0f) tabStops += (stop * 2f).roundToInt() / 2f
                     }
-                    visual.append(unicode)
-                    previous = position
+                    spaces = 0
                 }
-                ExtractedText.toLogical(visual.toString(), baseDirection)
+                if (inferBreaks && previous != null && previous.widthDirAdj > 0f &&
+                    unicode.isNotBlank() && !visual.endsWith(' ')
+                ) {
+                    val gap = position.xDirAdj - (previous.xDirAdj + previous.widthDirAdj)
+                    if (gap > WORD_GAP_FACTOR * position.fontSizeInPt) {
+                        visual.append(' ')
+                        painters += null
+                    }
+                }
+                val look = lookOf(position, raised(position, baseline, lineSize))
+                visual.append(unicode)
+                repeat(unicode.length) { painters += look }
+                previous = position
             }
+            return ExtractedText.toLogical(visual.toString(), painters, baseDirection)
+        }
+
+        /**
+         * A painted space with no room on the page: Word's Arabic
+         * justification leaves one inside a word — خطوات painted as خط, a
+         * space, and وات with the و and the ط touching — and the page shows
+         * one word, so the text holds one word. The space's own advance
+         * does not count; only what is clear between the glyphs either
+         * side of it.
+         */
+        private fun isSwallowed(ordered: List<Glyph>, index: Int): Boolean {
+            val space = ordered[index].position
+            val before = (index - 1 downTo 0).map { ordered[it].position }.firstOrNull { !it.unicode.isNullOrBlank() }
+                ?: return false
+            val after = (index + 1 until ordered.size).map { ordered[it].position }.firstOrNull { !it.unicode.isNullOrBlank() }
+                ?: return false
+            val clear = after.xDirAdj - (before.xDirAdj + before.widthDirAdj)
+            val needed = if (space.widthDirAdj > 0f) VISIBLE_SPACE_SHARE * space.widthDirAdj
+            else VISIBLE_SPACE_SHARE * WORD_GAP_FACTOR * space.fontSizeInPt
+            return clear < needed
+        }
+
+        /** The baseline most of the line's glyphs sit on, to the half point. */
+        private fun dominantBaseline(line: List<Glyph>): Float {
+            val counts = HashMap<Int, Int>()
+            for (glyph in line) {
+                if (glyph.position.unicode.isNullOrBlank()) continue
+                val bucket = (glyph.position.yDirAdj * 2f).toInt()
+                counts[bucket] = (counts[bucket] ?: 0) + 1
+            }
+            val bucket = counts.maxByOrNull { it.value }?.key ?: return line.first().position.yDirAdj
+            return line.filter { (it.position.yDirAdj * 2f).toInt() == bucket }.maxOf { it.position.yDirAdj }
+        }
+
+        /** +1 for a smaller glyph raised off the line's baseline, -1 for one lowered, else 0. */
+        private fun raised(position: TextPosition, baseline: Float, lineSize: Float): Int {
+            if (lineSize <= 0f || position.fontSizeInPt >= lineSize) return 0
+            val lift = baseline - position.yDirAdj
+            return when {
+                lift > RAISED_SHARE * lineSize -> 1
+                lift < -RAISED_SHARE * lineSize -> -1
+                else -> 0
+            }
+        }
+
+        private fun lookOf(position: TextPosition, raised: Int): Look = Look(
+            bold = isBold(position),
+            italic = isItalic(position),
+            family = position.font?.name?.let(::familyName),
+            sizePt = position.fontSizeInPt,
+            raised = raised,
+        )
+
+        /**
+         * How the element sits on its page, measured against the page's
+         * text block rather than the sheet — a journal's margins are not
+         * symmetric, and a line flush to the right margin with a first-line
+         * indent is not a centred line however close to the middle its
+         * midpoint lands.
+         *
+         * Centred when every line's middle is the block's middle and none
+         * touches a margin; justified when a paragraph of several lines has
+         * every line but the last flush to the same two edges; set against
+         * the far margin when a single line starts too far in to be indented
+         * and ends on that margin. Indents are read off the start edge: the
+         * first line's own, the rest's, and — for a bibliography entry —
+         * the rest hanging in past a first line on the margin.
+         */
+        fun placementOf(glyphs: List<Pair<Int, Glyph>>, direction: TextDirection?): Placement? {
+            val lines = linesByPage(glyphs).filter { line -> line.second.any { !it.position.unicode.isNullOrBlank() } }
+            if (lines.isEmpty()) return null
+            val firstPage = lines.first().first
+            val block = inkByPageIndex[firstPage]?.takeIf { !it.isEmpty } ?: return null
+            val pageWidth = pageWidthByIndex[firstPage]?.takeIf { it > 0f } ?: (block.right - block.left)
+            val extents = lines.map { (_, line) -> inkExtent(line) }
+            val baselines = lines.map { (_, line) -> dominantBaseline(line.sortedBy { it.x }) }
+            val rtl = direction == TextDirection.RTL
+            val blockWidth = block.right - block.left
+            val blockCentre = (block.left + block.right) / 2
+            fun startGap(extent: Pair<Float, Float>) = if (rtl) block.right - extent.second else extent.first - block.left
+            fun endGap(extent: Pair<Float, Float>) = if (rtl) extent.first - block.left else block.right - extent.second
+
+            var alignment: Alignment? = null
+            var firstLine: Float? = null
+            var start: Float? = null
+            var hanging: Float? = null
+            val centred = extents.all { (left, right) ->
+                abs((left + right) / 2 - blockCentre) <= CENTRE_TOLERANCE * pageWidth &&
+                    right - left < CENTRED_MAX_SHARE * blockWidth &&
+                    startGap(left to right) > FLUSH_TOLERANCE_PT && endGap(left to right) > FLUSH_TOLERANCE_PT
+            }
+            if (centred) {
+                alignment = Alignment.CENTER
+            } else {
+                if (extents.size >= 3) {
+                    // Every full line ends on the end margin, and every full
+                    // line after the first — which may carry an indent —
+                    // starts on the start margin.
+                    val full = extents.dropLast(1)
+                    val ends = full.map(::endGap)
+                    val starts = full.drop(1).map(::startGap)
+                    val flush = ends.max() - ends.min() <= FLUSH_TOLERANCE_PT &&
+                        starts.max() - starts.min() <= FLUSH_TOLERANCE_PT
+                    if (flush) alignment = Alignment.JUSTIFY
+                }
+                val gaps = extents.map(::startGap)
+                val first = gaps.first()
+                val deepest = INDENT_MAX_SHARE * blockWidth
+                if (gaps.size == 1) {
+                    if (first > deepest && endGap(extents.single()) <= FLUSH_TOLERANCE_PT) alignment = Alignment.END
+                    else if (first in INDENT_MIN_PT..deepest) firstLine = first
+                } else {
+                    val rest = HeadingSizes.median(gaps.drop(1))
+                    val restIndent = if (rest in INDENT_MIN_PT..deepest) rest else 0f
+                    if (restIndent > 0f) start = restIndent
+                    val extra = first - restIndent
+                    if (extra >= INDENT_MIN_PT && first <= deepest) firstLine = extra
+                    else if (extra <= -INDENT_MIN_PT && restIndent > 0f) hanging = -extra
+                }
+            }
+            val pitches = lines.indices.drop(1)
+                .filter { lines[it].first == lines[it - 1].first }
+                .map { baselines[it] - baselines[it - 1] }
+                .filter { it > 0f }
+            return Placement(
+                firstPage = firstPage,
+                lastPage = lines.last().first,
+                alignment = alignment,
+                firstLineIndentPt = firstLine,
+                startIndentPt = start,
+                hangingIndentPt = hanging,
+                firstBaseline = baselines.first(),
+                lastBaseline = baselines.last(),
+                pitchPt = pitches.takeIf { it.isNotEmpty() }?.let { HeadingSizes.median(it) },
+            )
+        }
+
+        /** Left and right edge of a line's ink; spaces do not count. */
+        private fun inkExtent(line: List<Glyph>): Pair<Float, Float> {
+            val ink = line.filter { !it.position.unicode.isNullOrBlank() }.ifEmpty { line }
+            return ink.minOf { it.position.xDirAdj } to ink.maxOf { it.position.xDirAdj + it.position.widthDirAdj }
+        }
+
+        /**
+         * The page the document was set on: the first page's sheet, with
+         * margins where its tagged text reaches nearest each edge across
+         * all pages. Running headers and page numbers are artifacts, not
+         * structure, so they do not pull the margins out.
+         */
+        fun pageSetup(): PageSetup? {
+            val width = pageWidthByIndex[0]?.takeIf { it > 0f } ?: return null
+            val height = pageHeightByIndex[0]?.takeIf { it > 0f } ?: return null
+            val boxes = inkByPageIndex.values.filter { !it.isEmpty }
+            if (boxes.isEmpty()) return null
+            fun margin(value: Float) = value.coerceIn(0f, minOf(width, height) / 3)
+            return PageSetup(
+                widthPt = width,
+                heightPt = height,
+                marginTopPt = margin(boxes.minOf { it.top }),
+                marginBottomPt = margin(height - boxes.maxOf { it.bottom }),
+                marginLeftPt = margin(boxes.minOf { it.left }),
+                marginRightPt = margin(width - boxes.maxOf { it.right }),
+            )
         }
 
         fun textFor(page: PDPage?, mcid: Int): String {
@@ -338,6 +671,22 @@ internal object AndroidStructureTreeReader {
             return name.contains("Bold", ignoreCase = true)
         }
 
+        /** Whether [position] was drawn in an italic face, by the same evidence as [isBold]. */
+        private fun isItalic(position: TextPosition): Boolean {
+            val name = position.font?.name ?: return false
+            return name.contains("Italic", ignoreCase = true) || name.contains("Oblique", ignoreCase = true)
+        }
+
+        private fun hasLetter(text: String?): Boolean =
+            text != null && text.any { Character.isLetter(it) }
+
+        /**
+         * "ABCDEE+Simplified Arabic,Bold" → "Simplified Arabic": the subset
+         * tag and the style suffix are the PDF's, not the typeface's.
+         */
+        private fun familyName(fontName: String): String? =
+            fontName.substringAfter('+', fontName).substringBefore(',').trim().ifEmpty { null }
+
         /** 1-based page number of a structure element's page, if known. */
         fun pageNumberOf(page: PDPage?): Int? =
             page?.cosObject?.let(pageIndexByPage::get)?.plus(1)
@@ -357,6 +706,10 @@ internal object AndroidStructureTreeReader {
         private val sizeByBlockIndex = HashMap<Int, Float>()
         /** Whether each paragraph block was set wholly in bold. */
         private val boldByBlockIndex = HashMap<Int, Boolean>()
+        /** Where each paragraph block sits on its page, when it could be measured. */
+        private val placementByBlockIndex = HashMap<Int, Placement>()
+        /** The face most of each paragraph block is set in. */
+        private val familyByBlockIndex = HashMap<Int, String?>()
         private val imageByPageAndMcid = HashMap<Long, PdfImage>().apply {
             for (image in images) {
                 if (image.mcid >= 0) putIfAbsent(imageKey(image.page, image.mcid), image)
@@ -387,6 +740,7 @@ internal object AndroidStructureTreeReader {
             if (blocks.none { it is Paragraph && it.style.kind != ParagraphKind.BODY }) {
                 rankHeadingsBySize()
             }
+            applySpacing()
             val paragraphs = blocks.filterIsInstance<Paragraph>()
             val rtl = paragraphs.count { it.style.direction == TextDirection.RTL }
             val defaultDirection =
@@ -394,8 +748,61 @@ internal object AndroidStructureTreeReader {
             // Full UAX #9 pass: split mixed-direction runs so writers can
             // mark direction per run instead of per paragraph.
             return Bidi.refine(
-                DocumentModel(blocks = blocks.toList(), defaultDirection = defaultDirection)
+                DocumentModel(
+                    blocks = blocks.toList(),
+                    defaultDirection = defaultDirection,
+                    pageSetup = texts.pageSetup(),
+                )
             )
+        }
+
+        /**
+         * Gives every paragraph the spacing the page shows: the distance
+         * between its own baselines as its line pitch, and the room left
+         * below it — the drop from its last baseline to the next
+         * paragraph's first, less that paragraph's pitch — as its space
+         * after. A single line has no pitch of its own and takes its face's,
+         * measured on the document's longer paragraphs in that face, so a
+         * Times abstract does not inherit the looser pitch of the Arabic
+         * body around it. Nothing is measured across a page break, and a
+         * page's worth of gap is not a paragraph's spacing.
+         */
+        private fun applySpacing() {
+            val ratiosByFamily = HashMap<String?, MutableList<Float>>()
+            for ((index, placement) in placementByBlockIndex) {
+                val pitch = placement.pitchPt ?: continue
+                val size = sizeByBlockIndex[index]?.takeIf { it > 0f } ?: continue
+                ratiosByFamily.getOrPut(familyByBlockIndex[index]) { mutableListOf() } += pitch / size
+            }
+            val ratioByFamily = ratiosByFamily.mapValues { HeadingSizes.median(it.value) }
+            fun pitchOf(index: Int): Float? {
+                val placement = placementByBlockIndex[index] ?: return null
+                placement.pitchPt?.let { return it }
+                val size = sizeByBlockIndex[index]?.takeIf { it > 0f } ?: return null
+                // A face no paragraph could measure gets the generic share
+                // rather than the document's: an Arabic body face sits
+                // half again as tall on its line as a Latin heading face,
+                // and a pitch written as a minimum only ever adds space.
+                return (ratioByFamily[familyByBlockIndex[index]] ?: DEFAULT_PITCH_SHARE) * size
+            }
+            for (index in blocks.indices) {
+                val paragraph = blocks[index] as? Paragraph ?: continue
+                val placement = placementByBlockIndex[index] ?: continue
+                val pitch = pitchOf(index)
+                val next = placementByBlockIndex[index + 1]
+                val after = if (next != null && next.firstPage == placement.lastPage) {
+                    pitchOf(index + 1)?.let { (next.firstBaseline - placement.lastBaseline - it).coerceIn(0f, SPACE_AFTER_MAX_PT) }
+                } else {
+                    null
+                }
+                blocks[index] = paragraph.copy(
+                    style = paragraph.style.copy(
+                        spaceBeforePt = 0f,
+                        spaceAfterPt = after ?: 0f,
+                        linePitchPt = pitch,
+                    )
+                )
+            }
         }
 
         fun walk(element: PDStructureElement, depth: Int) {
@@ -438,16 +845,78 @@ internal object AndroidStructureTreeReader {
             kind: ParagraphKind,
             marker: ListMarker?,
         ) {
-            val text = textOf(element).trim()
+            val glyphs = glyphsOf(element)
+            val read = texts.readStyled(glyphs)
+            val styled = trimmed(read.logical)
+            val text = styled.text
             if (text.isEmpty()) return
             sawText = true
             val direction = Bidi.firstStrongDirection(text)
-            sizeByBlockIndex[blocks.size] = sizeOf(element)
+            val size = sizeOf(element)
+            sizeByBlockIndex[blocks.size] = size
             boldByBlockIndex[blocks.size] = boldOf(element)
+            // What the page shows, carried across: the face, size and
+            // weight of every run, and where the element sits. A heading's
+            // kind comes from the tags or the size pass; its look from here.
+            val runs = runsOf(styled)
+            familyByBlockIndex[blocks.size] = runs.maxByOrNull { it.text.length }?.fontFamily
+            val placement = texts.placementOf(glyphs, direction)
+            if (placement != null) placementByBlockIndex[blocks.size] = placement
             blocks += Paragraph(
-                runs = listOf(TextRun(text = text, direction = direction)),
-                style = ParagraphStyle(kind = kind, direction = direction, listMarker = marker),
+                runs = runs,
+                style = ParagraphStyle(
+                    kind = kind,
+                    direction = direction,
+                    listMarker = marker,
+                    alignment = placement?.alignment,
+                    firstLineIndentPt = placement?.firstLineIndentPt,
+                    startIndentPt = placement?.startIndentPt,
+                    hangingIndentPt = placement?.hangingIndentPt,
+                    tabStopsPt = read.tabStopsPt.takeIf { it.isNotEmpty() && '\t' in text },
+                ),
                 confidence = CONFIDENCE,
+            )
+        }
+
+        /**
+         * The paragraph's runs: one per stretch of characters that share a
+         * look. A space no glyph painted — between two lines — belongs to
+         * the run before it.
+         */
+        private fun runsOf(styled: ExtractedText.Logical<Look>): List<TextRun> {
+            val runs = mutableListOf<TextRun>()
+            val text = StringBuilder()
+            var current: Look? = null
+            fun flush() {
+                if (text.isEmpty()) return
+                val look = current
+                runs += TextRun(
+                    text = text.toString(),
+                    bold = look?.bold ?: false,
+                    italic = look?.italic ?: false,
+                    fontFamily = look?.family,
+                    fontSizePt = look?.sizePt?.takeIf { it > 0f },
+                    superscript = look?.raised == 1,
+                    subscript = look?.raised == -1,
+                )
+                text.setLength(0)
+            }
+            for ((index, c) in styled.text.withIndex()) {
+                val look = styled.painters[index]
+                if (look != null && current != null && look != current) flush()
+                if (look != null) current = look
+                text.append(c)
+            }
+            flush()
+            return runs
+        }
+
+        /** [styled] without [prefix] at its head, when it starts with it. */
+        private fun withoutPrefix(styled: ExtractedText.Logical<Look>, prefix: String): ExtractedText.Logical<Look> {
+            if (prefix.isEmpty() || !styled.text.startsWith(prefix)) return styled
+            return ExtractedText.Logical(
+                styled.text.substring(prefix.length),
+                styled.painters.subList(prefix.length, styled.painters.size),
             )
         }
 
@@ -509,17 +978,20 @@ internal object AndroidStructureTreeReader {
 
         private fun emitListItem(item: PDStructureElement, marker: ListMarker) {
             val body = childElements(item).firstOrNull { resolvedType(it) == "LBody" }
-            val text = (body?.let(::textOf) ?: run {
-                // No LBody: take the item's text minus its label.
-                val label = childElements(item)
-                    .firstOrNull { resolvedType(it) == "Lbl" }?.let(::textOf).orEmpty()
-                textOf(item).removePrefix(label)
-            }).trim()
+            val styled = trimmed(
+                body?.let { texts.readStyled(glyphsOf(it)).logical } ?: run {
+                    // No LBody: take the item's text minus its label.
+                    val label = childElements(item)
+                        .firstOrNull { resolvedType(it) == "Lbl" }?.let(::textOf).orEmpty()
+                    withoutPrefix(texts.readStyled(glyphsOf(item)).logical, label)
+                }
+            )
+            val text = styled.text
             if (text.isEmpty()) return
             sawText = true
             val direction = Bidi.firstStrongDirection(text)
             blocks += Paragraph(
-                runs = listOf(TextRun(text = text, direction = direction)),
+                runs = runsOf(styled),
                 style = ParagraphStyle(direction = direction, listMarker = marker),
                 confidence = CONFIDENCE,
             )
@@ -534,13 +1006,14 @@ internal object AndroidStructureTreeReader {
                         childElements(row)
                             .filter { resolvedType(it) in setOf("TD", "TH") }
                             .map { cell ->
-                                val text = textOf(cell).trim()
+                                val styled = trimmed(texts.readStyled(glyphsOf(cell)).logical)
+                                val text = styled.text
                                 if (text.isNotEmpty()) sawText = true
                                 val direction = Bidi.firstStrongDirection(text)
                                 TableCell(
                                     listOf(
                                         Paragraph(
-                                            runs = listOf(TextRun(text, direction = direction)),
+                                            runs = runsOf(styled).ifEmpty { listOf(TextRun("")) },
                                             style = ParagraphStyle(direction = direction),
                                             confidence = CONFIDENCE,
                                         )
@@ -558,7 +1031,11 @@ internal object AndroidStructureTreeReader {
         }
 
         /** All text under an element, in tag (logical) order. */
-        private fun textOf(element: PDStructureElement): String {
+        private fun textOf(element: PDStructureElement): String =
+            texts.readOffThePage(glyphsOf(element))
+
+        /** Every glyph painted under [element], tagged with its page, in tree order. */
+        private fun glyphsOf(element: PDStructureElement): List<Pair<Int, Glyph>> {
             val glyphs = mutableListOf<Pair<Int, Glyph>>()
             fun gather(node: PDStructureElement, depth: Int) {
                 if (depth > MAX_DEPTH) throw TooDeepException()
@@ -574,9 +1051,7 @@ internal object AndroidStructureTreeReader {
                 }
             }
             gather(element, 0)
-            // The element's runs are laid out together on the page, so they
-            // are read together: see MarkedContentIndex.readOffThePage.
-            return texts.readOffThePage(glyphs)
+            return glyphs
         }
 
         /** True when every marked-content run under [element] is bold. */

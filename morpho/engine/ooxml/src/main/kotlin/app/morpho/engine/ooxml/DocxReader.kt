@@ -6,6 +6,7 @@ import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.ListMarker
 import app.morpho.engine.layout.Paragraph
+import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.ParagraphStyle
 import app.morpho.engine.layout.Table
@@ -72,6 +73,8 @@ object DocxReader {
 
     private const val W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
     private const val MAX_NESTING_DEPTH = 64
+    /** One inch: what a section that names a page size but no margins gets. */
+    private const val DEFAULT_MARGIN_PT = 72f
     private const val MAX_PART_BYTES = 32 * 1024 * 1024
     private const val MAX_MEDIA_PART_BYTES = 16 * 1024 * 1024
     private const val MAX_TOTAL_MEDIA_BYTES = 64 * 1024 * 1024
@@ -97,7 +100,10 @@ object DocxReader {
             val media = MediaStore(parts)
             val body = firstChild(parseXml(documentPart).documentElement, "body")
                 ?: return DocumentModel(blocks = emptyList())
-            return DocumentModel(blocks = parseBlocks(body, numbering, media, depth = 0))
+            return DocumentModel(
+                blocks = parseBlocks(body, numbering, media, depth = 0),
+                pageSetup = firstChild(body, "sectPr")?.let(::parsePageSetup),
+            )
         } catch (e: IllegalArgumentException) {
             throw e
         } catch (e: Exception) {
@@ -280,32 +286,82 @@ object DocxReader {
             "end", "right" -> Alignment.END
             else -> null
         }
+        val ind = firstChild(pPr, "ind")
+        val spacing = firstChild(pPr, "spacing")
+        // A line rule of "auto" is a multiple of the font's own height, not
+        // a distance, so only an exact or minimum height reads as a pitch.
+        val lineRule = spacing?.let { attr(it, "lineRule") } ?: "auto"
         return ParagraphStyle(
             kind = kind,
             direction = if (isOn(firstChild(pPr, "bidi"))) TextDirection.RTL else null,
             listMarker = listMarker,
             alignment = alignment,
+            firstLineIndentPt = ind?.let { twips(attr(it, "firstLine")) },
+            startIndentPt = ind?.let { twips(attr(it, "start") ?: attr(it, "left")) },
+            hangingIndentPt = ind?.let { twips(attr(it, "hanging")) },
+            spaceBeforePt = spacing?.let { twips(attr(it, "before")) },
+            spaceAfterPt = spacing?.let { twips(attr(it, "after")) },
+            linePitchPt = spacing?.takeIf { lineRule == "atLeast" || lineRule == "exact" }
+                ?.let { twips(attr(it, "line")) },
+            tabStopsPt = firstChild(pPr, "tabs")?.let { tabs ->
+                children(tabs, "tab").filter { attr(it, "val") != "clear" }.mapNotNull { twips(attr(it, "pos")) }
+            }?.takeIf { it.isNotEmpty() },
         )
     }
 
+    /** The section's page size and margins, when it states them. */
+    private fun parsePageSetup(sectPr: Element): PageSetup? {
+        val size = firstChild(sectPr, "pgSz") ?: return null
+        val width = twips(attr(size, "w")) ?: return null
+        val height = twips(attr(size, "h")) ?: return null
+        val margins = firstChild(sectPr, "pgMar")
+        fun margin(name: String): Float = margins?.let { twips(attr(it, name)) } ?: DEFAULT_MARGIN_PT
+        return PageSetup(
+            widthPt = width,
+            heightPt = height,
+            marginTopPt = margin("top"),
+            marginBottomPt = margin("bottom"),
+            marginLeftPt = margin("left"),
+            marginRightPt = margin("right"),
+        )
+    }
+
+    /** A length in twentieths of a point, as OOXML measures, in points; null when absent or not a number. */
+    private fun twips(value: String?): Float? =
+        value?.trim()?.toFloatOrNull()?.let { it / 20f }
+
     /** A run with no w:t at all (drawings, breaks) carries nothing to keep. */
     private fun parseRun(r: Element, paragraphRtl: Boolean): TextRun? {
-        val textElements = children(r, "t")
-        if (textElements.isEmpty()) return null
-        val text = textElements.joinToString(separator = "") { it.textContent }
+        val textElements = children(r).filter { it.localName == "t" || it.localName == "tab" }
+        if (textElements.none { it.localName == "t" }) return null
+        val text = textElements.joinToString(separator = "") { if (it.localName == "tab") "\t" else it.textContent }
         // In OOXML the absence of w:rtl means a left-to-right run even inside
         // a bidi paragraph, while the IR's null means "inherit" — so inside an
         // RTL paragraph, LTR is recorded explicitly to keep round-trips true.
         val inherited: TextDirection? = if (paragraphRtl) TextDirection.LTR else null
         val rPr = firstChild(r, "rPr") ?: return TextRun(text, direction = inherited)
         val underline = firstChild(rPr, "u")?.let { attr(it, "val") ?: "single" }
+        val rtl = isOn(firstChild(rPr, "rtl"))
+        // The face a run is set in is the one for its script: a right-to-left
+        // run reads the complex-script face, any other the ASCII one.
+        val fonts = firstChild(rPr, "rFonts")
+        val family = fonts?.let {
+            if (rtl) attr(it, "cs") ?: attr(it, "ascii") else attr(it, "ascii") ?: attr(it, "hAnsi") ?: attr(it, "cs")
+        }?.takeIf { it.isNotBlank() }
+        val halfPoints = firstChild(rPr, if (rtl) "szCs" else "sz")?.let { attr(it, "val") }?.toFloatOrNull()
+            ?: firstChild(rPr, "sz")?.let { attr(it, "val") }?.toFloatOrNull()
+        val vertical = firstChild(rPr, "vertAlign")?.let { attr(it, "val") }
         return TextRun(
             text = text,
             bold = isOn(firstChild(rPr, "b")),
             italic = isOn(firstChild(rPr, "i")),
             underline = underline != null && underline != "none",
             language = firstChild(rPr, "lang")?.let { attr(it, "val") ?: attr(it, "bidi") },
-            direction = if (isOn(firstChild(rPr, "rtl"))) TextDirection.RTL else inherited,
+            direction = if (rtl) TextDirection.RTL else inherited,
+            fontFamily = family,
+            fontSizePt = halfPoints?.takeIf { it > 0f }?.let { it / 2f },
+            superscript = vertical == "superscript",
+            subscript = vertical == "subscript",
         )
     }
 

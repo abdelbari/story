@@ -89,7 +89,16 @@ internal class PositionTextStripper : PDFTextStripper() {
         if (text.isBlank() || textPositions.isEmpty()) return
         // The painted glyphs, not PDFBox's direction-corrected word: the
         // line is reconstructed as a whole in flushLine.
-        val painted = textPositions.joinToString(separator = "") { ExtractedText.paintedForm(glyphText.of(it)) }
+        val painted = buildString {
+            for ((index, position) in textPositions.withIndex()) {
+                val unicode = ExtractedText.paintedForm(glyphText.of(position))
+                // A painted space with no room on the page between its
+                // neighbours — Word's Arabic justification leaves one inside
+                // a word — is not a word break; the page shows one word.
+                if (unicode.isNotEmpty() && unicode.isBlank() && isSwallowed(textPositions, index)) continue
+                append(unicode)
+            }
+        }
         if (painted.isEmpty()) return
         val baselineY = textPositions.first().yDirAdj
         if (lineText.isNotEmpty() && abs(baselineY - lineY) > SAME_LINE_TOLERANCE_PT) flushLine()
@@ -105,6 +114,18 @@ internal class PositionTextStripper : PDFTextStripper() {
             xStart = textPositions.minOf { it.xDirAdj },
             xEnd = textPositions.maxOf { it.xDirAdj + it.widthDirAdj },
         )
+    }
+
+    private fun isSwallowed(positions: List<TextPosition>, index: Int): Boolean {
+        val space = positions[index]
+        val before = (index - 1 downTo 0).map { positions[it] }.firstOrNull { !it.unicode.isNullOrBlank() }
+            ?: return false
+        val after = (index + 1 until positions.size).map { positions[it] }.firstOrNull { !it.unicode.isNullOrBlank() }
+            ?: return false
+        val clear = after.xDirAdj - (before.xDirAdj + before.widthDirAdj)
+        val needed = if (space.widthDirAdj > 0f) VISIBLE_SPACE_SHARE * space.widthDirAdj
+        else VISIBLE_SPACE_SHARE * WORD_GAP_FACTOR * space.fontSizeInPt
+        return clear < needed
     }
 
     override fun writeWordSeparator() {
@@ -143,5 +164,9 @@ internal class PositionTextStripper : PDFTextStripper() {
     private companion object {
         /** Words further apart vertically than this start a new captured line. */
         const val SAME_LINE_TOLERANCE_PT = 2f
+        /** A painted space needs this share of its own width clear between its neighbours to be a word break. */
+        const val VISIBLE_SPACE_SHARE = 0.3f
+        /** The word gap, as a share of type size, a zero-width space glyph is measured against. */
+        const val WORD_GAP_FACTOR = 0.2f
     }
 }

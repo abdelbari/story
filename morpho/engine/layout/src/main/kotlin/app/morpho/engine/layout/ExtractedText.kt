@@ -28,12 +28,26 @@ object ExtractedText {
      * and pass the document's [base] direction, which a single line cannot
      * work out for itself.
      */
-    fun toLogical(text: String, base: TextDirection? = null): String =
-        // Reconstruct first, fold after: a presentation-form ligature such as
-        // ﻻ is one character while the line is put back in order and only
-        // then becomes the two letters لا — in logical order. Folding first
-        // would hand the reversal two letters to swap.
-        collapseSpaces(foldPresentationForms(Bidi.visualToLogical(text, base)))
+    fun toLogical(text: String, base: TextDirection? = null): String = reorder(text, base).text
+
+    /** A line in logical order, with what painted each of its characters. */
+    class Logical<T>(val text: String, val painters: List<T?>)
+
+    /**
+     * [toLogical] for a reader that knows what painted each character of
+     * [text] — [painters] runs parallel to it — and wants that knowledge to
+     * survive the reordering. Every character of the result carries the
+     * painter of the character it came from: a ligature folded into two
+     * letters gives both its glyph, a run of spaces collapsed into one keeps
+     * the first's, and the reversal moves each painter with its character.
+     * That is what lets a bold word or a raised footnote mark keep its look
+     * after the line has been put back in order around it.
+     */
+    fun <T> toLogical(text: String, painters: List<T?>, base: TextDirection? = null): Logical<T> {
+        require(painters.size == text.length) { "one painter per character" }
+        val reordered = reorder(text, base)
+        return Logical(reordered.text, reordered.sources.map { if (it >= 0) painters[it] else null })
+    }
 
     /**
      * A glyph's text as it should enter a line that is about to be
@@ -50,15 +64,45 @@ object ExtractedText {
         if (glyphText.length > 1 && glyphText.any(::isRtlLetter)) StringBuilder(glyphText).reverse().toString()
         else glyphText
 
+    // Reconstruct first, fold after: a presentation-form ligature such as
+    // ﻻ is one character while the line is put back in order and only
+    // then becomes the two letters لا — in logical order. Folding first
+    // would hand the reversal two letters to swap.
+    private fun reorder(text: String, base: TextDirection?): Bidi.Reordered =
+        collapseSpaces(foldPresentationForms(Bidi.reorder(text, base)))
+
     /**
      * Runs of spaces become one. On a page, spacing is geometry — Word
      * justifies an Arabic heading by widening its gaps, and a tab-aligned
      * line of dates arrives as words separated by twenty spaces — and none
      * of it is content.
      */
-    private fun collapseSpaces(text: String): String = SPACE_RUN.replace(text, " ")
+    private fun collapseSpaces(reordered: Bidi.Reordered): Bidi.Reordered {
+        val text = reordered.text
+        if (!SPACE_RUN.containsMatchIn(text)) return reordered
+        val out = StringBuilder(text.length)
+        val sources = IntArray(text.length)
+        var length = 0
+        var i = 0
+        while (i < text.length) {
+            var end = i
+            while (end < text.length && isSpace(text[end])) end++
+            if (end - i >= 2) {
+                out.append(' ')
+                sources[length++] = reordered.sources[i]
+                i = end
+            } else {
+                out.append(text[i])
+                sources[length++] = reordered.sources[i]
+                i++
+            }
+        }
+        return Bidi.Reordered(out.toString(), sources.copyOf(length))
+    }
 
     private val SPACE_RUN = Regex("[ \u00A0]{2,}")
+
+    private fun isSpace(c: Char): Boolean = c == ' ' || c == '\u00A0'
 
     private fun isRtlLetter(c: Char): Boolean = when (Character.getDirectionality(c)) {
         Character.DIRECTIONALITY_RIGHT_TO_LEFT,
@@ -81,17 +125,26 @@ object ExtractedText {
      * into Greek mu, fullwidth Latin into ASCII, and superscript digits into
      * plain ones — and none of that belongs in a faithful conversion.
      */
-    fun foldPresentationForms(text: String): String {
-        if (text.none(::isPresentationForm)) return text
+    fun foldPresentationForms(text: String): String =
+        foldPresentationForms(Bidi.Reordered(text, IntArray(text.length) { it })).text
+
+    /** [foldPresentationForms] keeping each folded letter's source. */
+    private fun foldPresentationForms(reordered: Bidi.Reordered): Bidi.Reordered {
+        val text = reordered.text
+        if (text.none(::isPresentationForm)) return reordered
         val out = StringBuilder(text.length)
-        for (c in text) {
+        val sources = ArrayList<Int>(text.length)
+        for ((i, c) in text.withIndex()) {
             if (isPresentationForm(c)) {
-                out.append(Normalizer.normalize(c.toString(), Normalizer.Form.NFKC))
+                val folded = Normalizer.normalize(c.toString(), Normalizer.Form.NFKC)
+                out.append(folded)
+                repeat(folded.length) { sources += reordered.sources[i] }
             } else {
                 out.append(c)
+                sources += reordered.sources[i]
             }
         }
-        return out.toString()
+        return Bidi.Reordered(out.toString(), sources.toIntArray())
     }
 
     /**

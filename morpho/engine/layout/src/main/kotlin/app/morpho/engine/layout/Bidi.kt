@@ -56,8 +56,22 @@ object Bidi {
      * Text with no right-to-left character is returned unchanged, so
      * left-to-right documents pass through untouched.
      */
-    fun visualToLogical(text: String, base: TextDirection? = null): String {
-        if (text.isEmpty() || !containsRtl(text)) return text
+    fun visualToLogical(text: String, base: TextDirection? = null): String = reorder(text, base).text
+
+    /** Text put back into logical order, and where each character of it came from. */
+    class Reordered(val text: String, val sources: IntArray)
+
+    /**
+     * [visualToLogical] that also reports, for every character of the
+     * result, the index in [text] it was read from. A reader that knows
+     * which glyph painted each character — its face, its size, whether it
+     * is bold or sits raised — needs the map: the reversal moves characters
+     * about, and the look of each has to move with it. Nothing in the result
+     * comes from nowhere; the marks inserted below are taken out again.
+     */
+    fun reorder(text: String, base: TextDirection? = null): Reordered {
+        val identity = Reordered(text, IntArray(text.length) { it })
+        if (text.isEmpty() || !containsRtl(text)) return identity
         // The base direction is the paragraph's, and a line cannot tell its
         // own: an Arabic line whose leftmost word is an email address starts,
         // visually, with a Latin letter. Callers that know the document pass
@@ -77,9 +91,35 @@ object Bidi {
         // left-to-right marks gives its digits a left-to-right neighbour on
         // both sides, so the rules see one European number; the marks are
         // removed again once the line is in order.
-        val fenced = NUMBER_WITH_SEPARATORS.replace(text) { "\u200E${it.value}\u200E" }
-        val bidi = java.text.Bidi(fenced, flags)
-        if (!bidi.isMixed && bidi.baseIsLeftToRight()) return text
+        val fenced = StringBuilder(text.length + 8)
+        val origin = ArrayList<Int>(text.length + 8)
+        fun copy(from: Int, to: Int) {
+            for (i in from until to) {
+                // The Arabic comma is a list separator, and the bidi rules
+                // class it as a number separator: between two numbers it
+                // fuses them into one left-to-right unit, so a citation's
+                // (author، year، page) came back with its page before its
+                // year. It stands in as a neutral while the line is
+                // reordered — two numbers either side of it are then two
+                // numbers, in reading order — and is restored after. Arabic
+                // writes thousands with U+066C, not this.
+                fenced.append(if (text[i] == '\u060C') '\uFFFC' else text[i])
+                origin += i
+            }
+        }
+        var cursor = 0
+        for (match in NUMBER_WITH_SEPARATORS.findAll(text)) {
+            copy(cursor, match.range.first)
+            fenced.append('\u200E')
+            origin += NO_SOURCE
+            copy(match.range.first, match.range.last + 1)
+            fenced.append('\u200E')
+            origin += NO_SOURCE
+            cursor = match.range.last + 1
+        }
+        copy(cursor, text.length)
+        val bidi = java.text.Bidi(fenced.toString(), flags)
+        if (!bidi.isMixed && bidi.baseIsLeftToRight()) return identity
         val runCount = bidi.runCount
         val levels = ByteArray(runCount)
         // reorderVisually permutes this array and reads levels by the original
@@ -90,19 +130,31 @@ object Bidi {
             logicalOrder[run] = run
         }
         java.text.Bidi.reorderVisually(levels, 0, logicalOrder, 0, runCount)
-        val out = StringBuilder(fenced.length)
+        val out = StringBuilder(text.length)
+        val sources = IntArray(text.length)
+        var length = 0
+        fun take(index: Int) {
+            val c = fenced[index]
+            val from = origin[index]
+            if (c == '\u200E') return
+            out.append(if (c == '\uFFFC' && from != NO_SOURCE && text[from] == '\u060C') '\u060C' else c)
+            sources[length++] = from
+        }
         for (position in 0 until runCount) {
             val run = logicalOrder[position] as Int
             val start = bidi.getRunStart(run)
             var end = bidi.getRunLimit(run)
             if (levels[run].toInt() and 1 == 1) {
-                while (end > start) out.append(fenced[--end])
+                while (end > start) take(--end)
             } else {
-                out.append(fenced, start, end)
+                for (i in start until end) take(i)
             }
         }
-        return out.toString().replace("\u200E", "")
+        return Reordered(out.toString(), sources.copyOf(length))
     }
+
+    /** The source index of a character the reordering inserted itself. */
+    private const val NO_SOURCE = -1
 
     /** Digits — European or Arabic-Indic — joined by the separators dates, times and ranges use. */
     private val NUMBER_WITH_SEPARATORS =
@@ -178,8 +230,34 @@ object Bidi {
      */
     fun directionalRuns(text: String, base: TextDirection): List<DirectionalRun> {
         if (text.isEmpty()) return emptyList()
+        // A date after Arabic letters is, to the rules, Arabic digits with
+        // a hyphen between them that is not part of the number, and the
+        // hyphen comes out right-to-left: 2022-04-21 in a run of its own,
+        // marked right-to-left, is displayed 21-04-2022. Fenced with
+        // left-to-right marks while the runs are found, the whole number is
+        // one left-to-right run — the mark a writer puts on it is what a
+        // Word user sets by hand to make a date read the right way round.
+        val fenced = StringBuilder(text.length + 8)
+        val origin = ArrayList<Int>(text.length + 8)
+        var cursor = 0
+        fun copy(from: Int, to: Int) {
+            for (i in from until to) {
+                fenced.append(text[i])
+                origin += i
+            }
+        }
+        for (match in NUMBER_WITH_SEPARATORS.findAll(text)) {
+            copy(cursor, match.range.first)
+            fenced.append('\u200E')
+            origin += NO_SOURCE
+            copy(match.range.first, match.range.last + 1)
+            fenced.append('\u200E')
+            origin += NO_SOURCE
+            cursor = match.range.last + 1
+        }
+        copy(cursor, text.length)
         val bidi = java.text.Bidi(
-            text,
+            fenced.toString(),
             if (base == TextDirection.RTL) java.text.Bidi.DIRECTION_RIGHT_TO_LEFT
             else java.text.Bidi.DIRECTION_LEFT_TO_RIGHT,
         )
@@ -187,11 +265,16 @@ object Bidi {
         for (i in 0 until bidi.runCount) {
             val direction =
                 if (bidi.getRunLevel(i) % 2 == 1) TextDirection.RTL else TextDirection.LTR
+            // Back to the text's own indices; a run of nothing but marks adds nothing.
+            val indices = (bidi.getRunStart(i) until bidi.getRunLimit(i)).map { origin[it] }.filter { it != NO_SOURCE }
+            if (indices.isEmpty()) continue
+            val start = indices.first()
+            val end = indices.last() + 1
             val last = out.lastOrNull()
             if (last != null && last.direction == direction) {
-                out[out.size - 1] = last.copy(end = bidi.getRunLimit(i))
+                out[out.size - 1] = last.copy(end = end)
             } else {
-                out += DirectionalRun(bidi.getRunStart(i), bidi.getRunLimit(i), direction)
+                out += DirectionalRun(start, end, direction)
             }
         }
         return out

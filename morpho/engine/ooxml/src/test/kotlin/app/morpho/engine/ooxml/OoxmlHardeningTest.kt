@@ -123,10 +123,14 @@ class OoxmlHardeningTest {
                 Paragraph(listOf(TextRun("x\uFFFEy\tz"))),
             )
         )
-        val xml = parse(entries(DocxWriter.toByteArray(doc)).getValue("word/document.xml"))
+        val bytes = DocxWriter.toByteArray(doc)
+        val xml = parse(entries(bytes).getValue("word/document.xml"))
         val text = xml.documentElement.textContent
         assertTrue(text.contains("abc"), "controls not dropped: $text")
-        assertTrue(text.contains("xy\tz"), "tab must survive, U+FFFE must not: $text")
+        // A tab is written as w:tab, an element of its own, and reads back
+        // as the character; U+FFFE is not XML and is gone.
+        assertTrue(text.contains("xyz"), "U+FFFE must not survive: $text")
+        assertEquals("xy\tz", DocxReader.read(bytes).blocks.filterIsInstance<Paragraph>()[1].text)
     }
 
     @Test
