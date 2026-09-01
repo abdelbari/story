@@ -2,6 +2,13 @@ package app.morpho.engine.pdf
 
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.TextDirection
+import org.apache.pdfbox.cos.COSDictionary
+import org.apache.pdfbox.cos.COSName
+import org.apache.pdfbox.pdmodel.documentinterchange.markedcontent.PDPropertyList
+import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureElement
+import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureTreeRoot
+import org.apache.pdfbox.pdmodel.documentinterchange.markedcontent.PDMarkedContent
+import org.apache.pdfbox.pdmodel.documentinterchange.taggedpdf.StandardStructureTypes
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.PDPageContentStream
@@ -117,4 +124,89 @@ class ArabicPdfTest {
         const val WORD_GAP = 6f
         const val LINE_GAP = 30f
     }
+
+    @Test
+    fun `a tagged tree keeps its own word order and only rebuilds the words`() {
+        // The structure tree lists content in reading order, so the words are
+        // already right and only their letters are painted backwards.
+        // Reconstructing the whole line here would reverse the tree's order:
+        // a real bibliography entry came back publisher-first, author-last.
+        val pdf = taggedArabicPdf(listOf(title, inWord, research))
+        val text = paragraphs(pdf).first().text
+        assertEquals("$title $inWord $research", text)
+    }
+
+    @Test
+    fun `a number inside tagged arabic keeps its digits in order`() {
+        // Reversing "2005" is wrong whichever way the line runs.
+        val pdf = taggedArabicPdf(listOf(title, "2005", research))
+        val text = paragraphs(pdf).first().text
+        assertTrue(text.contains("2005"), "digits were reordered: $text")
+    }
+
+    /**
+     * A tagged PDF shaped like the ones Word produces for Arabic: the
+     * structure tree lists the words in reading order, and each word's
+     * glyphs are painted left to right, so its letters arrive reversed.
+     */
+    private fun taggedArabicPdf(logicalWords: List<String>): ByteArray {
+        val bytes = ByteArrayOutputStream()
+        PDDocument().use { document ->
+            val page = PDPage(PDRectangle.A4)
+            document.addPage(page)
+            val font = PDType0Font.load(
+                document,
+                javaClass.getResourceAsStream("/fonts/NotoNaskhArabic-Regular.ttf")
+                    ?: error("test font missing"),
+            )
+            val root = PDStructureTreeRoot()
+            document.documentCatalog.structureTreeRoot = root
+            val docElement = PDStructureElement(StandardStructureTypes.DOCUMENT, root)
+            // Without a page the marked-content ids cannot be resolved and the
+            // reader falls back to the untagged heuristics, silently testing
+            // the wrong path.
+            docElement.page = page
+            root.appendKid(docElement)
+            val paragraph = PDStructureElement(StandardStructureTypes.P, docElement)
+            paragraph.page = page
+            docElement.appendKid(paragraph)
+
+            PDPageContentStream(document, page).use { content ->
+                var x = RIGHT_EDGE
+                for ((mcid, word) in logicalWords.withIndex()) {
+                    // Real exporters emit the space between words as a glyph
+                    // of its own; without one the paragraph is a single token
+                    // and nothing can tell where the words are.
+                    val separator = if (mcid < logicalWords.size - 1) " " else ""
+                    val painted = (if (isRtl(word)) word.reversed() else word) + separator
+                    val width = font.getStringWidth(painted) / 1000f * SIZE
+                    x -= width
+                    val properties = COSDictionary().apply { setInt(COSName.MCID, mcid) }
+                    content.beginMarkedContent(COSName.P, PDPropertyList.create(properties))
+                    content.beginText()
+                    content.setFont(font, SIZE)
+                    content.newLineAtOffset(x, 700f)
+                    content.showText(painted)
+                    content.endText()
+                    content.endMarkedContent()
+                    // Appended in reading order, which is what a tagged tree does.
+                    paragraph.appendKid(PDMarkedContent(COSName.P, properties))
+                    x -= WORD_GAP
+                }
+            }
+            document.save(bytes)
+        }
+        return bytes.toByteArray()
+    }
+
+
+    @Test
+    fun `the tagged fixture really takes the tagged path`() {
+        val pdf = taggedArabicPdf(listOf(title, inWord, research))
+        val inspection = PdfReader().inspect(pdf)
+        val confidence = paragraphs(pdf).first().confidence
+        assertTrue(inspection.isTagged, "fixture is not tagged at all")
+        assertEquals(0.9f, confidence, "fell back to the untagged heuristics")
+    }
+
 }

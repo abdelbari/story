@@ -424,11 +424,12 @@ internal object AndroidStructureTreeReader {
                 }
             }
             gather(element, 0)
-            // Marked content hands back glyphs in painting order, which for a
-            // right-to-left line is visual order — backwards. Nothing further
-            // down the pipeline can tell that from logical order, so it is
-            // reconstructed here, at the one place tagged text is assembled.
-            return ExtractedText.toLogical(sb.toString())
+            // Marked content hands back glyphs in painting order, so a
+            // right-to-left word arrives with its letters backwards. The tree
+            // itself lists content in reading order, though, so the words are
+            // already where they belong and only each word needs rebuilding —
+            // reconstructing the whole line would undo the tree's own order.
+            return ExtractedText.wordsToLogical(sb.toString())
         }
 
         /** True when every marked-content run under [element] is bold. */
