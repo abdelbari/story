@@ -79,4 +79,22 @@ for.
 
 ## Next (per the plan's roadmap)
 
-M1 and M2's device-independent work are complete. M2 remainder: print-pipeline and PDF-renderer polish after device testing. M3 OCR: core landed (Tesseract 5 via Tesseract4Android, fast models for all five app languages in :pdf assets, language set follows the app locale; remaining: page-segmentation and accuracy tuning on device, per-scan language picker). M4: Review Mode ships with block reclassification; re-running OCR on a single region and keeping a region as an image come next, and Table Lasso after them. Google Docs sync is cut — see the decisions log; the app stays network-free.
+**Everything a 1.0 needs that can be built without a device is built.** The
+release bundle assembles under R8 on every push, the launch material is
+written (`store/`), and the remaining work is the kind CI cannot stand in
+for — see `store/RELEASE-CHECKLIST.md`, which starts with an ordered
+device-test pass because no line of this app has ever run on physical
+hardware.
+
+Known and deliberate for 1.0: process death while the save dialog is open
+discards the in-memory conversion; the OOXML reader resolves the main part
+by its conventional path rather than the officeDocument relationship;
+`PdfFileExporter` uses uniform table columns and never splits a row across
+pages.
+
+After the first real documents come back: OCR page-segmentation and
+resolution tuning (`RENDER_DPI`, and `tessdata_best` if accuracy demands
+it), PDF-export layout, then the M4 remainder — re-running OCR on a single
+region, keeping a region as an image, Table Lasso. M5's automation (batch,
+Magic Folders, widget, history) is post-1.0 by the plan's own monetization
+split. Google Docs sync is cut; the app stays network-free.

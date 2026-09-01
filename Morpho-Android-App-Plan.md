@@ -190,7 +190,7 @@ The intent was Credential Manager sign-in with the narrow `drive.file` scope, `f
 
 ## 10. Roadmap
 
-> **Status (as built so far):** M0 ✅ · M1 ✅ · M2 ✅ (print/PDF-render polish awaits device testing) · M3 core ✅ (on-device Tesseract OCR, five languages; tuning awaits device testing) · M4 data layer ✅ (FidelityReport + post-save notice; Review Mode UI next — Google Docs sync cut, the app stays network-free). Details in `morpho/README.md`.
+> **Status (as built so far):** M0 ✅ · M1 ✅ · M2 ✅ · M3 core ✅ · M4 ✅ (Fidelity Report *and* Review Mode with block correction) — Google Docs sync cut, the app stays network-free. The release bundle builds under R8 in CI and the Play material is written. What remains before submission needs a person: device testing, a signing key, and the Play Console — see `morpho/store/RELEASE-CHECKLIST.md`. M5's automation is post-1.0. Details in `morpho/README.md`.
 
 
 | Milestone | Weeks | Deliverable |
