@@ -1,6 +1,8 @@
 # Morpho — Product & Engineering Plan
 
-**A native Android app that converts PDF ↔ Word ↔ Google Docs (and every major document format), entirely on-device, in every language — including full right-to-left Arabic support.**
+**A native Android app that converts PDF ↔ Word ↔ Markdown/HTML (and every major document format), entirely on-device, in every language — including full right-to-left Arabic support.**
+
+> **Decision, 2026-09-01 — Google Docs sync is cut.** The original plan made two-way Drive sync a headline feature. It is dropped: keeping the app network-free is the stronger product, so Morpho declares no `INTERNET` permission at all and CI fails the build if any dependency adds one. Passages below that describe the Drive integration are kept for the record and marked ~~struck~~ or annotated; they do not describe the app being built.
 
 Working title: **Morpho** (the morpho butterfly — transformation; the two wings mirror the app's signature side-by-side "original vs. converted" view). Alternative names: *Wathiq* (واثق — "confident", puns on وثائق "documents"), *Transmute*, *DocAlchemy*.
 
@@ -29,7 +31,7 @@ No watermarks. No file-size caps on core features. No ads. No account required.
 | iLovePDF / Smallpdf / "PDF Converter" apps | Mandatory upload, size limits, watermarks, subscription nagging, ads | Zero-upload, no limits, no watermarks, no ads |
 | WPS Office | Bloated (hundreds of MB), aggressive ads, privacy record | < 30 MB base install, no ads, no telemetry on documents |
 | Nearly all of them | **Arabic/RTL output is garbled** (disconnected letters, reversed word order) | Purpose-built BiDi + shaping pipeline, tested against an Arabic golden corpus |
-| Nearly all of them | No Google Docs integration at all | Two-way Google Docs sync as a first-class feature |
+| Nearly all of them | Upload your documents to a server to convert them | Converts with **no network permission at all** — machine-checked in CI, so the promise cannot rot |
 | All of them | Black-box conversion — you discover errors after sharing | Fidelity heatmap + interactive Review Mode before export |
 
 **Positioning line:** *"The document converter that never sees your documents."*
@@ -42,8 +44,7 @@ No watermarks. No file-size caps on core features. No ads. No account required.
 
 - **PDF → Word (.docx)** — text PDFs first, scanned PDFs via OCR (§3.3).
 - **Word (.docx) → PDF** — with correct RTL layout, embedded fonts, and *tagged (accessible) PDF* output — almost no competitor produces PDF/UA-friendly output; institutions care.
-- **PDF / Word → Google Doc** — one tap: convert, upload via Drive API with import conversion, open directly in the Google Docs app.
-- **Google Doc → PDF / Word** — pick a Doc from Drive, export, and optionally continue converting offline.
+- ~~**PDF / Word → Google Doc**, **Google Doc → PDF / Word**~~ — *cut (see the decision note at the top): network access would cost the Zero-Upload guarantee. Users who want a Doc convert to .docx and upload it themselves, which Drive imports natively.*
 - **Any → Text / Markdown / HTML** — cheap to support, surprisingly demanded (developers, students).
 
 ### 3.2 Universal document support (v1.x → v2)
@@ -62,7 +63,7 @@ CameraX + ML Kit Document Scanner (edge detection, de-skew, shadow removal) → 
 
 1. **Fidelity Report & confidence heatmap** — after every conversion, a side-by-side view (original left, result right — the butterfly's wings) with green/amber/red overlay per block. Tap an amber/red block to fix it: reclassify (heading ↔ paragraph ↔ table ↔ image), re-run OCR with a different language, or keep the region as an image snippet so nothing is ever silently lost.
 2. **Polyglot OCR** — per-region language detection on a single page. A Maghreb utility bill mixing Arabic and French, or a German contract with English clauses, OCRs each region with the right model. Competitors force one language per document.
-3. **Zero-Upload Guarantee** — the conversion engine runs in a separate Android process with **no INTERNET permission**, verifiable by anyone. Only the optional Google Docs feature touches the network, and only with files the user explicitly picks.
+3. **Zero-Upload Guarantee** — the app holds **no INTERNET permission**, with no exceptions and no network-touching feature anywhere in it. Anyone can verify it in the manifest of the shipped APK, and CI re-verifies it on every push against the *merged* manifest, so no transitive dependency can quietly introduce network access.
 4. **Magic Folders** — watch a folder (e.g., WhatsApp Documents); anything dropped in is auto-converted to a chosen format. Built on WorkManager + SAF tree URIs.
 5. **Document Time Machine** — Morpho keeps the original + conversion settings linked to each output. When the engine improves in an update, one tap re-converts old documents with the new engine and shows a diff. *"Your past conversions get better with every update."*
 6. **Table Lasso** — lasso-select any region of a PDF page and extract just that region as a Word table, Excel sheet, or Markdown table.
@@ -116,7 +117,6 @@ This is the moat. Two distinct layers, both specced:
 :feature:convert          — pick → configure → progress → result
 :feature:review           — fidelity heatmap, block fixes, Table Lasso
 :feature:scan             — camera capture pipeline
-:feature:gdocs            — Google auth + Drive sync
 :feature:automation       — Magic Folders, widget, tile
 :feature:history          — Time Machine, linked originals
 ```
@@ -150,13 +150,11 @@ PDF has no paragraphs — only positioned glyphs. The pipeline:
 5. **Scanned pages:** detected (no text layer) → routed through the OCR pipeline with layout reconstruction from OCR bounding boxes.
 6. **ML upgrade (phase 2):** TFLite layout model refines region classification; user corrections in Review Mode become (opt-in, on-device) signals for heuristic tuning.
 
-### 5.4 Google Docs integration
+### 5.4 Google Docs integration — cut
 
-- **Auth:** Credential Manager sign-in; scope **`drive.file` only** (files the user explicitly opens/creates through Morpho) — privacy-honest and avoids Google's restricted-scope review. Start OAuth app verification in month 1; it has lead time.
-- **To Google Doc:** upload DOCX via Drive `files.create` with target `mimeType application/vnd.google-apps.document` (Drive performs the import) → deep-link into the Docs app.
-- **From Google Doc:** Drive picker → `files.export` as DOCX/PDF (note the ~10 MB export cap; chunk or warn) → continue offline.
-- **Round-trip:** Doc → DOCX → (edit/convert offline) → push back as a new revision of the same Drive file.
-- Clear UI boundary: everything is offline except this feature, and it says so.
+Dropped by decision (see the note at the top of this plan). The design below is kept only as a record of what was considered.
+
+The intent was Credential Manager sign-in with the narrow `drive.file` scope, `files.create` with a Google-Docs target MIME type for import, `files.export` for the reverse, and a clear UI boundary saying which single feature touched the network. What killed it was that boundary itself: "everything is offline except this one thing" is a weaker, harder-to-verify promise than "this app cannot reach the network", and it costs an OAuth verification cycle plus a permission that every privacy-minded reviewer would flag. Users who want a Google Doc can convert to .docx and upload it themselves — Drive imports .docx natively, so the feature bought little that the user cannot already do in two taps.
 
 ---
 
@@ -171,7 +169,7 @@ PDF has no paragraphs — only positioned glyphs. The pipeline:
 
 ## 7. Privacy, security, trust
 
-- Documents never leave the device (except explicit Google Docs actions). No document-content telemetry, ever. Crash reporting scrubbed of file names/paths.
+- Documents never leave the device, full stop — the app has no network permission to send them with. No document-content telemetry, ever. Crash reporting scrubbed of file names/paths.
 - Engine process: no network permission, sandboxed, fuzzed in CI (parser fuzzing on the PDF/OOXML/RTF readers).
 - Everything user-facing in a plain-language privacy page; the "no INTERNET permission on the engine process" claim is verifiable via `adb`/manifest and we publicly invite the check.
 - Optional app lock (biometric) for the history screen.
@@ -186,13 +184,13 @@ PDF has no paragraphs — only positioned glyphs. The pipeline:
 
 ## 9. Monetization — fair, and itself a differentiator
 
-- **Free forever:** unlimited PDF↔DOCX↔Google Doc single conversions, OCR in 5 launch languages, scan-to-Word, no watermark, no ads, no account.
+- **Free forever:** unlimited PDF↔DOCX↔Markdown single conversions, OCR in 5 launch languages, scan-to-Word, no watermark, no ads, no account.
 - **Morpho Pro** (subscription *and* a one-time **Lifetime** purchase — subscription fatigue is real and competitors all refuse to offer lifetime): batch conversion, Magic Folders, Table Lasso to Excel, all 100+ OCR languages, Time Machine re-conversion history beyond 30 days, priority engine features (PPTX/XLSX).
 - The free tier is deliberately generous: the growth engine is Play Store reviews from users burned by watermark/upload apps, and MENA/francophone word-of-mouth where Arabic quality is unmatched.
 
 ## 10. Roadmap
 
-> **Status (as built so far):** M0 ✅ · M1 ✅ · M2 ✅ (print/PDF-render polish awaits device testing) · M3 core ✅ (on-device Tesseract OCR, five languages; tuning awaits device testing) · M4 data layer ✅ (FidelityReport + post-save notice; Review Mode UI next, Google Docs sync gated on the INTERNET-permission product decision). Details in `morpho/README.md`.
+> **Status (as built so far):** M0 ✅ · M1 ✅ · M2 ✅ (print/PDF-render polish awaits device testing) · M3 core ✅ (on-device Tesseract OCR, five languages; tuning awaits device testing) · M4 data layer ✅ (FidelityReport + post-save notice; Review Mode UI next — Google Docs sync cut, the app stays network-free). Details in `morpho/README.md`.
 
 
 | Milestone | Weeks | Deliverable |
@@ -201,7 +199,7 @@ PDF has no paragraphs — only positioned glyphs. The pipeline:
 | **M1 — Core engine** | 3–8 | PDF→DOCX for text PDFs (tagged fast path + heuristics, Latin scripts), history, share/open-with integration; internal alpha |
 | **M2 — RTL + Word→PDF** | 9–12 | Arabic/BiDi extraction end-to-end, DOCX→PDF via print pipeline with shaping/fonts, per-app language, AR/FR/ES/DE localization |
 | **M3 — OCR & scanning** | 13–16 | ML Kit + Tesseract behind one API, language packs via asset delivery, scan-to-Word, Polyglot OCR v1 |
-| **M4 — Google Docs + Review Mode** | 17–20 | Two-way Drive sync, fidelity heatmap + block fixes, Table Lasso v1 |
+| **M4 — Review Mode** | 17–20 | Fidelity heatmap + block fixes, Table Lasso v1 (Drive sync cut — see the decision note) |
 | **M5 — Automation & polish** | 21–24 | Batch, Magic Folders, widget/tile, Time Machine, closed beta in 6 locales, perf hardening |
 | **v1.0 launch** | ~26 | Play launch: EN/AR/FR/ES/DE, staged rollout |
 | **v1.x / v2** | post-launch | ODT/EPUB/RTF/.doc, PDF-tables→XLSX, PPTX/XLSX, TFLite layout model, form-field mapping (AcroForm→Word forms) |
@@ -214,7 +212,6 @@ PDF has no paragraphs — only positioned glyphs. The pipeline:
 |---|---|
 | PDF→Word fidelity expectations (perfection is impossible on untagged PDFs) | Tagged fast path; heatmap sets honest expectations; Review Mode converts failures into 30-second fixes; never silently drop content |
 | Arabic OCR quality (stock Tesseract is mediocre) | Fine-tuned traineddata; corpus-driven eval; per-region OCR reduces error surface |
-| Google OAuth verification delay | `drive.file` scope only; file for verification in month 1; feature-flag Google Docs so launch never blocks on it |
 | AGPL contamination via transitive deps | License audit in CI (fails the build), documented allowlist |
 | Play foreground-service / storage policy shifts | SAF-only design; WorkManager-first; FGS types reviewed each targetSdk bump |
 | Big-file memory pressure | Streaming page-by-page architecture from day one; 500-page test in CI |
@@ -232,4 +229,4 @@ PDF has no paragraphs — only positioned glyphs. The pipeline:
 
 ### TL;DR
 
-Morpho wins by refusing the three compromises every competitor makes: it converts **on-device** (private, instant, verifiable), it treats **Arabic and every other language as first-class** in both UI and engine (BiDi, shaping, per-region OCR — the wedge market nobody serves), and it's **honest** about quality (fidelity heatmap + fix-it Review Mode instead of a black box). Kotlin + Compose, permissively-licensed engine stack with a custom lightweight OOXML core, WebView print pipeline for world-class multilingual Word→PDF at v1, Drive-API-native Google Docs round-tripping, and a corpus-driven quality gate per language. Six months to a launch that no current Android converter can match on privacy, languages, or trust.
+Morpho wins by refusing the three compromises every competitor makes: it converts **on-device** (private, instant, verifiable), it treats **Arabic and every other language as first-class** in both UI and engine (BiDi, shaping, per-region OCR — the wedge market nobody serves), and it's **honest** about quality (fidelity heatmap + fix-it Review Mode instead of a black box). Kotlin + Compose, permissively-licensed engine stack with a custom lightweight OOXML core, both a platform-text-stack PDF renderer and a WebView print pipeline for world-class multilingual Word→PDF at v1, on-device Tesseract OCR, and a corpus-driven quality gate per language. Six months to a launch that no current Android converter can match on privacy, languages, or trust.

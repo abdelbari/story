@@ -38,3 +38,26 @@ jobs:
       - name: Assemble debug and run lint
         working-directory: morpho/android
         run: ./gradlew :app:assembleDebug :app:lintDebug
+
+      # The Zero-Upload guarantee is a product promise, so it is checked by a
+      # machine rather than by memory: the merged manifest is what actually
+      # ships, and it includes every permission any dependency asks for.
+      - name: Zero-Upload guard — no network permission may reach the manifest
+        working-directory: morpho/android
+        run: |
+          set -uo pipefail
+          manifests=$(find app/build/intermediates -name AndroidManifest.xml -path '*merged*' 2>/dev/null || true)
+          if [ -z "$manifests" ]; then
+            manifests=$(find app/build -name AndroidManifest.xml 2>/dev/null || true)
+          fi
+          if [ -z "$manifests" ]; then
+            echo "::error::Zero-Upload guard found no merged manifest to inspect. The build layout changed — fix the guard, never skip it."
+            exit 1
+          fi
+          echo "Inspecting merged manifests:"
+          echo "$manifests"
+          if grep -Hn -E 'android\.permission\.(INTERNET|ACCESS_NETWORK_STATE|ACCESS_WIFI_STATE)' $manifests; then
+            echo "::error::A network permission reached the merged manifest. Morpho converts documents with no network access at all; if a dependency introduced this, remove it in the app manifest with tools:node=\"remove\" or drop the dependency."
+            exit 1
+          fi
+          echo "No network permissions in the merged manifest — the Zero-Upload guarantee holds."

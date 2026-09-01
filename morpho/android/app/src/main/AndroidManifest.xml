@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Deliberately NO internet permission in this app process today.
-         When the Google Docs feature lands, network access lives in its own
-         process; the conversion engine stays offline by construction. -->
+    <!-- No network permission, by product decision rather than by omission:
+         Morpho converts documents entirely on the device, so the app has no
+         way to upload one even if it wanted to. CI fails the build if any
+         dependency's manifest sneaks a network permission into the merge. -->
 
     <application
         android:allowBackup="true"

@@ -1,6 +1,6 @@
 # Morpho
 
-A native Android app that converts documents — PDF ↔ Word ↔ Google Docs — entirely on-device, in every language, with first-class Arabic/RTL support.
+A native Android app that converts documents — PDF ↔ Word ↔ Markdown, with OCR for scans — entirely on-device, in every language, with first-class Arabic/RTL support. It holds no network permission at all.
 
 The full product & engineering plan lives at [`../Morpho-Android-App-Plan.md`](../Morpho-Android-App-Plan.md). This directory is its implementation.
 
@@ -48,8 +48,9 @@ cd morpho/android && ./gradlew :app:assembleDebug
 - **Images:** PNG/JPEG flow end to end — DOCX media parts with inline `w:drawing` (auto-scaled into the content area) on write, read back as `ImageBlock`s, and self-contained data-URI syntax in Markdown. Unsupported image types are still rejected loudly by the writer (never silently dropped); the reader skips exotic media (EMF/WMF) like other unknown content, with per-part and total inflation caps. PDF images are captured from the content stream (CTM-tracked `Do` operators, forms recursed, sub-8px decorations skipped, marked-content ids recorded) and flow through both PDF paths: on the tagged fast path, `Figure` structure elements resolve to their captured image by marked-content id — logical order preserved — with unreferenced images appended at the end; on the untagged path they interleave into the reconstruction by page position. Either way, PDFs with figures convert to Word files with the figures in place.
 - **No Hilt yet** — one ViewModel doesn't justify it; it arrives with the multi-feature module split (plan §5.1).
 - **Known limitations (tracked):** process death while the save dialog is open discards the in-memory conversion (the empty stub file is deleted); real state restoration arrives with the WorkManager pipeline. The reader locates the main part at the fixed OPC path `word/document.xml` rather than following the officeDocument relationship.
+- **Zero network, permanently:** the app declares no `INTERNET` permission, and Google Docs sync is cut from the roadmap rather than parked — a converter that *cannot* upload your documents is a stronger promise than one that merely doesn't. CI enforces it: the Android job greps the merged manifest (which carries every dependency's permission requests) and fails on any network permission, so the guarantee cannot rot through a transitive dependency.
 - **Confidence field** on every block from day one: tagged-PDF extraction scores 0.9, untagged 0.6, native formats 1.0 — the Fidelity heatmap needs no engine rework later.
 
 ## Next (per the plan's roadmap)
 
-M1 and M2's device-independent work are complete. M2 remainder: print-pipeline and PDF-renderer polish after device testing. M3 OCR: core landed (Tesseract 5 via Tesseract4Android, fast models for all five app languages in :pdf assets, language set follows the app locale; remaining: page-segmentation and accuracy tuning on device, per-scan language picker, progress UI). M4: Review Mode UI on top of the FidelityReport data layer; Google Docs sync is gated on a product decision (the app ships with no INTERNET permission — adding it, even isolated to a sync flow, is the user's call).
+M1 and M2's device-independent work are complete. M2 remainder: print-pipeline and PDF-renderer polish after device testing. M3 OCR: core landed (Tesseract 5 via Tesseract4Android, fast models for all five app languages in :pdf assets, language set follows the app locale; remaining: page-segmentation and accuracy tuning on device, per-scan language picker, progress UI). M4: Review Mode UI on top of the FidelityReport data layer. Google Docs sync is cut — see the decisions log; the app stays network-free.
