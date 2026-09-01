@@ -2,6 +2,8 @@ package com.kinetic.editor.ui
 
 import android.Manifest
 import android.app.Application
+import android.content.ContentResolver
+import android.content.Intent
 import android.net.Uri
 import androidx.annotation.RequiresPermission
 import androidx.lifecycle.AndroidViewModel
@@ -54,9 +56,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         // Restore the last session, then autosave every commit (debounced so a
-        // slider drag writes once, not sixty times).
-        ProjectCodec.load(projectFile)?.let { restored ->
-            store.dispatch(EditorIntent.Replace(restored))
+        // slider drag writes once, not sixty times). The read is off the main
+        // thread; the restore arrives as an ordinary intent when it completes.
+        viewModelScope.launch {
+            val restored = withContext(Dispatchers.IO) { ProjectCodec.load(projectFile) }
+            if (restored != null) store.dispatch(EditorIntent.Replace(restored))
         }
         viewModelScope.launch {
             store.timeline
@@ -86,6 +90,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun addMedia(uri: Uri) {
         viewModelScope.launch {
+            persistReadAccess(uri)
             val ref = MediaProbe.probe(getApplication(), uri)
             if (ref.durationMs <= 0) return@launch // unreadable/streaming media
             val state = store.timeline.value
@@ -99,8 +104,25 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun addMusic(uri: Uri, atMs: Long) {
         viewModelScope.launch {
+            persistReadAccess(uri)
             val ref = MediaProbe.probe(getApplication(), uri)
             if (ref.hasAudio) addToAudioTrack(ref, atMs)
+        }
+    }
+
+    /**
+     * A picker grants read access only to this process instance. Because projects
+     * are persisted and reopened after process death — and the export worker reads
+     * the same URIs from a background process — that grant has to be made durable
+     * or a restored project cannot open its own media.
+     */
+    private fun persistReadAccess(uri: Uri) {
+        if (uri.scheme != ContentResolver.SCHEME_CONTENT) return
+        runCatching {
+            getApplication<Application>().contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
         }
     }
 

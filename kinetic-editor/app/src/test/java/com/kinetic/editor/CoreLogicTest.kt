@@ -281,6 +281,16 @@ class CoreLogicTest {
     }
 
     @Test
+    fun projectCodecRejectsDocumentWithNoMainTrack() {
+        val ok = stateWith(listOf(clip("a", 4_000)))
+        assertTrue(ProjectCodec.decode(ProjectCodec.encode(ok)) != null)
+        val noMain = ok.copy(
+            tracks = ok.tracks.filterNot { it.type == TrackType.VIDEO_MAIN }.toPersistentList(),
+        )
+        assertNull(ProjectCodec.decode(ProjectCodec.encode(noMain)))
+    }
+
+    @Test
     fun moveReordersMainAndResortsFreeTracks() {
         val a = clip("a", 1_000); val b = clip("b", 1_000); val c = clip("c", 1_000)
         val s0 = stateWith(listOf(a, b, c))

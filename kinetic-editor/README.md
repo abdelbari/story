@@ -5,19 +5,26 @@ hardware-accelerated multi-track video editor built on **Jetpack Compose +
 Media3 (ExoPlayer / Transformer / GL effects) + Kotlin Coroutines/StateFlow**
 under a strict MVI contract.
 
-This is a complete Gradle project: open the `kinetic-editor/` folder in Android
-Studio, run `gradle wrapper --gradle-version 8.13` once (the wrapper JAR is not
-committed), sync, and deploy. Code targets **media3 1.8.0** (see
-[API drift notes](#api-drift-notes)).
+## Build and run
+
+```bash
+cd kinetic-editor
+./gradlew :app:installDebug      # or open the folder in Android Studio and Run
+./gradlew :app:testDebugUnitTest # 25 pure-JVM logic tests
+```
+
+The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
+are all committed, so a fresh clone builds and installs with no extra setup.
+Code targets **media3 1.8.0** (see [API drift notes](#api-drift-notes)).
 
 **Verification status.** The full source tree parses and front-end-checks clean
-under the real Kotlin 2.1.0 compiler (androidx symbols excluded — Google's Maven
-was unreachable in the authoring environment, so androidx-facing call sites are
-reviewed, not compiled). The pure-logic core — models, reducer, store with
-coalescing undo, timeline<->preview segment mapping, transition-window math —
-compiles verbatim on the JVM and passes the executable test suite included at
-`app/src/test/java/com/kinetic/editor/CoreLogicTest.kt` — 21 tests, run with
-`./gradlew :app:testDebugUnitTest`.
+under the real Kotlin 2.1.0 compiler, and the serializable model compiles against
+the real kotlinx-serialization compiler plugin. androidx symbols were excluded —
+Google's Maven was unreachable from the authoring environment — so androidx-facing
+call sites are reviewed rather than compiled; everything else is executed. The
+pure-logic core (models, reducer, undo store, timeline<->preview mapping, shared
+transition/audio planning math, project codec) compiles verbatim on the JVM and
+passes the suite in `app/src/test/java/com/kinetic/editor/CoreLogicTest.kt`.
 
 ---
 
@@ -169,7 +176,28 @@ during pinch-zoom. Instead:
 Decode → GL → encode never leaves GPU/codec surfaces, so 4K export memory is
 flat by construction — no frame ever exists as a Java `Bitmap`.
 
-## 5. Performance directives
+## 5. Persistence (`core/model/ProjectCodec.kt`)
+
+The document is `@Serializable`, so the whole project round-trips as JSON. Two
+behaviours depend on it, and both are correctness features:
+
+- **The export worker is handed a file, not an object.** `ExportWorker` reads the
+  project from disk, so a render survives the editor process being killed, and
+  enqueuing snapshots the document — the user can keep editing while it renders.
+- **The session is restored after process death**, not just after a rotation.
+  The editor autosaves on a 700 ms debounce and restores through a `Replace`
+  intent that clears undo history rather than letting undo walk into a previous
+  session.
+
+Supporting details that matter: `PersistentListSerializer` bridges
+kotlinx-collections-immutable (which ships no serializers); saves are atomic
+(temp file + rename) so a crash cannot truncate a project; decode fails soft to
+`null`, ignores unknown keys (files from a newer version still load) and rejects
+structurally impossible documents; and media is picked with `OpenDocument` plus
+`takePersistableUriPermission`, because a `GetContent`/photo-picker grant dies
+with the process and a restored project could not reopen its own media.
+
+## 6. Performance directives
 
 1. **Defer every hot read to the draw phase.** Scroll/zoom/ghosts are snapshot
    state read inside `Canvas` draw lambdas and pointer handlers only — scrubbing
@@ -197,16 +225,23 @@ flat by construction — no frame ever exists as a Java `Bitmap`.
 
 ---
 
-## Project map
+## 7. Project map
 
 ```
 kinetic-editor/
-├── settings.gradle.kts · build.gradle.kts · gradle/libs.versions.toml
-└── app/src/main/
+├── gradlew · gradle/wrapper/ · settings.gradle.kts · build.gradle.kts
+├── gradle/libs.versions.toml · app/proguard-rules.pro
+└── app/src/
+    ├── test/java/com/kinetic/editor/CoreLogicTest.kt   pure-JVM logic suite
+    └── main/
     ├── AndroidManifest.xml
+    ├── res/                     strings, colors, dark theme, adaptive icon
+    ├── assets/luts/             64-cube film LUT (matches the shader layout)
     └── java/com/kinetic/editor/
         ├── core/
         │   ├── model/Models.kt          TimelineState, Track, ClipModel, hashes
+        │   ├── model/Planning.kt        shared preview/export transition + audio math
+        │   ├── model/ProjectCodec.kt    JSON persistence, atomic save, soft decode
         │   ├── model/MediaProbe.kt      import-time metadata probe
         │   └── mvi/                     EditorIntent, reduce(), EditorStore+undo
         ├── ui/
@@ -253,9 +288,6 @@ Pinned to `media3 = 1.8.0`. If you move:
   changes.
 - **True A/B cross-dissolves** need overlapping streams (compositor); the three
   shipped transitions are single-stream by design and export-identical.
-- **Project persistence**: `ExportSession` hands state to the worker in memory;
-  production should serialize `TimelineState` (it is trivially serializable) so
-  exports survive process death — the pipeline is unchanged by that swap.
 - Trim commits currently snap to whole milliseconds on the source frame grid
   (`snapToFrame`); at 29.97/59.94 fps switch the model to µs if you need
   sub-frame-exact conform.

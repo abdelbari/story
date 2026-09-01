@@ -52,10 +52,17 @@ object ProjectCodec {
 
     fun encode(state: TimelineState): String = json.encodeToString(TimelineState.serializer(), state)
 
-    /** Returns null for absent/corrupt data rather than throwing into a UI path. */
+    /**
+     * Returns null for absent/corrupt data rather than throwing into a UI path.
+     * Also rejects structurally impossible documents: JSON that parses but has no
+     * main video track would blow up later at [TimelineState.mainTrack], far from
+     * the cause.
+     */
     fun decode(text: String): TimelineState? = runCatching {
         json.decodeFromString(TimelineState.serializer(), text)
-    }.getOrNull()
+    }.getOrNull()?.takeIf { state ->
+        state.tracks.count { it.type == TrackType.VIDEO_MAIN } == 1
+    }
 
     /** Atomic write: a crash mid-save must not leave a truncated project behind. */
     fun save(file: File, state: TimelineState) {

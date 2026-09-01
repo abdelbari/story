@@ -3,7 +3,6 @@ package com.kinetic.editor.ui
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -280,12 +279,14 @@ private fun ToolBar(
     val context = LocalContext.current
     var voiceoverStartMs by remember { mutableLongStateOf(0L) }
 
+    // OpenDocument (not PickVisualMedia/GetContent): only its grants can be made
+    // persistable, which a saved project needs to reopen its media later.
     val videoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia(),
+        ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let(vm::addMedia) }
 
     val musicPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent(),
+        ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let { vm.addMusic(it, viewport.playheadMs) } }
 
     val micPermission = rememberLauncherForActivityResult(
@@ -305,12 +306,8 @@ private fun ToolBar(
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ToolButton("+ Video") {
-            videoPicker.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly),
-            )
-        }
-        ToolButton("+ Music") { musicPicker.launch("audio/*") }
+        ToolButton("+ Video") { videoPicker.launch(arrayOf("video/*")) }
+        ToolButton("+ Music") { musicPicker.launch(arrayOf("audio/*")) }
         ToolButton("+ Text") { vm.addText(viewport.playheadMs) }
         ToolButton(if (recording) "■ Stop" else "● Rec") {
             if (recording) {
