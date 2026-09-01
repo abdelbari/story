@@ -56,6 +56,14 @@ Put them in `~/.gradle/gradle.properties` instead of the command line to
 keep them out of your shell history. With no properties supplied the
 release build still succeeds, simply unsigned.
 
+## Shipping
+
+Everything Play needs that can be written ahead of time lives in `store/`:
+listing copy in all five languages, a privacy policy, the Data safety form
+answers, and `RELEASE-CHECKLIST.md` — which is the honest list of what still
+needs a human, starting with the device testing nothing in CI can stand in
+for.
+
 ## Decisions log
 
 - **Custom OOXML writer/reader** instead of Apache POI/docx4j: 10–20 MB and desktop startup costs avoided; we grow exactly the WordprocessingML subset the engine speaks (plan §5.2).
