@@ -16,46 +16,18 @@ import java.text.Normalizer
 object ExtractedText {
 
     /**
-     * For text whose **words are also in painting order** — the untagged
-     * reader, where sorting by position lays a right-to-left line out left
-     * to right, so its first word arrives last.
+     * Turns one line captured in visual order — glyphs left to right as they
+     * sit on the page — into the logical order a document model holds:
+     * presentation forms folded back to the letters they stand for, then
+     * right-to-left runs put back the way they were written, words and
+     * letters both. Left-to-right text with no ligatures comes back
+     * untouched.
      *
-     * Folds presentation forms, then reconstructs the whole line at once, so
-     * both the order of the words and the order of letters inside them are
-     * put back the way they were written.
+     * Both readers call this on lines they have first put into visual
+     * order by position, which is the only order a PDF can be trusted on.
      */
     fun toLogical(text: String): String = Bidi.visualToLogical(foldPresentationForms(text))
 
-    /**
-     * For text whose **words are already in logical order** — the tagged
-     * reader, where the structure tree lists content in reading order and
-     * only the letters inside each word are in painting order.
-     *
-     * Each word is reconstructed on its own and the order of the words is
-     * left alone. Reconstructing the whole line here would reverse a word
-     * order that was already right: a bibliography entry came back with its
-     * publisher first and its author last, every word spelled correctly and
-     * the entry backwards. Whitespace is preserved exactly, so the words
-     * stay where the tree put them.
-     *
-     * Per word rather than per line is also what lets a number keep its
-     * digits in order — reversing "2005" is wrong in any direction — which
-     * a blind reversal of the line would not.
-     */
-    fun wordsToLogical(text: String): String {
-        if (text.isEmpty()) return text
-        val folded = foldPresentationForms(text)
-        val out = StringBuilder(folded.length)
-        var i = 0
-        while (i < folded.length) {
-            val start = i
-            val space = folded[i].isWhitespace()
-            while (i < folded.length && folded[i].isWhitespace() == space) i++
-            val token = folded.substring(start, i)
-            out.append(if (space) token else Bidi.visualToLogical(token))
-        }
-        return out.toString()
-    }
 
     /**
      * Folds Arabic and Latin presentation forms to their nominal letters.

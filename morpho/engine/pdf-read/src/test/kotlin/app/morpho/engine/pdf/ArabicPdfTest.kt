@@ -149,7 +149,7 @@ class ArabicPdfTest {
      * structure tree lists the words in reading order, and each word's
      * glyphs are painted left to right, so its letters arrive reversed.
      */
-    private fun taggedArabicPdf(logicalWords: List<String>): ByteArray {
+    private fun taggedArabicPdf(logicalWords: List<String>, asOneBlock: Boolean = false): ByteArray {
         val bytes = ByteArrayOutputStream()
         PDDocument().use { document ->
             val page = PDPage(PDRectangle.A4)
@@ -172,13 +172,31 @@ class ArabicPdfTest {
             docElement.appendKid(paragraph)
 
             PDPageContentStream(document, page).use { content ->
+                if (asOneBlock) {
+                    // Visual order of the whole line, painted once, left to
+                    // right: the logically last word comes first.
+                    val visual = logicalWords.reversed()
+                        .joinToString(" ") { if (isRtl(it)) it.reversed() else it }
+                    val width = font.getStringWidth(visual) / 1000f * SIZE
+                    val properties = COSDictionary().apply { setInt(COSName.MCID, 0) }
+                    content.beginMarkedContent(COSName.P, PDPropertyList.create(properties))
+                    content.beginText()
+                    content.setFont(font, SIZE)
+                    content.newLineAtOffset(RIGHT_EDGE - width, 700f)
+                    content.showText(visual)
+                    content.endText()
+                    content.endMarkedContent()
+                    paragraph.appendKid(PDMarkedContent(COSName.P, properties))
+                    return@use
+                }
                 var x = RIGHT_EDGE
                 for ((mcid, word) in logicalWords.withIndex()) {
                     // Real exporters emit the space between words as a glyph
-                    // of its own; without one the paragraph is a single token
-                    // and nothing can tell where the words are.
+                    // of its own. On a right-to-left line the next word sits
+                    // to the LEFT, so the separator is painted first — glyphs
+                    // advance rightward, which puts it at the word's left edge.
                     val separator = if (mcid < logicalWords.size - 1) " " else ""
-                    val painted = (if (isRtl(word)) word.reversed() else word) + separator
+                    val painted = separator + (if (isRtl(word)) word.reversed() else word)
                     val width = font.getStringWidth(painted) / 1000f * SIZE
                     x -= width
                     val properties = COSDictionary().apply { setInt(COSName.MCID, mcid) }
@@ -207,6 +225,19 @@ class ArabicPdfTest {
         val confidence = paragraphs(pdf).first().confidence
         assertTrue(inspection.isTagged, "fixture is not tagged at all")
         assertEquals(0.9f, confidence, "fell back to the untagged heuristics")
+    }
+
+
+    @Test
+    fun `a run painted as one left-to-right block is read off the page, not the stream`() {
+        // The other way a producer paints an Arabic paragraph: one text
+        // operation, glyphs advancing left to right across the whole line,
+        // so content order is visual — the first word in the stream is the
+        // last one read. The same document that positions its short runs
+        // word by word does this for its long ones, and a rule about content
+        // order that suits one is backwards for the other. Position is not.
+        val pdf = taggedArabicPdf(listOf(title, inWord, research), asOneBlock = true)
+        assertEquals("$title $inWord $research", paragraphs(pdf).first().text)
     }
 
 }

@@ -30,6 +30,8 @@ import com.tom_roush.pdfbox.pdmodel.documentinterchange.markedcontent.PDMarkedCo
 import com.tom_roush.pdfbox.text.PDFMarkedContentExtractor
 import com.tom_roush.pdfbox.text.TextPosition
 import java.util.Collections
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import java.util.IdentityHashMap
 
 /**
@@ -61,6 +63,12 @@ import java.util.IdentityHashMap
 internal object AndroidStructureTreeReader {
 
     private const val MAX_DEPTH = 128
+
+    /** Glyphs further apart vertically than this sit on different lines. */
+
+    private const val SAME_LINE_TOLERANCE_PT = 2f
+    /** A horizontal gap wider than this share of the type size is a word break. */
+    private const val WORD_GAP_FACTOR = 0.2f
     private const val CONFIDENCE = 0.9f
 
     fun read(doc: PDDocument, images: List<PdfImage> = emptyList()): DocumentModel? {
@@ -133,14 +141,14 @@ internal object AndroidStructureTreeReader {
         }
 
         private fun collect(content: PDMarkedContent, pageIndex: Int) {
-            val text = StringBuilder()
+            val glyphs = mutableListOf<TextPosition>()
             var size = 0f
             var bold = true
             fun gather(mc: PDMarkedContent) {
                 for (item in mc.contents.orEmpty()) {
                     when (item) {
                         is TextPosition -> {
-                            text.append(item.unicode)
+                            glyphs += item
                             size = maxOf(size, item.fontSizeInPt)
                             if (!item.unicode.isNullOrBlank() && !isBold(item)) bold = false
                         }
@@ -149,14 +157,77 @@ internal object AndroidStructureTreeReader {
                 }
             }
             gather(content)
+            val text = readOffThePage(glyphs)
             if (content.mcid >= 0 && text.isNotEmpty()) {
-                textByPageAndMcid[key(pageIndex, content.mcid)] = text.toString()
+                textByPageAndMcid[key(pageIndex, content.mcid)] = text
                 sizeByPageAndMcid[key(pageIndex, content.mcid)] = size
                 boldByPageAndMcid[key(pageIndex, content.mcid)] = bold
             }
             // Nested marked content carries its own MCIDs too.
             for (item in content.contents.orEmpty()) {
                 if (item is PDMarkedContent) collect(item, pageIndex)
+            }
+        }
+
+        /**
+         * The text of one marked-content run, taken from where its glyphs
+         * sit on the page rather than from the order they were painted.
+         *
+         * Painting order cannot be trusted for right-to-left text, and not
+         * in any single way: one Word-produced paper positions its short
+         * runs word by word from right to left, so their content order is
+         * already logical, and paints its long paragraphs as one block from
+         * left to right, so theirs is visual — in the same document. Any
+         * rule about content order is right for one and backwards for the
+         * other, which is how an abstract came out with every word spelled
+         * correctly and the sentence reversed while the bibliography beside
+         * it read fine.
+         *
+         * Position does not have that problem. The glyphs are grouped into
+         * lines by baseline and sorted left to right, which is visual order
+         * whatever the producer did, and each line is then reconstructed
+         * into logical order — the same treatment the untagged reader gives
+         * every line. The structure tree still decides the order of runs.
+         */
+        private fun readOffThePage(glyphs: List<TextPosition>): String {
+            if (glyphs.isEmpty()) return ""
+            val lines = mutableListOf<MutableList<TextPosition>>()
+            for (glyph in glyphs.sortedBy { it.yDirAdj }) {
+                val line = lines.lastOrNull()
+                if (line != null && abs(glyph.yDirAdj - line.first().yDirAdj) <= SAME_LINE_TOLERANCE_PT) {
+                    line += glyph
+                } else {
+                    lines += mutableListOf(glyph)
+                }
+            }
+            // Not trimmed: the space between two words often belongs to the
+            // edge of one run, and runs are joined edge to edge by textOf.
+            // Trimming here glued "ربيحة نبار" into one word. The paragraph
+            // is trimmed once, where it is emitted.
+            return lines.joinToString(separator = " ") { line ->
+                val visual = StringBuilder()
+                var previous: TextPosition? = null
+                // A producer that painted its spaces is trusted on where the
+                // words are. Only one that painted none has its word breaks
+                // read from the gaps, as PDFBox's own stripper does — a
+                // kerning gap inside a word is otherwise easy to mistake for
+                // one, and did split الجزائر in two.
+                val inferBreaks = line.none { it.unicode?.let { u -> u.isNotEmpty() && u.isBlank() } == true }
+                // Whole-point buckets, and a stable sort, so two glyphs a
+                // kerning hair apart keep their painting order instead of
+                // swapping on float noise.
+                for (glyph in line.sortedBy { it.xDirAdj.roundToInt() }) {
+                    val unicode = glyph.unicode.orEmpty()
+                    if (inferBreaks && previous != null && previous.widthDirAdj > 0f &&
+                        unicode.isNotBlank() && !visual.endsWith(' ')
+                    ) {
+                        val gap = glyph.xDirAdj - (previous.xDirAdj + previous.widthDirAdj)
+                        if (gap > WORD_GAP_FACTOR * glyph.fontSizeInPt) visual.append(' ')
+                    }
+                    visual.append(unicode)
+                    previous = glyph
+                }
+                ExtractedText.toLogical(visual.toString())
             }
         }
 
@@ -424,12 +495,9 @@ internal object AndroidStructureTreeReader {
                 }
             }
             gather(element, 0)
-            // Marked content hands back glyphs in painting order, so a
-            // right-to-left word arrives with its letters backwards. The tree
-            // itself lists content in reading order, though, so the words are
-            // already where they belong and only each word needs rebuilding —
-            // reconstructing the whole line would undo the tree's own order.
-            return ExtractedText.wordsToLogical(sb.toString())
+            // Each run's text is already in logical order — MarkedContentIndex
+            // read it off the page — and the tree lists runs in reading order.
+            return sb.toString()
         }
 
         /** True when every marked-content run under [element] is bold. */
