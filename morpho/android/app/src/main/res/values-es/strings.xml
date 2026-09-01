@@ -37,4 +37,6 @@
     <string name="source_tagged">Leído de las etiquetas de estructura del PDF</string>
     <string name="source_reconstructed">Reconstruido a partir de las posiciones del texto</string>
     <string name="source_recognized">Reconocido de una imagen con OCR</string>
+    <string name="converting_pages">Leyendo la página %1$d de %2$d…</string>
+    <string name="cancel">Cancelar</string>
 </resources>

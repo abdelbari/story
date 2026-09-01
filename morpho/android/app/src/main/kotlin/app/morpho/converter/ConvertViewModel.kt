@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 sealed interface ConvertUiState {
     data object Idle : ConvertUiState
@@ -34,7 +35,8 @@ sealed interface ConvertUiState {
         val isPdf: Boolean,
     ) : ConvertUiState
 
-    data object Converting : ConvertUiState
+    /** Page counts are 0 for work that is not page-by-page (everything but OCR). */
+    data class Converting(val page: Int = 0, val pageCount: Int = 0) : ConvertUiState
 
     /** Conversion done and the system save dialog is on screen. */
     data object AwaitingSave : ConvertUiState
@@ -84,6 +86,18 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
 
     /** Fidelity Report of the last conversion's model, for the Saved notice. */
     private var lastReport: FidelityReport.Report? = null
+
+    /**
+     * Set by [cancelOcr]; the recognizer reads it between pages. An
+     * AtomicBoolean rather than job cancellation because the work sits in a
+     * native call that Kotlin cannot interrupt mid-page.
+     */
+    private val ocrCancelled = AtomicBoolean(false)
+
+    /** Asks a running OCR job to stop after the page it is on. */
+    fun cancelOcr() {
+        ocrCancelled.set(true)
+    }
 
     private val _review = MutableStateFlow<FidelityReport.Report?>(null)
 
@@ -135,7 +149,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     fun convert() {
         val (uri, source) = pickedFile ?: return
         lastOperation = ::convert
-        _state.value = ConvertUiState.Converting
+        _state.value = ConvertUiState.Converting()
         viewModelScope.launch(Dispatchers.IO) {
             when {
                 source.isPdf -> convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
@@ -195,6 +209,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         } catch (e: UnconvertibleContent) {
             _state.value = ConvertUiState.Failed(e.reason)
             return
+        } catch (e: AndroidOcrReader.Cancelled) {
+            _state.value = pickedFile?.meta ?: ConvertUiState.Idle
+            return
         } catch (e: Exception) {
             _state.value = ConvertUiState.Failed(FailReason.READ_ERROR)
             return
@@ -213,12 +230,19 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     fun convertWithOcr() {
         val (uri, source) = pickedFile ?: return
         lastOperation = ::convertWithOcr
-        _state.value = ConvertUiState.Converting
+        _state.value = ConvertUiState.Converting()
+        ocrCancelled.set(false)
         viewModelScope.launch(Dispatchers.IO) {
             convertPicked(uri, source, "docx", DocxWriter.MIME_TYPE) { bytes ->
-                DocxWriter.toByteArray(
-                    reported(AndroidOcrReader(getApplication()).recognize(bytes, ocrLanguages()))
+                val model = AndroidOcrReader(getApplication()).recognize(
+                    bytes = bytes,
+                    languages = ocrLanguages(),
+                    onPage = { page, pageCount ->
+                        _state.value = ConvertUiState.Converting(page, pageCount)
+                    },
+                    shouldContinue = { !ocrCancelled.get() },
                 )
+                DocxWriter.toByteArray(reported(model))
             }
         }
     }
@@ -241,7 +265,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     fun exportPdf() {
         val (uri, source) = pickedFile ?: return
         lastOperation = ::exportPdf
-        _state.value = ConvertUiState.Converting
+        _state.value = ConvertUiState.Converting()
         viewModelScope.launch(Dispatchers.IO) {
             convertPicked(uri, source, "pdf", PDF_MIME) { bytes ->
                 PdfFileExporter.render(reported(modelOf(bytes, source)))
@@ -253,7 +277,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     fun printPdf() {
         val (uri, source) = pickedFile ?: return
         lastOperation = ::printPdf
-        _state.value = ConvertUiState.Converting
+        _state.value = ConvertUiState.Converting()
         viewModelScope.launch(Dispatchers.IO) {
             val input = runCatching {
                 getApplication<Application>().contentResolver.openInputStream(uri)

@@ -37,4 +37,6 @@
     <string name="source_tagged">Aus den Struktur-Tags des PDFs gelesen</string>
     <string name="source_reconstructed">Aus Textpositionen rekonstruiert</string>
     <string name="source_recognized">Per OCR aus einem Bild erkannt</string>
+    <string name="converting_pages">Seite %1$d von %2$d wird gelesen…</string>
+    <string name="cancel">Abbrechen</string>
 </resources>

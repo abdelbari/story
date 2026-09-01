@@ -38,4 +38,6 @@
     <string name="source_tagged">Read from the PDF structure tags</string>
     <string name="source_reconstructed">Reconstructed from text positions</string>
     <string name="source_recognized">Recognized from an image by OCR</string>
+    <string name="converting_pages">Reading page %1$d of %2$d…</string>
+    <string name="cancel">Cancel</string>
 </resources>

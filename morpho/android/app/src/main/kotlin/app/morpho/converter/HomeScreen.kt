@@ -2,13 +2,17 @@ package app.morpho.converter
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.LinearProgressIndicator
@@ -22,6 +26,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -121,6 +126,7 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                         onRetry = viewModel::retry,
                         onOcr = viewModel::convertWithOcr,
                         onReview = viewModel::showReview,
+                        onCancel = viewModel::cancelOcr,
                     )
                 }
             }
@@ -145,8 +151,18 @@ private fun StateContent(state: ConvertUiState) {
         is ConvertUiState.Picked ->
             Text(state.fileName, style = MaterialTheme.typography.titleMedium)
 
-        is ConvertUiState.Converting, is ConvertUiState.ReadyToSave,
-        is ConvertUiState.AwaitingSave, is ConvertUiState.ReadyToPrint -> {
+        is ConvertUiState.Converting -> {
+            if (state.pageCount > 0) {
+                PageProgress(state.page.toFloat() / state.pageCount)
+                Text(stringResource(R.string.converting_pages, state.page, state.pageCount))
+            } else {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(stringResource(R.string.converting))
+            }
+        }
+
+        is ConvertUiState.ReadyToSave, is ConvertUiState.AwaitingSave,
+        is ConvertUiState.ReadyToPrint -> {
             LinearProgressIndicator(Modifier.fillMaxWidth())
             Text(stringResource(R.string.converting))
         }
@@ -177,6 +193,26 @@ private fun StateContent(state: ConvertUiState) {
     }
 }
 
+/** How far through a page-by-page job we are, drawn without a determinate
+ *  indicator so the API stays stable across Material 3 versions. */
+@Composable
+private fun PageProgress(fraction: Float) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(6.dp)
+            .clip(RoundedCornerShape(3.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.primary),
+        )
+    }
+}
+
 @Composable
 private fun StateActions(
     state: ConvertUiState,
@@ -187,11 +223,21 @@ private fun StateActions(
     onRetry: () -> Unit,
     onOcr: () -> Unit,
     onReview: () -> Unit,
+    onCancel: () -> Unit,
 ) {
     when (state) {
         is ConvertUiState.Idle ->
             Button(onClick = onPick, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.pick_document))
+            }
+
+        // Only OCR reports pages, and only OCR can be stopped between them —
+        // so the button appears exactly when it would do something.
+        is ConvertUiState.Converting ->
+            if (state.pageCount > 0) {
+                TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.cancel))
+                }
             }
 
         is ConvertUiState.Picked -> {

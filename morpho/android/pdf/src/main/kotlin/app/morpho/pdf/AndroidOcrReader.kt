@@ -27,6 +27,9 @@ import java.io.File
  */
 class AndroidOcrReader(private val context: Context) {
 
+    /** Raised when [recognize] stops early because the caller asked it to. */
+    class Cancelled : Exception()
+
     init {
         AndroidPdfReader.ensureInitialized(context)
     }
@@ -42,8 +45,21 @@ class AndroidOcrReader(private val context: Context) {
      * Recognizes every page of a PDF with no usable text layer. Returns the
      * document model of the recognized text; throws on unreadable input or
      * when Tesseract cannot initialize.
+     *
+     * [onPage] is called with the 1-based page about to be read and the page
+     * count, from the calling thread, so a caller can show real progress on
+     * a job that takes seconds per page. [shouldContinue] is checked at each
+     * page boundary — the finest granularity Tesseract allows without
+     * abandoning a page mid-recognition — and a false answer raises
+     * [Cancelled] rather than returning a half-read document as if it were
+     * whole.
      */
-    fun recognize(bytes: ByteArray, languages: String = DEFAULT_LANGUAGES): DocumentModel {
+    fun recognize(
+        bytes: ByteArray,
+        languages: String = DEFAULT_LANGUAGES,
+        onPage: (page: Int, pageCount: Int) -> Unit = { _, _ -> },
+        shouldContinue: () -> Boolean = { true },
+    ): DocumentModel {
         val dataParent = ensureTrainedData(languages)
         val pageTexts = mutableListOf<String>()
         PDDocument.load(bytes).use { doc ->
@@ -54,6 +70,8 @@ class AndroidOcrReader(private val context: Context) {
                     "Tesseract failed to initialize for $languages"
                 }
                 for (index in 0 until doc.numberOfPages) {
+                    if (!shouldContinue()) throw Cancelled()
+                    onPage(index + 1, doc.numberOfPages)
                     val bitmap = renderer.renderImageWithDPI(index, RENDER_DPI)
                     try {
                         tess.setImage(bitmap)
