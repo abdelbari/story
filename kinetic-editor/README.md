@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 25 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 26 pure-JVM logic tests
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
@@ -23,7 +23,7 @@ the real kotlinx-serialization compiler plugin. androidx symbols were excluded �
 Google's Maven was unreachable from the authoring environment — so androidx-facing
 call sites are reviewed rather than compiled; everything else is executed. The
 pure-logic core (models, reducer, undo store, timeline<->preview mapping, shared
-transition/audio planning math, project codec) compiles verbatim on the JVM and
+transition/sequence planning math, project codec) compiles verbatim on the JVM and
 passes the suite in `app/src/test/java/com/kinetic/editor/CoreLogicTest.kt`.
 
 ---
@@ -88,7 +88,7 @@ must actually move:
 | Change class | Detector | Action | Cost |
 |---|---|---|---|
 | Cosmetic (grade/LUT/transition/volume/speed/text) | always | volatile FX + segment snapshot swap | ~µs |
-| Audio structure | `audioStructureHash()` | rebuild slave playlists | ms, rare |
+| Audio / PiP structure | `audioStructureHash()`, `overlayStructureHash()` | rebuild slave playlists | ms, rare |
 | Video structure (trim/reorder/add/remove) | `videoStructureHash()` | rebuild `ConcatenatingMediaSource2`, position-preserving | ~100 ms, rare |
 
 This is why dragging a saturation slider during playback re-renders every frame
