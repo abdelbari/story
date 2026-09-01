@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 26 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 33 pure-JVM logic tests
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
@@ -186,7 +186,26 @@ during pinch-zoom. Instead:
 Decode → GL → encode never leaves GPU/codec surfaces, so 4K export memory is
 flat by construction — no frame ever exists as a Java `Bitmap`.
 
-## 5. Persistence (`core/model/ProjectCodec.kt`)
+## 5. What the editor can actually do
+
+Every feature below is reachable from the UI, previewed live, and rendered by
+the exporter — the model, the preview and the export path agree on all three.
+
+| Area | Controls |
+|---|---|
+| Timeline | pinch zoom, momentum scrub, trim, split at playhead, drag-reorder, delete |
+| Clips | speed presets (0.5–4x), per-clip brightness/contrast/saturation, film LUT toggle |
+| Transitions | dip-to-black, wipe, zoom-punch on any clip boundary |
+| Audio | music and voiceover lanes, per-clip volume, fade in/out, track mute |
+| Overlays | text (editable content, size, position), stickers, picture-in-picture with size/position |
+| Output | background MP4 export with live progress and the saved filename |
+
+Volume fades deserve a note: the model stores a general keyframe envelope, but
+the UI exposes fade-in/fade-out durations, because that is what nearly every
+volume edit actually is. `fadeKeyframes`/`readFades` convert between the two, so
+the sliders reflect whatever envelope a clip really has.
+
+## 6. Persistence (`core/model/ProjectCodec.kt`)
 
 The document is `@Serializable`, so the whole project round-trips as JSON. Two
 behaviours depend on it, and both are correctness features:
@@ -207,7 +226,7 @@ structurally impossible documents; and media is picked with `OpenDocument` plus
 `takePersistableUriPermission`, because a `GetContent`/photo-picker grant dies
 with the process and a restored project could not reopen its own media.
 
-## 6. Performance directives
+## 7. Performance directives
 
 1. **Defer every hot read to the draw phase.** Scroll/zoom/ghosts are snapshot
    state read inside `Canvas` draw lambdas and pointer handlers only — scrubbing
@@ -235,7 +254,7 @@ with the process and a restored project could not reopen its own media.
 
 ---
 
-## 7. Project map
+## 8. Project map
 
 ```
 kinetic-editor/
@@ -250,7 +269,7 @@ kinetic-editor/
     └── java/com/kinetic/editor/
         ├── core/
         │   ├── model/Models.kt          TimelineState, Track, ClipModel, hashes
-        │   ├── model/Planning.kt        shared preview/export transition + audio math
+        │   ├── model/Planning.kt        shared transition/sequence/fade math
         │   ├── model/ProjectCodec.kt    JSON persistence, atomic save, soft decode
         │   ├── model/MediaProbe.kt      import-time metadata probe
         │   └── mvi/                     EditorIntent, reduce(), EditorStore+undo
@@ -271,6 +290,9 @@ kinetic-editor/
         └── audio/
             ├── VolumeEnvelopeAudioProcessor.kt
             └── VoiceRecorder.kt         WAV voiceover capture + level meter
+
+app/src/test/  CoreLogicTest (document, planning, codec) +
+               TimelineGeometryTest (hit-testing, time<->pixel math)
 ```
 
 ## API drift notes

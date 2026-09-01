@@ -55,11 +55,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.kinetic.editor.core.model.ClipModel
+import com.kinetic.editor.core.model.Track
+import com.kinetic.editor.core.model.fadeKeyframes
+import com.kinetic.editor.core.model.readFades
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.TransitionType
 import com.kinetic.editor.core.mvi.EditorIntent
+import kotlinx.collections.immutable.toPersistentList
 import com.kinetic.editor.engine.ExportWorker
 import com.kinetic.editor.ui.preview.PreviewSurface
 import com.kinetic.editor.ui.timeline.Timeline
@@ -161,7 +165,7 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
     ) {
         PreviewSurface(vm.preview, state, viewport, Modifier.fillMaxWidth().weight(1f))
 
-        ExportProgressBar()
+        ExportStatus()
 
         TransportBar(
             viewport = viewport,
@@ -183,10 +187,11 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
             callbacks = callbacks,
         )
 
-        val selectedClip = selection?.let { id -> state.findClip(id)?.second }
-        if (selectedClip != null) {
+        val selected = selection?.let { id -> state.findClip(id) }
+        if (selected != null) {
             ClipInspector(
-                clip = selectedClip,
+                clip = selected.second,
+                track = selected.first,
                 dispatch = vm.store::dispatch,
             )
         }
@@ -202,18 +207,55 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
 
 /* --------------------------------- pieces --------------------------------- */
 
+/**
+ * Export status. A render can outlive the UI, so this reads WorkManager rather
+ * than any in-memory state — reopening the app mid-export still shows progress,
+ * and the finished path is reported instead of the bar simply vanishing.
+ */
 @Composable
-private fun ExportProgressBar() {
+private fun ExportStatus() {
     val context = LocalContext.current
     val workInfos by WorkManager.getInstance(context)
         .getWorkInfosForUniqueWorkFlow(ExportWorker.WORK_NAME)
         .collectAsState(initial = emptyList())
-    val running = workInfos.firstOrNull { it.state == WorkInfo.State.RUNNING }
-    if (running != null) {
-        LinearProgressIndicator(
-            progress = { running.progress.getFloat(ExportWorker.KEY_PROGRESS, 0f) },
-            modifier = Modifier.fillMaxWidth(),
-        )
+    val info = workInfos.firstOrNull() ?: return
+
+    when (info.state) {
+        WorkInfo.State.RUNNING -> {
+            val fraction = info.progress.getFloat(ExportWorker.KEY_PROGRESS, 0f)
+            Column(Modifier.fillMaxWidth()) {
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Exporting ${(fraction * 100).toInt()}%",
+                    color = Color(0xFF9A9AA5),
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                )
+            }
+        }
+        WorkInfo.State.SUCCEEDED -> {
+            val path = info.outputData.getString(ExportWorker.KEY_OUTPUT)
+            if (path != null) {
+                Text(
+                    "Saved ${path.substringAfterLast('/')}",
+                    color = Color(0xFF35C4B5),
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
+        }
+        WorkInfo.State.FAILED -> {
+            Text(
+                "Export failed: ${info.outputData.getString(ExportWorker.KEY_ERROR) ?: "unknown"}",
+                color = Color(0xFFFF5C7A),
+                fontSize = 11.sp,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            )
+        }
+        else -> Unit
     }
 }
 
@@ -359,6 +401,7 @@ private fun ToolButton(label: String, enabled: Boolean = true, onClick: () -> Un
 @Composable
 private fun ClipInspector(
     clip: ClipModel,
+    track: Track,
     dispatch: (EditorIntent) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
@@ -415,6 +458,33 @@ private fun ClipInspector(
                 dispatch(EditorIntent.SetVolume(clip.id, it))
             }
         }
+
+        // Fades are the 90% case for volume envelopes; the underlying model is a
+        // general keyframe list, and these two sliders author/read the common shape.
+        if (clip.media.hasAudio) {
+            val fades = readFades(clip.volumeKeyframes, clip.durationMs)
+            val maxFade = (clip.durationMs / 2).coerceAtLeast(1L).toFloat()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                InspectorSlider("Fade in", fades.inMs.toFloat(), 0f..maxFade) { v ->
+                    dispatch(
+                        EditorIntent.SetVolumeKeyframes(
+                            clip.id,
+                            fadeKeyframes(clip.durationMs, fades.copy(inMs = v.toLong()))
+                                .toPersistentList(),
+                        ),
+                    )
+                }
+                InspectorSlider("Fade out", fades.outMs.toFloat(), 0f..maxFade) { v ->
+                    dispatch(
+                        EditorIntent.SetVolumeKeyframes(
+                            clip.id,
+                            fadeKeyframes(clip.durationMs, fades.copy(outMs = v.toLong()))
+                                .toPersistentList(),
+                        ),
+                    )
+                }
+            }
+        }
         // Scrollable: speed presets + effect toggles overflow a 360dp screen.
         // NOTE: no Modifier.weight children in here — weight inside a scrollable
         // row is measured with infinite constraints and crashes.
@@ -438,6 +508,17 @@ private fun ClipInspector(
                 TransitionType.DIP_TO_BLACK -> TransitionType.WIPE_LEFT
                 TransitionType.WIPE_LEFT -> TransitionType.ZOOM_PUNCH
                 TransitionType.ZOOM_PUNCH -> TransitionType.NONE
+            }
+            if (track.type == TrackType.AUDIO || track.type == TrackType.VIDEO_MAIN) {
+                TextButton(onClick = {
+                    dispatch(EditorIntent.SetTrackMuted(track.id, !track.muted))
+                }) {
+                    Text(
+                        if (track.muted) "Muted" else "Mute",
+                        fontSize = 12.sp,
+                        color = if (track.muted) Color(0xFFFF5C7A) else Color(0xFF9A9AA5),
+                    )
+                }
             }
             val lutOn = clip.lut != null
             TextButton(onClick = {

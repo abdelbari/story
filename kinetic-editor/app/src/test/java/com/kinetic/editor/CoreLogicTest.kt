@@ -5,7 +5,10 @@ import com.kinetic.editor.core.model.ClipModel
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.MediaRef
 import com.kinetic.editor.core.model.LutSpec
+import com.kinetic.editor.core.model.FadeSpec
 import com.kinetic.editor.core.model.PipSpec
+import com.kinetic.editor.core.model.fadeKeyframes
+import com.kinetic.editor.core.model.readFades
 import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.ProjectCodec
 import com.kinetic.editor.core.model.TextSpec
@@ -337,6 +340,34 @@ class CoreLogicTest {
         assertEquals(1f, pip.anchorX, 1e-3f)
         assertEquals(-1f, pip.anchorY, 1e-3f)
         assertEquals(1f, pip.scale, 1e-3f)
+    }
+
+    @Test
+    fun fadesGenerateAndReadBackRoundTrip() {
+        val dur = 10_000L
+        val kfs = fadeKeyframes(dur, FadeSpec(1_000, 2_000))
+        assertEquals(listOf(0L, 1_000L, 8_000L, 10_000L), kfs.map { it.atMs })
+        assertEquals(listOf(0f, 1f, 1f, 0f), kfs.map { it.gain })
+        assertEquals(FadeSpec(1_000, 2_000), readFades(kfs, dur))
+
+        val inOnly = fadeKeyframes(dur, FadeSpec(inMs = 500))
+        assertEquals(500L, readFades(inOnly, dur).inMs)
+        assertEquals(0L, readFades(inOnly, dur).outMs)
+
+        assertTrue(fadeKeyframes(dur, FadeSpec()).isEmpty())
+        assertEquals(FadeSpec(), readFades(emptyList(), dur))
+    }
+
+    @Test
+    fun overlappingFadesAreScaledDownNotInverted() {
+        val dur = 1_000L
+        val kfs = fadeKeyframes(dur, FadeSpec(900, 900))
+        val times = kfs.map { it.atMs }
+        assertEquals(times.sorted(), times)
+        assertTrue(times.last() <= dur)
+        val c = clip("f", 4_000).copy(volumeKeyframes = kfs.toPersistentList())
+        assertEquals(0f, c.gainAt(0), 1e-3f)
+        assertTrue(c.gainAt(dur / 2) > 0f)
     }
 
     @Test

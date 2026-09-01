@@ -113,3 +113,58 @@ fun planSequence(placements: List<PlacedClip>): List<SequenceItemPlan> {
     }
     return out
 }
+
+/**
+ * Fade in/out expressed the way a user thinks about it, over the top of the
+ * general keyframe envelope.
+ *
+ * A full keyframe editor is the wrong first tool: in practice almost every
+ * volume edit is "ease it in at the start, ease it out at the end". These two
+ * durations generate the four keyframes that do that, and can be read back out
+ * of an arbitrary envelope so the sliders show what the clip actually has.
+ */
+data class FadeSpec(val inMs: Long = 0L, val outMs: Long = 0L)
+
+fun fadeKeyframes(clipDurationMs: Long, fade: FadeSpec): List<VolumeKeyframe> {
+    if (clipDurationMs <= 0) return emptyList()
+    // Fades may not overlap; if the user asks for more than the clip holds,
+    // scale both down proportionally rather than letting one win.
+    var inMs = fade.inMs.coerceAtLeast(0L)
+    var outMs = fade.outMs.coerceAtLeast(0L)
+    val total = inMs + outMs
+    if (total > clipDurationMs && total > 0) {
+        inMs = inMs * clipDurationMs / total
+        outMs = clipDurationMs - inMs
+    }
+    if (inMs == 0L && outMs == 0L) return emptyList()
+
+    val out = ArrayList<VolumeKeyframe>(4)
+    if (inMs > 0) {
+        out.add(VolumeKeyframe(0L, 0f))
+        out.add(VolumeKeyframe(inMs, 1f))
+    } else {
+        out.add(VolumeKeyframe(0L, 1f))
+    }
+    if (outMs > 0) {
+        out.add(VolumeKeyframe(clipDurationMs - outMs, 1f))
+        out.add(VolumeKeyframe(clipDurationMs, 0f))
+    } else {
+        out.add(VolumeKeyframe(clipDurationMs, 1f))
+    }
+    return out
+}
+
+/** Best-effort inverse of [fadeKeyframes]; zero for an envelope it did not author. */
+fun readFades(keyframes: List<VolumeKeyframe>, clipDurationMs: Long): FadeSpec {
+    if (keyframes.size < 2 || clipDurationMs <= 0) return FadeSpec()
+    val first = keyframes.first()
+    val last = keyframes.last()
+    val inMs = if (first.atMs == 0L && first.gain == 0f) {
+        keyframes.getOrNull(1)?.atMs ?: 0L
+    } else 0L
+    val outMs = if (last.gain == 0f) {
+        (clipDurationMs - (keyframes.getOrNull(keyframes.size - 2)?.atMs ?: clipDurationMs))
+            .coerceAtLeast(0L)
+    } else 0L
+    return FadeSpec(inMs, outMs)
+}
