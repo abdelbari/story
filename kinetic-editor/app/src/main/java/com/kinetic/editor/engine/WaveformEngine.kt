@@ -81,6 +81,10 @@ class WaveformEngine(
             val info = MediaCodec.BufferInfo()
             var inputDone = false
             var outputDone = false
+            var encodingChecked = false
+            // A decoder that stops producing output after end-of-stream would
+            // otherwise spin here forever and starve every later waveform.
+            var idleRounds = 0
             while (!outputDone) {
                 if (!inputDone) {
                     val inIdx = codec.dequeueInputBuffer(10_000)
@@ -97,16 +101,24 @@ class WaveformEngine(
                     }
                 }
                 val outIdx = codec.dequeueOutputBuffer(info, 10_000)
-                if (outIdx >= 0) {
+                if (outIdx < 0) {
+                    if (inputDone && ++idleRounds > MAX_IDLE_ROUNDS) break
+                    continue
+                }
+                idleRounds = 0
+                if (!encodingChecked) {
+                    encodingChecked = true
                     // Non-16-bit PCM output (rare float decoders): bail gracefully,
                     // the timeline falls back to a plain bar.
-                    val encoding = codec.outputFormat.let {
-                        if (it.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
-                            it.getInteger(MediaFormat.KEY_PCM_ENCODING)
-                        } else AudioFormat.ENCODING_PCM_16BIT
+                    val format = codec.outputFormat
+                    val encoding = if (format.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+                        format.getInteger(MediaFormat.KEY_PCM_ENCODING)
+                    } else {
+                        AudioFormat.ENCODING_PCM_16BIT
                     }
                     if (encoding != AudioFormat.ENCODING_PCM_16BIT) return null
-
+                }
+                run {
                     val buf = codec.getOutputBuffer(outIdx)!!
                     buf.order(ByteOrder.LITTLE_ENDIAN)
                     val shorts = buf.asShortBuffer()
@@ -144,5 +156,10 @@ class WaveformEngine(
             try { codec?.stop(); codec?.release() } catch (_: Exception) { }
             extractor.release()
         }
+    }
+
+    private companion object {
+        /** 10ms dequeue timeouts: two seconds of silence from the decoder ends the job. */
+        const val MAX_IDLE_ROUNDS = 200
     }
 }

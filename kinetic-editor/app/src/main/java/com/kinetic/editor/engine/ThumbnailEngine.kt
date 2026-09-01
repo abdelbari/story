@@ -23,7 +23,8 @@ import java.util.Collections
  *    zoom changes re-use frames instead of re-decoding.
  *  - One MediaMetadataRetriever per source, kept open in a tiny LRU (seek-open
  *    cost dominates thumbnail extraction; retrievers are NOT thread-safe, hence
- *    the per-instance lock).
+ *    the per-instance lock, which eviction also takes so a retriever is never
+ *    released under a decode in progress on another lane).
  */
 class ThumbnailEngine(
     private val context: Context,
@@ -45,17 +46,10 @@ class ThumbnailEngine(
     @Suppress("OPT_IN_USAGE")
     private val decodeDispatcher = Dispatchers.IO.limitedParallelism(2)
 
-    private val retrievers = object : LinkedHashMap<String, MediaMetadataRetriever>(
+    /** Access-ordered: the entry at the head is the least recently used. */
+    private val retrievers = LinkedHashMap<String, MediaMetadataRetriever>(
         /* initialCapacity= */ 8, /* loadFactor= */ 0.75f, /* accessOrder= */ true,
-    ) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MediaMetadataRetriever>): Boolean {
-            if (size > 4) {
-                eldest.value.release()
-                return true
-            }
-            return false
-        }
-    }
+    )
 
     fun peek(uri: String, sourceMs: Long): ImageBitmap? =
         cache.get(Key(uri, bucket(sourceMs)))
@@ -79,11 +73,7 @@ class ThumbnailEngine(
     private fun bucket(sourceMs: Long): Long = (sourceMs / 1000L) * 1000L
 
     private fun decode(key: Key): ImageBitmap? {
-        val retriever = synchronized(retrievers) {
-            retrievers.getOrPut(key.uri) {
-                MediaMetadataRetriever().apply { setDataSource(context, Uri.parse(key.uri)) }
-            }
-        }
+        val retriever = retrieverFor(key.uri) ?: return null
         return try {
             synchronized(retriever) {
                 retriever.getScaledFrameAtTime(
@@ -94,15 +84,50 @@ class ThumbnailEngine(
                 )
             }?.asImageBitmap()
         } catch (_: Exception) {
+            // Includes a retriever evicted between lookup and use: the slot stays
+            // empty and the canvas simply asks again on its next draw.
             null
         }
     }
 
-    fun release() {
-        synchronized(retrievers) {
-            retrievers.values.forEach { it.release() }
-            retrievers.clear()
+    /**
+     * Opens (or reuses) the retriever for [uri]; null when the source cannot be
+     * opened — a deleted file or revoked grant must not take the decode lane down.
+     */
+    private fun retrieverFor(uri: String): MediaMetadataRetriever? {
+        var evicted: MediaMetadataRetriever? = null
+        val retriever = synchronized(retrievers) {
+            retrievers[uri]?.let { return it }
+            val created = MediaMetadataRetriever()
+            try {
+                created.setDataSource(context, Uri.parse(uri))
+            } catch (_: Exception) {
+                created.release()
+                return null
+            }
+            retrievers[uri] = created
+            if (retrievers.size > MAX_OPEN) {
+                val eldest = retrievers.entries.first()
+                retrievers.remove(eldest.key)
+                evicted = eldest.value
+            }
+            created
         }
+        // Outside the map lock, under the instance lock: waits for a decode that
+        // may still be running on the evicted retriever instead of pulling it away.
+        evicted?.let { synchronized(it) { it.release() } }
+        return retriever
+    }
+
+    fun release() {
+        val open = synchronized(retrievers) {
+            retrievers.values.toList().also { retrievers.clear() }
+        }
+        for (r in open) synchronized(r) { r.release() }
         cache.evictAll()
+    }
+
+    private companion object {
+        const val MAX_OPEN = 4
     }
 }
