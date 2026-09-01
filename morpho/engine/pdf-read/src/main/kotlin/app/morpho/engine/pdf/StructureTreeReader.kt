@@ -31,6 +31,7 @@ import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructur
 import org.apache.pdfbox.pdmodel.documentinterchange.markedcontent.PDMarkedContent
 import org.apache.pdfbox.text.PDFMarkedContentExtractor
 import org.apache.pdfbox.text.TextPosition
+import org.apache.pdfbox.util.Matrix
 import java.util.Collections
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -105,6 +106,9 @@ private class Placement(
     val pitchPt: Float?,
 )
 
+/** A rule drawn across a page: a stroked horizontal line or a filled sliver, in top-down page points. */
+private class Rule(val y: Float, val left: Float, val right: Float)
+
 /** The extent of a page's text — every glyph the structure tree can reach, so headers and footers stay out. */
 private class InkBox {
     var left = Float.POSITIVE_INFINITY
@@ -159,6 +163,16 @@ internal object StructureTreeReader {
     private const val DEFAULT_PITCH_SHARE = 1.2f
     /** How far below its baseline a glyph reaches, as a share of type size, for want of font metrics. */
     private const val DESCENT_SHARE = 0.25f
+    /** A filled rectangle no taller than this is a rule, not a box. */
+    private const val RULE_MAX_THICKNESS_PT = 4f
+    /** A rule shorter than this is a dash or a tick, not a rule. */
+    private const val RULE_MIN_LENGTH_PT = 20f
+    /** A rule this many type sizes below a paragraph's last baseline, or above its first, belongs to it. */
+    private const val RULE_REACH = 1.6f
+    /** A rule nearer than this share of the type size to a baseline is that line's own underscoring. */
+    private const val RULE_CLEARANCE = 0.4f
+    /** The type size assumed of a paragraph that measured none. */
+    private const val DEFAULT_SIZE_PT = 12f
     private const val CONFIDENCE = 0.9f
 
     fun read(doc: PDDocument, images: List<PdfImage> = emptyList()): DocumentModel? {
@@ -187,7 +201,15 @@ internal object StructureTreeReader {
      * tag and the properties stay null. This subclass resolves named property
      * lists through the page resources, so both forms carry their MCID.
      */
-    private class ResolvingMarkedContentExtractor : PDFMarkedContentExtractor() {
+    private class ResolvingMarkedContentExtractor(private val page: PDPage) : PDFMarkedContentExtractor() {
+        /** The rules drawn on the page outside any artifact — a running header's own do not count. */
+        val rules = mutableListOf<Rule>()
+        private val openTags = ArrayDeque<String>()
+        private var subpathStart: FloatArray? = null
+        private var current: FloatArray? = null
+        private val pendingSegments = mutableListOf<Rule>()
+        private val pendingSlivers = mutableListOf<Rule>()
+
         init {
             addOperator(object : OperatorProcessor() {
                 override fun getName() = "BDC"
@@ -202,9 +224,108 @@ internal object StructureTreeReader {
                                 .getOrNull()
                         else -> null
                     }
+                    openTags.addLast(tag.name)
                     context.beginMarkedContentSequence(tag, properties)
                 }
             })
+            addOperator(object : OperatorProcessor() {
+                override fun getName() = "BMC"
+
+                override fun process(operator: Operator, operands: List<COSBase>) {
+                    val tag = operands.firstOrNull() as? COSName ?: return
+                    openTags.addLast(tag.name)
+                    context.beginMarkedContentSequence(tag, null)
+                }
+            })
+            addOperator(object : OperatorProcessor() {
+                override fun getName() = "EMC"
+
+                override fun process(operator: Operator, operands: List<COSBase>) {
+                    openTags.removeLastOrNull()
+                    context.endMarkedContentSequence()
+                }
+            })
+            // Path construction: enough of it to see a horizontal line or a
+            // thin rectangle. Curves and anything else end the subpath.
+            addOperator(pathOperator("m") { operands ->
+                val point = point(operands, 0) ?: return@pathOperator
+                subpathStart = point
+                current = point
+            })
+            addOperator(pathOperator("l") { operands ->
+                val from = current
+                val to = point(operands, 0) ?: return@pathOperator
+                if (from != null) segment(from, to)
+                current = to
+            })
+            addOperator(pathOperator("h") { _ ->
+                val from = current
+                val to = subpathStart
+                if (from != null && to != null) segment(from, to)
+                current = to
+            })
+            addOperator(pathOperator("re") { operands ->
+                if (operands.size < 4) return@pathOperator
+                val x = number(operands[0]) ?: return@pathOperator
+                val y = number(operands[1]) ?: return@pathOperator
+                val w = number(operands[2]) ?: return@pathOperator
+                val h = number(operands[3]) ?: return@pathOperator
+                val a = transform(x, y)
+                val b = transform(x + w, y + h)
+                val top = minOf(a[1], b[1])
+                val bottom = maxOf(a[1], b[1])
+                if (bottom - top <= RULE_MAX_THICKNESS_PT) {
+                    pendingSlivers += Rule((top + bottom) / 2, minOf(a[0], b[0]), maxOf(a[0], b[0]))
+                }
+                current = null
+                subpathStart = null
+            })
+            for (name in listOf("S", "s", "B", "B*", "b", "b*")) {
+                addOperator(pathOperator(name) { _ -> paint(strokes = true, fills = name != "S" && name != "s") })
+            }
+            for (name in listOf("f", "F", "f*")) {
+                addOperator(pathOperator(name) { _ -> paint(strokes = false, fills = true) })
+            }
+            addOperator(pathOperator("n") { _ -> paint(strokes = false, fills = false) })
+        }
+
+        private fun pathOperator(name: String, body: (List<COSBase>) -> Unit) = object : OperatorProcessor() {
+            override fun getName() = name
+            override fun process(operator: Operator, operands: List<COSBase>) = body(operands)
+        }
+
+        private fun number(operand: COSBase): Float? = (operand as? org.apache.pdfbox.cos.COSNumber)?.floatValue()
+
+        private fun point(operands: List<COSBase>, index: Int): FloatArray? {
+            if (operands.size < index + 2) return null
+            val x = number(operands[index]) ?: return null
+            val y = number(operands[index + 1]) ?: return null
+            return transform(x, y)
+        }
+
+        /** User space through the current transformation, then top-down page points as glyphs are measured. */
+        private fun transform(x: Float, y: Float): FloatArray {
+            val ctm: Matrix = runCatching { graphicsState.currentTransformationMatrix }.getOrNull() ?: Matrix()
+            val p = ctm.transformPoint(x, y)
+            val box = page.cropBox
+            return floatArrayOf(p.x - box.lowerLeftX, box.upperRightY - p.y)
+        }
+
+        private fun segment(from: FloatArray, to: FloatArray) {
+            if (abs(from[1] - to[1]) > 0.5f) return
+            pendingSegments += Rule((from[1] + to[1]) / 2, minOf(from[0], to[0]), maxOf(from[0], to[0]))
+        }
+
+        private fun paint(strokes: Boolean, fills: Boolean) {
+            val inArtifact = openTags.any { it == "Artifact" }
+            if (!inArtifact) {
+                if (strokes) rules += pendingSegments.filter { it.right - it.left >= RULE_MIN_LENGTH_PT }
+                if (fills) rules += pendingSlivers.filter { it.right - it.left >= RULE_MIN_LENGTH_PT }
+            }
+            pendingSegments.clear()
+            pendingSlivers.clear()
+            current = null
+            subpathStart = null
         }
     }
 
@@ -219,6 +340,8 @@ internal object StructureTreeReader {
         private val pageHeightByIndex = HashMap<Int, Float>()
         /** The reach of each page's tagged text: the block the margins and indents are measured from. */
         private val inkByPageIndex = HashMap<Int, InkBox>()
+        /** The rules drawn on each page, outside its running header and footer. */
+        private val rulesByPageIndex = HashMap<Int, List<Rule>>()
         private val glyphsByPageAndMcid = HashMap<Long, List<Glyph>>()
         private val textByPageAndMcid = HashMap<Long, String>()
         private val sizeByPageAndMcid = HashMap<Long, Float>()
@@ -240,11 +363,12 @@ internal object StructureTreeReader {
                 pageIndexByPage[page.cosObject] = index
                 pageWidthByIndex[index] = runCatching { page.mediaBox.width }.getOrDefault(0f)
                 pageHeightByIndex[index] = runCatching { page.mediaBox.height }.getOrDefault(0f)
-                val extractor = ResolvingMarkedContentExtractor()
+                val extractor = ResolvingMarkedContentExtractor(page)
                 runCatching { extractor.processPage(page) }
                 for (content in extractor.markedContents.orEmpty()) {
                     collect(content, index)
                 }
+                rulesByPageIndex[index] = extractor.rules.toList()
             }
             baseDirection = Bidi.directionOfLanguage(runCatching { doc.documentCatalog.language }.getOrNull())
                 ?: Bidi.dominantDirection(buildString {
@@ -603,6 +727,21 @@ internal object StructureTreeReader {
             )
         }
 
+        /**
+         * Whether a rule is drawn across the page between [top] and
+         * [bottom] on [page], inside the page's text block — a running
+         * footer's rule below the block is not a paragraph's.
+         */
+        fun hasRuleBetween(page: Int, top: Float, bottom: Float): Boolean {
+            val block = inkByPageIndex[page]?.takeIf { !it.isEmpty } ?: return false
+            val width = block.right - block.left
+            return rulesByPageIndex[page].orEmpty().any { rule ->
+                rule.y in top..bottom &&
+                    rule.y >= block.top - RULE_REACH * 12f && rule.y <= block.bottom + RULE_REACH * 12f &&
+                    rule.right - rule.left >= 0.25f * width
+            }
+        }
+
         /** Left and right edge of a line's ink; spaces do not count. */
         private fun inkExtent(line: List<Glyph>): Pair<Float, Float> {
             val ink = line.filter { !it.position.unicode.isNullOrBlank() }.ifEmpty { line }
@@ -797,6 +936,45 @@ internal object StructureTreeReader {
                         spaceAfterPt = after ?: 0f,
                         linePitchPt = pitch,
                     )
+                )
+            }
+            applyRules()
+        }
+
+        /**
+         * Gives a rule drawn across the page to the paragraph it belongs to:
+         * the nearer of the two it sits between — a line under a paper's
+         * dates belongs under them, the separator above a footnote belongs
+         * above it — and to the one paragraph beside it at the top or bottom
+         * of a page's text.
+         */
+        private fun applyRules() {
+            fun size(index: Int) = sizeByBlockIndex[index]?.takeIf { it > 0f } ?: DEFAULT_SIZE_PT
+            for (index in blocks.indices) {
+                val placement = placementByBlockIndex[index] ?: continue
+                val above = index - 1 downTo 0
+                val previous = above.firstOrNull { placementByBlockIndex[it] != null }
+                    ?.let { placementByBlockIndex[it] }
+                    ?.takeIf { it.lastPage == placement.firstPage }
+                val next = placementByBlockIndex[index + 1]?.takeIf { it.firstPage == placement.lastPage }
+                val paragraph = blocks[index] as? Paragraph ?: continue
+                val top = previous?.lastBaseline ?: (placement.firstBaseline - RULE_REACH * size(index))
+                val bottom = next?.firstBaseline ?: (placement.lastBaseline + RULE_REACH * size(index))
+                // Nearer to this paragraph than to its neighbour, and clear
+                // of its own baselines by a hair.
+                val ruleAbove = texts.hasRuleBetween(
+                    placement.firstPage,
+                    maxOf(top + 1f, (top + placement.firstBaseline) / 2),
+                    placement.firstBaseline - RULE_CLEARANCE * size(index),
+                )
+                val ruleBelow = texts.hasRuleBetween(
+                    placement.lastPage,
+                    placement.lastBaseline + RULE_CLEARANCE * size(index),
+                    minOf(bottom - 1f, (bottom + placement.lastBaseline) / 2),
+                )
+                if (!ruleAbove && !ruleBelow) continue
+                blocks[index] = paragraph.copy(
+                    style = paragraph.style.copy(ruleAbove = ruleAbove, ruleBelow = ruleBelow)
                 )
             }
         }

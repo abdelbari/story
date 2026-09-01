@@ -187,6 +187,43 @@ class PageLookTest {
     }
 
     @Test
+    fun `a rule drawn across the page goes to the paragraph it belongs to`() {
+        // A line under a paper's dates and the separator above its
+        // footnote: each belongs to the paragraph it sits nearer.
+        val pdf = tagged(
+            rules = { page ->
+                listOf(
+                    Rule(page.mediaBox.height - 690f, 60f, 500f),
+                    Rule(page.mediaBox.height - 754f, 60f, 260f),
+                )
+            }
+        ) { document ->
+            val font = arabic(document)
+            fun right(text: String, y: Float, size: Float = 12f) =
+                listOf(Piece(text, 500f - width(font, text, size), y, arabic, size))
+            listOf(right("تاريخ الاستلام", 680f), right("ملخص: من شروط البحث", 720f), right("المؤلف المرسل", 760f))
+        }
+        val (dates, abstract, footnote) = paragraphs(pdf)
+        assertTrue(dates.style.ruleBelow, "no rule under the dates")
+        assertTrue(!dates.style.ruleAbove)
+        assertTrue(!abstract.style.ruleAbove && !abstract.style.ruleBelow, "the abstract has no rule of its own")
+        assertTrue(footnote.style.ruleAbove, "no separator above the footnote")
+    }
+
+    @Test
+    fun `a rule in a running header is not a paragraph's`() {
+        val pdf = tagged(
+            artifactRules = { page -> listOf(Rule(page.mediaBox.height - 706f, 60f, 500f)) }
+        ) { document ->
+            val font = arabic(document)
+            val text = "ملخص: من شروط البحث"
+            listOf(listOf(Piece(text, 500f - width(font, text), 700f, arabic)))
+        }
+        val paragraph = paragraphs(pdf).single()
+        assertTrue(!paragraph.style.ruleAbove && !paragraph.style.ruleBelow, "an artifact's rule was taken")
+    }
+
+    @Test
     fun `the page the source was set on comes across with its margins`() {
         val pdf = tagged { document ->
             val font = arabic(document)
@@ -222,7 +259,15 @@ class PageLookTest {
      * text is painted reversed, glyphs left to right, as a real producer
      * paints it.
      */
-    private fun tagged(language: String? = "ar", pieces: (PDDocument) -> List<List<Piece>>): ByteArray {
+    /** A horizontal line at [y] in user space (from the bottom of the page). */
+    private class Rule(val y: Float, val from: Float, val to: Float)
+
+    private fun tagged(
+        language: String? = "ar",
+        rules: (PDPage) -> List<Rule> = { emptyList() },
+        artifactRules: (PDPage) -> List<Rule> = { emptyList() },
+        pieces: (PDDocument) -> List<List<Piece>>,
+    ): ByteArray {
         val bytes = ByteArrayOutputStream()
         PDDocument().use { document ->
             val page = PDPage(PDRectangle.A4)
@@ -236,6 +281,20 @@ class PageLookTest {
             val fonts = HashMap<(PDDocument) -> PDFont, PDFont>()
             var mcid = 0
             PDPageContentStream(document, page).use { content ->
+                for (rule in rules(page)) {
+                    content.moveTo(rule.from, rule.y)
+                    content.lineTo(rule.to, rule.y)
+                    content.stroke()
+                }
+                for (rule in artifactRules(page)) {
+                    // Inside a pagination artifact, the way a running
+                    // header's rule is drawn.
+                    content.beginMarkedContent(COSName.getPDFName("Artifact"))
+                    content.moveTo(rule.from, rule.y)
+                    content.lineTo(rule.to, rule.y)
+                    content.stroke()
+                    content.endMarkedContent()
+                }
                 for (paragraphPieces in pieces(document)) {
                     val paragraph = PDStructureElement(StandardStructureTypes.P, docElement)
                     paragraph.page = page

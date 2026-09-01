@@ -54,6 +54,9 @@ data class ParagraphStyle(
     val linePitchPt: Float? = null,
     /** Positions, in points from the start margin, of the tab stops the paragraph's tabs advance to. */
     val tabStopsPt: List<Float>? = null,
+    /** A rule drawn across the page just above or just below the paragraph. */
+    val ruleAbove: Boolean = false,
+    val ruleBelow: Boolean = false,
 )
 
 enum class ParagraphKind { TITLE, HEADING_1, HEADING_2, HEADING_3, BODY }

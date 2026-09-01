@@ -138,6 +138,8 @@ object HtmlWriter {
             style.spaceBeforePt?.let { add("margin-top:${pt(it)}") }
             style.spaceAfterPt?.let { add("margin-bottom:${pt(it)}") }
             style.linePitchPt?.takeIf { it > 0f }?.let { add("line-height:${pt(it)}") }
+            if (style.ruleAbove) add("border-top:0.75pt solid;padding-top:1pt")
+            if (style.ruleBelow) add("border-bottom:0.75pt solid;padding-bottom:1pt")
             // A tab character only advances when white space is kept; where
             // the paragraph knows its stops, the text after each tab is
             // placed at its stop instead (see appendTabbed).

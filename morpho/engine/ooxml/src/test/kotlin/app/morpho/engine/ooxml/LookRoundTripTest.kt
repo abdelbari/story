@@ -42,6 +42,7 @@ class LookRoundTripTest {
                     startIndentPt = 60f,
                     hangingIndentPt = 30f,
                     tabStopsPt = listOf(182.5f),
+                    ruleBelow = true,
                 ),
             ),
         ),
@@ -56,7 +57,7 @@ class LookRoundTripTest {
         assertTrue(xml.contains("""<w:sz w:val="16"/><w:szCs w:val="16"/><w:vertAlign w:val="superscript"/><w:rtl/>"""), xml)
         assertTrue(xml.contains("""<w:vertAlign w:val="subscript"/>"""), xml)
         assertTrue(xml.contains("""<w:bidi/><w:spacing w:before="0" w:after="120" w:line="430" w:lineRule="atLeast"/><w:ind w:firstLine="720"/>"""), xml)
-        assertTrue(xml.contains("""<w:tabs><w:tab w:val="left" w:pos="3650"/></w:tabs><w:bidi/><w:ind w:left="1200" w:hanging="600"/>"""), xml)
+        assertTrue(xml.contains("""<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/></w:pBdr><w:tabs><w:tab w:val="left" w:pos="3650"/></w:tabs><w:bidi/><w:ind w:left="1200" w:hanging="600"/>"""), xml)
         assertTrue(xml.contains("""</w:t><w:tab/><w:t xml:space="preserve">"""), xml)
         assertTrue(xml.contains("""<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1222" w:right="1696" w:bottom="1834" w:left="1132" """), xml)
     }
@@ -82,6 +83,7 @@ class LookRoundTripTest {
         assertEquals(60f, second.style.startIndentPt)
         assertEquals(30f, second.style.hangingIndentPt)
         assertEquals(listOf(182.5f), second.style.tabStopsPt)
+        assertTrue(second.style.ruleBelow && !second.style.ruleAbove)
 
         val page = back.pageSetup
         assertNotNull(page)

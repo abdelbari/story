@@ -267,13 +267,23 @@ object DocxWriter {
         val spacing = spacingXml(style)
         val indent = indentXml(style)
         val tabs = style.tabStopsPt?.filter { it > 0f }?.takeIf { it.isNotEmpty() }
+        val rules = style.ruleAbove || style.ruleBelow
 
-        if (styleId == null && numId == null && jc == null && !rtl && spacing == null && indent == null && tabs == null) return
+        if (styleId == null && numId == null && jc == null && !rtl && spacing == null && indent == null &&
+            tabs == null && !rules
+        ) return
 
         sb.append("<w:pPr>")
         if (styleId != null) sb.append("""<w:pStyle w:val="$styleId"/>""")
         if (numId != null) {
             sb.append("""<w:numPr><w:ilvl w:val="0"/><w:numId w:val="$numId"/></w:numPr>""")
+        }
+        if (rules) {
+            // A hairline in Word's eighths of a point, a point clear of the text.
+            sb.append("<w:pBdr>")
+            if (style.ruleAbove) sb.append("""<w:top w:val="single" w:sz="6" w:space="1" w:color="auto"/>""")
+            if (style.ruleBelow) sb.append("""<w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/>""")
+            sb.append("</w:pBdr>")
         }
         if (tabs != null) {
             sb.append("<w:tabs>")

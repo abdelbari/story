@@ -17,7 +17,7 @@ class HtmlLookTest {
                     ),
                     Paragraph(
                         runs = listOf(TextRun("إبراهيم، مروان. أسس البحث")),
-                        style = ParagraphStyle(startIndentPt = 60f, hangingIndentPt = 30f),
+                        style = ParagraphStyle(startIndentPt = 60f, hangingIndentPt = 30f, ruleAbove = true),
                     ),
                 ),
                 defaultDirection = TextDirection.RTL,
@@ -27,7 +27,7 @@ class HtmlLookTest {
         assertTrue(html.contains("<sup>1</sup>"), html)
         assertTrue(html.contains("<sub>2</sub>"), html)
         assertTrue(html.contains("""text-indent:36.0pt;margin-bottom:6.0pt;line-height:21.5pt"""), html)
-        assertTrue(html.contains("""padding-inline-start:60.0pt;text-indent:-30.0pt"""), html)
+        assertTrue(html.contains("""padding-inline-start:60.0pt;text-indent:-30.0pt;border-top:0.75pt solid;padding-top:1pt"""), html)
         assertTrue(html.contains("@page{size:595.3pt 841.9pt;margin:61.1pt 84.8pt 91.7pt 56.6pt;}"), html)
         assertTrue(html.contains("body{margin:61.1pt 84.8pt 91.7pt 56.6pt;}"), html)
     }

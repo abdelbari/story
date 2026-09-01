@@ -306,6 +306,8 @@ object DocxReader {
             tabStopsPt = firstChild(pPr, "tabs")?.let { tabs ->
                 children(tabs, "tab").filter { attr(it, "val") != "clear" }.mapNotNull { twips(attr(it, "pos")) }
             }?.takeIf { it.isNotEmpty() },
+            ruleAbove = firstChild(pPr, "pBdr")?.let { firstChild(it, "top") }?.let { isBorder(it) } ?: false,
+            ruleBelow = firstChild(pPr, "pBdr")?.let { firstChild(it, "bottom") }?.let { isBorder(it) } ?: false,
         )
     }
 
@@ -325,6 +327,10 @@ object DocxReader {
             marginRightPt = margin("right"),
         )
     }
+
+    /** A border element that draws something: any style but none or nil. */
+    private fun isBorder(border: Element): Boolean =
+        attr(border, "val")?.let { it != "none" && it != "nil" } ?: false
 
     /** A length in twentieths of a point, as OOXML measures, in points; null when absent or not a number. */
     private fun twips(value: String?): Float? =
