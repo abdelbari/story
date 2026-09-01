@@ -65,6 +65,8 @@ internal object StructureTreeReader {
     private const val SAME_LINE_TOLERANCE_PT = 2f
     /** A horizontal gap wider than this share of the type size is a word break. */
     private const val WORD_GAP_FACTOR = 0.2f
+    /** How far above its baseline, as a share of type size, a glyph still belongs to a line. */
+    private const val SUPERSCRIPT_REACH = 0.5f
     private const val CONFIDENCE = 0.9f
 
     fun read(doc: PDDocument, images: List<PdfImage> = emptyList()): DocumentModel? {
@@ -121,9 +123,21 @@ internal object StructureTreeReader {
      */
     private class MarkedContentIndex(doc: PDDocument) {
         private val pageIndexByPage = IdentityHashMap<COSDictionary, Int>()
+        private val glyphsByPageAndMcid = HashMap<Long, List<TextPosition>>()
         private val textByPageAndMcid = HashMap<Long, String>()
         private val sizeByPageAndMcid = HashMap<Long, Float>()
         private val boldByPageAndMcid = HashMap<Long, Boolean>()
+        /** Overrules a broken ToUnicode map with the embedded font's own cmap. */
+        private val glyphText = GlyphUnicode()
+
+        /**
+         * The direction the document is written in: what its /Lang says,
+         * else the direction most of its text runs in. Every line is
+         * reconstructed against it, because a line cannot tell its own —
+         * an Arabic line whose leftmost word is an email address starts,
+         * visually, with a Latin letter.
+         */
+        private val baseDirection: TextDirection?
 
         init {
             for ((index, page) in doc.pages.withIndex()) {
@@ -134,6 +148,10 @@ internal object StructureTreeReader {
                     collect(content, index)
                 }
             }
+            baseDirection = Bidi.directionOfLanguage(runCatching { doc.documentCatalog.language }.getOrNull())
+                ?: Bidi.dominantDirection(buildString {
+                    for (glyphs in glyphsByPageAndMcid.values) for (glyph in glyphs) append(glyph.unicode.orEmpty())
+                })
         }
 
         private fun collect(content: PDMarkedContent, pageIndex: Int) {
@@ -153,9 +171,8 @@ internal object StructureTreeReader {
                 }
             }
             gather(content)
-            val text = readOffThePage(glyphs)
-            if (content.mcid >= 0 && text.isNotEmpty()) {
-                textByPageAndMcid[key(pageIndex, content.mcid)] = text
+            if (content.mcid >= 0 && glyphs.any { !it.unicode.isNullOrEmpty() }) {
+                glyphsByPageAndMcid[key(pageIndex, content.mcid)] = glyphs.toList()
                 sizeByPageAndMcid[key(pageIndex, content.mcid)] = size
                 boldByPageAndMcid[key(pageIndex, content.mcid)] = bold
             }
@@ -183,17 +200,41 @@ internal object StructureTreeReader {
          * lines by baseline and sorted left to right, which is visual order
          * whatever the producer did, and each line is then reconstructed
          * into logical order — the same treatment the untagged reader gives
-         * every line. The structure tree still decides the order of runs.
+         * every line.
+         *
+         * A whole structure element is read at once, not one run at a time.
+         * The tree decides which runs belong to the element; the page decides
+         * everything inside it. Reconstructing runs separately loses their
+         * neighbours: a space at the edge of a Latin run in an Arabic line is
+         * neutral, and which side of the run it belongs on is only knowable
+         * with the Arabic beside it in view — alone, it stays put and ends up
+         * doubled on one side of the word and missing on the other.
          */
-        private fun readOffThePage(glyphs: List<TextPosition>): String {
+        fun readOffThePage(glyphs: List<Pair<Int, TextPosition>>): String {
             if (glyphs.isEmpty()) return ""
+            // Pages in order, then lines top to bottom within each; a line
+            // never spans a page break however close the baselines land.
             val lines = mutableListOf<MutableList<TextPosition>>()
-            for (glyph in glyphs.sortedBy { it.yDirAdj }) {
-                val line = lines.lastOrNull()
-                if (line != null && abs(glyph.yDirAdj - line.first().yDirAdj) <= SAME_LINE_TOLERANCE_PT) {
-                    line += glyph
-                } else {
-                    lines += mutableListOf(glyph)
+            for ((_, onPage) in glyphs.groupBy { it.first }.toSortedMap()) {
+                var line: MutableList<TextPosition>? = null
+                var lineSize = 0f
+                for (glyph in onPage.map { it.second }.sortedBy { it.yDirAdj }) {
+                    val current = line
+                    // A superscript sits a third of an em above its line's
+                    // baseline; a fixed two points would make it a line of
+                    // its own, read before the name it annotates. Reach is
+                    // relative to type size — the larger of the line's and
+                    // the glyph's, since top-down order meets the small
+                    // raised glyph before the line it belongs to — and stays
+                    // well short of a real line pitch.
+                    val reach = maxOf(SAME_LINE_TOLERANCE_PT, SUPERSCRIPT_REACH * maxOf(lineSize, glyph.fontSizeInPt))
+                    if (current != null && abs(glyph.yDirAdj - current.first().yDirAdj) <= reach) {
+                        current += glyph
+                        lineSize = maxOf(lineSize, glyph.fontSizeInPt)
+                    } else {
+                        line = mutableListOf(glyph).also { lines += it }
+                        lineSize = glyph.fontSizeInPt
+                    }
                 }
             }
             // Not trimmed: the space between two words often belongs to the
@@ -208,12 +249,12 @@ internal object StructureTreeReader {
                 // read from the gaps, as PDFBox's own stripper does — a
                 // kerning gap inside a word is otherwise easy to mistake for
                 // one, and did split الجزائر in two.
-                val inferBreaks = line.none { it.unicode?.let { u -> u.isNotEmpty() && u.isBlank() } == true }
+                val inferBreaks = line.none { glyphText.of(it).let { u -> u.isNotEmpty() && u.isBlank() } }
                 // Whole-point buckets, and a stable sort, so two glyphs a
                 // kerning hair apart keep their painting order instead of
                 // swapping on float noise.
                 for (glyph in line.sortedBy { it.xDirAdj.roundToInt() }) {
-                    val unicode = glyph.unicode.orEmpty()
+                    val unicode = glyphText.of(glyph)
                     if (inferBreaks && previous != null && previous.widthDirAdj > 0f &&
                         unicode.isNotBlank() && !visual.endsWith(' ')
                     ) {
@@ -223,13 +264,21 @@ internal object StructureTreeReader {
                     visual.append(unicode)
                     previous = glyph
                 }
-                ExtractedText.toLogical(visual.toString())
+                ExtractedText.toLogical(visual.toString(), baseDirection)
             }
         }
 
         fun textFor(page: PDPage?, mcid: Int): String {
             val pageIndex = page?.cosObject?.let(pageIndexByPage::get) ?: return ""
-            return textByPageAndMcid[key(pageIndex, mcid)].orEmpty()
+            return textByPageAndMcid.getOrPut(key(pageIndex, mcid)) {
+                readOffThePage(glyphsFor(page, mcid))
+            }
+        }
+
+        /** The glyphs painted under [mcid], each tagged with its page index. */
+        fun glyphsFor(page: PDPage?, mcid: Int): List<Pair<Int, TextPosition>> {
+            val pageIndex = page?.cosObject?.let(pageIndexByPage::get) ?: return emptyList()
+            return glyphsByPageAndMcid[key(pageIndex, mcid)]?.map { pageIndex to it }.orEmpty()
         }
 
         /** Largest type size drawn under [mcid], or 0 when it drew no text. */
@@ -476,24 +525,24 @@ internal object StructureTreeReader {
 
         /** All text under an element, in tag (logical) order. */
         private fun textOf(element: PDStructureElement): String {
-            val sb = StringBuilder()
+            val glyphs = mutableListOf<Pair<Int, TextPosition>>()
             fun gather(node: PDStructureElement, depth: Int) {
                 if (depth > MAX_DEPTH) throw TooDeepException()
                 for (kid in node.kids.orEmpty()) {
                     when (kid) {
                         is PDStructureElement -> gather(kid, depth + 1)
-                        is Int -> sb.append(texts.textFor(node.page, kid))
-                        is COSInteger -> sb.append(texts.textFor(node.page, kid.intValue()))
+                        is Int -> glyphs += texts.glyphsFor(node.page, kid)
+                        is COSInteger -> glyphs += texts.glyphsFor(node.page, kid.intValue())
                         is PDMarkedContentReference ->
-                            sb.append(texts.textFor(kid.page ?: node.page, kid.mcid))
-                        is PDMarkedContent -> sb.append(texts.textFor(node.page, kid.mcid))
+                            glyphs += texts.glyphsFor(kid.page ?: node.page, kid.mcid)
+                        is PDMarkedContent -> glyphs += texts.glyphsFor(node.page, kid.mcid)
                     }
                 }
             }
             gather(element, 0)
-            // Each run's text is already in logical order — MarkedContentIndex
-            // read it off the page — and the tree lists runs in reading order.
-            return sb.toString()
+            // The element's runs are laid out together on the page, so they
+            // are read together: see MarkedContentIndex.readOffThePage.
+            return texts.readOffThePage(glyphs)
         }
 
         /** True when every marked-content run under [element] is bold. */

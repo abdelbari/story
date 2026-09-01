@@ -24,9 +24,12 @@ object ExtractedText {
      * untouched.
      *
      * Both readers call this on lines they have first put into visual
-     * order by position, which is the only order a PDF can be trusted on.
+     * order by position, which is the only order a PDF can be trusted on,
+     * and pass the document's [base] direction, which a single line cannot
+     * work out for itself.
      */
-    fun toLogical(text: String): String = Bidi.visualToLogical(foldPresentationForms(text))
+    fun toLogical(text: String, base: TextDirection? = null): String =
+        Bidi.visualToLogical(foldPresentationForms(text), base)
 
 
     /**

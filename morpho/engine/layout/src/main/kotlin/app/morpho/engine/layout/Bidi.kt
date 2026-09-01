@@ -56,9 +56,18 @@ object Bidi {
      * Text with no right-to-left character is returned unchanged, so
      * left-to-right documents pass through untouched.
      */
-    fun visualToLogical(text: String): String {
+    fun visualToLogical(text: String, base: TextDirection? = null): String {
         if (text.isEmpty() || !containsRtl(text)) return text
-        val bidi = java.text.Bidi(text, java.text.Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT)
+        // The base direction is the paragraph's, and a line cannot tell its
+        // own: an Arabic line whose leftmost word is an email address starts,
+        // visually, with a Latin letter. Callers that know the document pass
+        // it; the first strong character is only the fallback.
+        val flags = when (base) {
+            TextDirection.RTL -> java.text.Bidi.DIRECTION_RIGHT_TO_LEFT
+            TextDirection.LTR -> java.text.Bidi.DIRECTION_LEFT_TO_RIGHT
+            null -> java.text.Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT
+        }
+        val bidi = java.text.Bidi(text, flags)
         if (!bidi.isMixed && bidi.baseIsLeftToRight()) return text
         val runCount = bidi.runCount
         val levels = ByteArray(runCount)
@@ -83,6 +92,46 @@ object Bidi {
         }
         return out.toString()
     }
+
+    /**
+     * The direction most of [text] is written in — right-to-left if its
+     * strongly right-to-left characters outnumber the left-to-right ones —
+     * or null when it has neither. Over a whole document this is the base
+     * direction its lines should be reconstructed against when the file
+     * does not say.
+     */
+    fun dominantDirection(text: CharSequence): TextDirection? {
+        var ltr = 0
+        var rtl = 0
+        var i = 0
+        while (i < text.length) {
+            val cp = Character.codePointAt(text, i)
+            when (Character.getDirectionality(cp)) {
+                Character.DIRECTIONALITY_LEFT_TO_RIGHT -> ltr++
+                Character.DIRECTIONALITY_RIGHT_TO_LEFT,
+                Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC -> rtl++
+                else -> {}
+            }
+            i += Character.charCount(cp)
+        }
+        return when {
+            rtl == 0 && ltr == 0 -> null
+            rtl > ltr -> TextDirection.RTL
+            else -> TextDirection.LTR
+        }
+    }
+
+    /**
+     * The writing direction of a BCP 47 language tag such as a PDF's /Lang
+     * ("ar-DZ", "he", "en-US"), or null when the tag is absent or unknown.
+     */
+    fun directionOfLanguage(tag: String?): TextDirection? {
+        val primary = tag?.trim()?.lowercase()?.substringBefore('-')?.takeIf { it.isNotEmpty() }
+            ?: return null
+        return if (primary in RTL_LANGUAGES) TextDirection.RTL else TextDirection.LTR
+    }
+
+    private val RTL_LANGUAGES = setOf("ar", "he", "fa", "ur", "ps", "sd", "ug", "yi", "dv")
 
     /** True when [text] carries any strongly right-to-left character. */
     private fun containsRtl(text: String): Boolean {

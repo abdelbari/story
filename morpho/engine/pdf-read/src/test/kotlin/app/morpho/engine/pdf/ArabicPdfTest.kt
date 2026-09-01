@@ -4,6 +4,7 @@ import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.TextDirection
 import org.apache.pdfbox.cos.COSDictionary
 import org.apache.pdfbox.cos.COSName
+import org.apache.pdfbox.cos.COSStream
 import org.apache.pdfbox.pdmodel.documentinterchange.markedcontent.PDPropertyList
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureElement
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureTreeRoot
@@ -149,7 +150,18 @@ class ArabicPdfTest {
      * structure tree lists the words in reading order, and each word's
      * glyphs are painted left to right, so its letters arrive reversed.
      */
-    private fun taggedArabicPdf(logicalWords: List<String>, asOneBlock: Boolean = false): ByteArray {
+    /**
+     * [subset] false embeds the whole font. PDFBox's subsetter drops the
+     * cmap table, and a font with no cmap cannot overrule a broken
+     * ToUnicode — so the corruption test needs the font as a real
+     * exporter embeds it, cmap and all.
+     */
+    private fun taggedArabicPdf(
+        logicalWords: List<String>,
+        asOneBlock: Boolean = false,
+        subset: Boolean = true,
+        language: String? = "ar",
+    ): ByteArray {
         val bytes = ByteArrayOutputStream()
         PDDocument().use { document ->
             val page = PDPage(PDRectangle.A4)
@@ -158,9 +170,11 @@ class ArabicPdfTest {
                 document,
                 javaClass.getResourceAsStream("/fonts/NotoNaskhArabic-Regular.ttf")
                     ?: error("test font missing"),
+                subset,
             )
             val root = PDStructureTreeRoot()
             document.documentCatalog.structureTreeRoot = root
+            if (language != null) document.documentCatalog.language = language
             val docElement = PDStructureElement(StandardStructureTypes.DOCUMENT, root)
             // Without a page the marked-content ids cannot be resolved and the
             // reader falls back to the untagged heuristics, silently testing
@@ -238,6 +252,68 @@ class ArabicPdfTest {
         // order that suits one is backwards for the other. Position is not.
         val pdf = taggedArabicPdf(listOf(title, inWord, research), asOneBlock = true)
         assertEquals("$title $inWord $research", paragraphs(pdf).first().text)
+    }
+
+
+    @Test
+    fun `a broken ToUnicode map is overruled by the embedded font`() {
+        // Word 2010 writes a corrupt ToUnicode over a sound font: on a real
+        // paper the medial lam was labelled meem and the digit 0 labelled 5.
+        // The font's own cmap is the authority when the two disagree.
+        val broken = corruptToUnicode(taggedArabicPdf(listOf(title, inWord, research), subset = false))
+        assertEquals("$title $inWord $research", paragraphs(broken).first().text)
+    }
+
+    @Test
+    fun `a healthy ToUnicode map is left alone`() {
+        // The corrector must not engage on a font whose maps agree.
+        val healthy = taggedArabicPdf(listOf(title, "Morpho", research))
+        assertEquals("$title Morpho $research", paragraphs(healthy).first().text)
+    }
+
+    /**
+     * Shifts every Arabic code point in the fonts' ToUnicode maps one along,
+     * the way Word 2010 mislabels its subsets. The glyphs and the embedded
+     * font's own cmap are untouched, so the page still renders correctly —
+     * only the text a reader is told about is wrong.
+     */
+    private fun corruptToUnicode(pdf: ByteArray): ByteArray {
+        val out = ByteArrayOutputStream()
+        PDDocument.load(pdf).use { document ->
+            var rewritten = 0
+            val page = document.getPage(0)
+            for (name in page.resources.fontNames) {
+                val font = page.resources.getFont(name)
+                val stream = font.cosObject.getDictionaryObject(COSName.TO_UNICODE) as? COSStream ?: continue
+                val text = stream.createInputStream().use { it.readBytes().toString(Charsets.ISO_8859_1) }
+                val corrupted = Regex("<06([0-9A-Fa-f]{2})>").replace(text) { match ->
+                    rewritten++
+                    "<%04X>".format(0x0600 + match.groupValues[1].toInt(16) + 1)
+                }
+                stream.createOutputStream().use { it.write(corrupted.toByteArray(Charsets.ISO_8859_1)) }
+            }
+            assertTrue(rewritten >= 5, "fixture corrupted only $rewritten mappings; the corrector would not engage")
+            document.save(out)
+        }
+        return out.toByteArray()
+    }
+
+
+    @Test
+    fun `an arabic line whose leftmost word is latin still reads arabic-first`() {
+        // The affiliation line of a real paper: "جامعة الوادي، nebbar@…" —
+        // painted, its leftmost glyph is the "n" of the address. Read on its
+        // own the line looks left-to-right; the document says otherwise.
+        val pdf = taggedArabicPdf(listOf(title, "nebbar@example.com"), language = "ar-DZ")
+        assertEquals("$title nebbar@example.com", paragraphs(pdf).first().text)
+    }
+
+    @Test
+    fun `without a language tag the document's own text decides its direction`() {
+        // Sixteen Arabic letters to six Latin ones: the document is Arabic.
+        // (A longer address ties the count, and a tie proves nothing.)
+        val pdf = taggedArabicPdf(listOf(title, inWord, research, "nb@ex.com"), language = null)
+        assertEquals("$title $inWord $research nb@ex.com", paragraphs(pdf).first().text)
     }
 
 }

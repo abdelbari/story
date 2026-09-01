@@ -1,5 +1,6 @@
 package app.morpho.engine.pdf
 
+import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.ExtractedText
 import app.morpho.engine.layout.pdf.PdfLine
 import app.morpho.engine.layout.pdf.PdfSegment
@@ -30,6 +31,20 @@ import kotlin.math.min
 internal class PositionTextStripper : PDFTextStripper() {
 
     private val captured = mutableListOf<PdfLine>()
+
+    /** A line as painted, waiting for the document's direction to be known. */
+    private class PendingLine(
+        val visual: String,
+        val x: Float,
+        val baselineY: Float,
+        val maxFontSize: Float,
+        val page: Int,
+        val segments: List<PdfSegment>,
+    )
+
+    private val pending = mutableListOf<PendingLine>()
+    /** Overrules a broken ToUnicode map with the embedded font's own cmap. */
+    private val glyphText = GlyphUnicode()
     private val lineText = StringBuilder()
     private val lineSegments = mutableListOf<PdfSegment>()
     private var lineX = Float.MAX_VALUE
@@ -44,9 +59,29 @@ internal class PositionTextStripper : PDFTextStripper() {
     /** Extracts the positioned lines of [document], leaving it open. */
     fun capture(document: PDDocument): List<PdfLine> {
         captured.clear()
+        pending.clear()
         resetLine()
         writeText(document, Writer.nullWriter())
         flushLine()
+        // Every line is reconstructed against the document's direction —
+        // its /Lang, else the direction most of its text runs in — because
+        // a line cannot tell its own: an Arabic line whose leftmost word is
+        // an email address starts, visually, with a Latin letter.
+        val base = Bidi.directionOfLanguage(runCatching { document.documentCatalog.language }.getOrNull())
+            ?: Bidi.dominantDirection(pending.joinToString(separator = "\n") { it.visual })
+        for (line in pending) {
+            val text = ExtractedText.toLogical(line.visual, base).trim()
+            if (text.isEmpty()) continue
+            captured += PdfLine(
+                text = text,
+                x = line.x,
+                baselineY = line.baselineY,
+                maxFontSize = line.maxFontSize,
+                page = line.page,
+                segments = line.segments,
+            )
+        }
+        pending.clear()
         return captured.toList()
     }
 
@@ -54,7 +89,7 @@ internal class PositionTextStripper : PDFTextStripper() {
         if (text.isBlank() || textPositions.isEmpty()) return
         // The painted glyphs, not PDFBox's direction-corrected word: the
         // line is reconstructed as a whole in flushLine.
-        val painted = textPositions.joinToString(separator = "") { it.unicode.orEmpty() }
+        val painted = textPositions.joinToString(separator = "") { glyphText.of(it) }
         if (painted.isEmpty()) return
         val baselineY = textPositions.first().yDirAdj
         if (lineText.isNotEmpty() && abs(baselineY - lineY) > SAME_LINE_TOLERANCE_PT) flushLine()
@@ -83,10 +118,10 @@ internal class PositionTextStripper : PDFTextStripper() {
     override fun writePageEnd() = flushLine()
 
     private fun flushLine() {
-        val text = ExtractedText.toLogical(lineText.toString()).trim()
-        if (text.isNotEmpty()) {
-            captured += PdfLine(
-                text = text,
+        val visual = lineText.toString()
+        if (visual.isNotBlank()) {
+            pending += PendingLine(
+                visual = visual,
                 x = lineX,
                 baselineY = lineY,
                 maxFontSize = lineFontSize,
