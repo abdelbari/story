@@ -82,6 +82,16 @@ sealed interface EditorIntent {
 
     data class SetTrackMuted(val trackId: TrackId, val muted: Boolean) : EditorIntent
 
+    /** Edits an existing text overlay's content and styling. */
+    data class SetText(val clipId: ClipId, val text: TextSpec) : EditorIntent {
+        override val coalesceKey get() = "text:${clipId.value}"
+    }
+
+    /** Moves/scales a picture-in-picture overlay. */
+    data class SetPip(val clipId: ClipId, val pip: PipSpec) : EditorIntent {
+        override val coalesceKey get() = "pip:${clipId.value}"
+    }
+
     /** Replaces the whole document (project restore). Clears undo history. */
     data class Replace(val state: TimelineState) : EditorIntent
 

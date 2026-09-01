@@ -312,6 +312,34 @@ class CoreLogicTest {
     }
 
     @Test
+    fun setTextOnlyAppliesToTextClipsAndSetPipClamps() {
+        val plain = clip("a", 5_000)
+        val s0 = stateWith(listOf(plain))
+        assertTrue(reduce(s0, EditorIntent.SetText(plain.id, TextSpec("hi"))) === s0)
+
+        val textClip = ClipModel(
+            ClipId("t"), MediaRef("kinetic://text", 3_000, false, false, 0f), 0, 3_000,
+            text = TextSpec("before"),
+        )
+        val base = TimelineState.empty()
+        val withText = base.copy(
+            tracks = base.tracks.map {
+                if (it.type == TrackType.TEXT) it.copy(clips = persistentListOf(textClip)) else it
+            }.toPersistentList(),
+        )
+        val edited = reduce(withText, EditorIntent.SetText(textClip.id, TextSpec("hi")))
+        assertEquals("hi", edited.tracks.first { it.type == TrackType.TEXT }.clips[0].text?.text)
+
+        val pip = reduce(
+            s0,
+            EditorIntent.SetPip(plain.id, PipSpec(anchorX = 5f, anchorY = -9f, scale = 40f)),
+        ).mainTrack.clips[0].pip!!
+        assertEquals(1f, pip.anchorX, 1e-3f)
+        assertEquals(-1f, pip.anchorY, 1e-3f)
+        assertEquals(1f, pip.scale, 1e-3f)
+    }
+
+    @Test
     fun moveReordersMainAndResortsFreeTracks() {
         val a = clip("a", 1_000); val b = clip("b", 1_000); val c = clip("c", 1_000)
         val s0 = stateWith(listOf(a, b, c))

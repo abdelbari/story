@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -28,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -314,6 +316,11 @@ private fun ToolBar(
         ToolButton("+ Music") { musicPicker.launch(arrayOf("audio/*")) }
         ToolButton("+ PiP") { pipPicker.launch(arrayOf("video/*")) }
         ToolButton("+ Text") { vm.addText(viewport.playheadMs) }
+        var stickerIndex by remember { mutableIntStateOf(0) }
+        ToolButton("+ Sticker") {
+            vm.addSticker(viewport.playheadMs, STICKER_ASSETS[stickerIndex % STICKER_ASSETS.size])
+            stickerIndex++
+        }
         ToolButton(if (recording) "■ Stop" else "● Rec") {
             if (recording) {
                 vm.stopVoiceover(voiceoverStartMs)
@@ -355,6 +362,43 @@ private fun ClipInspector(
     dispatch: (EditorIntent) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+        // A text overlay whose words cannot be changed is not a text tool.
+        clip.text?.let { spec ->
+            OutlinedTextField(
+                value = spec.text,
+                onValueChange = { dispatch(EditorIntent.SetText(clip.id, spec.copy(text = it))) },
+                singleLine = true,
+                textStyle = TextStyle(color = Color(0xFFEDEDF2), fontSize = 14.sp),
+                label = { Text("Text", fontSize = 11.sp, color = Color(0xFF9A9AA5)) },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                InspectorSlider("Size", spec.textSizePx, 24f..160f) {
+                    dispatch(EditorIntent.SetText(clip.id, spec.copy(textSizePx = it)))
+                }
+                InspectorSlider("Y", spec.anchorY, -1f..1f) {
+                    dispatch(EditorIntent.SetText(clip.id, spec.copy(anchorY = it)))
+                }
+            }
+        }
+
+        // PiP placement: the same numbers the export compositor consumes.
+        clip.pip?.let { spec ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                InspectorSlider("PiP size", spec.scale, 0.1f..0.9f) {
+                    dispatch(EditorIntent.SetPip(clip.id, spec.copy(scale = it)))
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                InspectorSlider("PiP X", spec.anchorX, -1f..1f) {
+                    dispatch(EditorIntent.SetPip(clip.id, spec.copy(anchorX = it)))
+                }
+                InspectorSlider("PiP Y", spec.anchorY, -1f..1f) {
+                    dispatch(EditorIntent.SetPip(clip.id, spec.copy(anchorY = it)))
+                }
+            }
+        }
+
         Row(verticalAlignment = Alignment.CenterVertically) {
             InspectorSlider("Bright", clip.grade.brightness, -0.5f..0.5f) {
                 dispatch(EditorIntent.SetGrade(clip.id, clip.grade.copy(brightness = it)))
@@ -446,6 +490,13 @@ private fun androidx.compose.foundation.layout.RowScope.InspectorSlider(
 
 /** Ships in app/src/main/assets — a 64-cube teal/orange film LUT. */
 private const val FILM_LUT_ASSET = "luts/teal_orange.png"
+
+/** Bundled sticker assets; the "+ Sticker" button cycles through them. */
+private val STICKER_ASSETS = listOf(
+    "stickers/star.png",
+    "stickers/heart.png",
+    "stickers/arrow.png",
+)
 
 private fun formatMs(ms: Long): String {
     val tenths = (ms % 1000) / 100

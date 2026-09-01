@@ -56,6 +56,19 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
     is EditorIntent.SetVolumeKeyframes -> replaceClip(state, intent.clipId) {
         it.copy(volumeKeyframes = intent.keyframes.sortedBy { kf -> kf.atMs }.toPersistentList())
     }
+    is EditorIntent.SetText -> replaceClip(state, intent.clipId) {
+        // Only meaningful on a clip that already is a text overlay.
+        if (it.text == null) it else it.copy(text = intent.text)
+    }
+    is EditorIntent.SetPip -> replaceClip(state, intent.clipId) {
+        it.copy(
+            pip = intent.pip.copy(
+                scale = intent.pip.scale.coerceIn(0.05f, 1f),
+                anchorX = intent.pip.anchorX.coerceIn(-1f, 1f),
+                anchorY = intent.pip.anchorY.coerceIn(-1f, 1f),
+            ),
+        )
+    }
     is EditorIntent.SetTrackMuted -> mapTracks(state) { t ->
         if (t.id == intent.trackId) t.copy(muted = intent.muted) else t
     }

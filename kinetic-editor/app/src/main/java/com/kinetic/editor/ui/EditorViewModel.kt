@@ -14,6 +14,7 @@ import com.kinetic.editor.core.model.MediaRef
 import com.kinetic.editor.core.model.PipSpec
 import com.kinetic.editor.core.model.ProjectCodec
 import com.kinetic.editor.core.model.TimelineState
+import com.kinetic.editor.core.model.StickerSpec
 import com.kinetic.editor.core.model.TextSpec
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.audioStructureHash
@@ -165,14 +166,37 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 trackId = track.id,
                 media = MediaRef(
                     uri = SYNTHETIC_TEXT_URI,
-                    durationMs = DEFAULT_TEXT_DURATION_MS,
+                    durationMs = DEFAULT_OVERLAY_DURATION_MS,
                     hasVideo = false,
                     hasAudio = false,
                     fps = 0f,
                 ),
                 startMs = atMs,
-                trimOutMs = DEFAULT_TEXT_DURATION_MS,
+                trimOutMs = DEFAULT_OVERLAY_DURATION_MS,
                 text = TextSpec(text = text),
+            ),
+        )
+    }
+
+    /**
+     * Stickers are clips too, on their own lane — same synthetic-media trick as
+     * text, so trimming and moving a sticker needs no special cases anywhere.
+     */
+    fun addSticker(atMs: Long, assetPath: String) {
+        val track = store.timeline.value.tracks.first { it.type == TrackType.STICKER }
+        store.dispatch(
+            EditorIntent.AddClip(
+                trackId = track.id,
+                media = MediaRef(
+                    uri = SYNTHETIC_STICKER_URI,
+                    durationMs = DEFAULT_OVERLAY_DURATION_MS,
+                    hasVideo = false,
+                    hasAudio = false,
+                    fps = 0f,
+                ),
+                startMs = atMs,
+                trimOutMs = DEFAULT_OVERLAY_DURATION_MS,
+                sticker = StickerSpec(assetPath = assetPath),
             ),
         )
     }
@@ -220,7 +244,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         /** Text clips carry no decodable media; the URI is a marker, never opened. */
         const val SYNTHETIC_TEXT_URI = "kinetic://text"
-        const val DEFAULT_TEXT_DURATION_MS = 3_000L
+        const val SYNTHETIC_STICKER_URI = "kinetic://sticker"
+        const val DEFAULT_OVERLAY_DURATION_MS = 3_000L
         const val AUTOSAVE_DEBOUNCE_MS = 700L
     }
 
