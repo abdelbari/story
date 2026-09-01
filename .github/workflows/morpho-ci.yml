@@ -39,6 +39,14 @@ jobs:
         working-directory: morpho/android
         run: ./gradlew :app:assembleDebug :app:lintDebug
 
+      # The launch artifact, built on every push: release runs R8 over code
+      # that debug never touches, and a keep rule that is missing there fails
+      # only in the hands of users. Unsigned here — signing needs a keystore
+      # that deliberately lives outside the repository.
+      - name: Assemble release bundle (R8 + resource shrinking)
+        working-directory: morpho/android
+        run: ./gradlew :app:assembleRelease :app:bundleRelease
+
       # The Zero-Upload guarantee is a product promise, so it is checked by a
       # machine rather than by memory: the merged manifest is what actually
       # ships, and it includes every permission any dependency asks for.

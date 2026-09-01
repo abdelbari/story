@@ -4,6 +4,15 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// Release signing comes from Gradle properties (or -P flags / ~/.gradle/
+// gradle.properties) so no key material ever lives in the repository. With
+// none supplied — as in CI — the release build is simply left unsigned,
+// which is enough to exercise R8.
+val releaseStore = providers.gradleProperty("MORPHO_KEYSTORE").orNull
+val releaseStorePassword = providers.gradleProperty("MORPHO_KEYSTORE_PASSWORD").orNull
+val releaseKeyAlias = providers.gradleProperty("MORPHO_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.gradleProperty("MORPHO_KEY_PASSWORD").orNull
+
 android {
     namespace = "app.morpho.converter"
     compileSdk = 35
@@ -13,16 +22,41 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0.0"
+
+        // Only the languages Morpho is actually translated into ship, so the
+        // ~80 locales AndroidX carries do not pad the download. The set must
+        // stay in step with res/xml/locales_config.xml, which drives the
+        // per-app language picker.
+        resourceConfigurations += listOf("en", "ar", "fr", "es", "de")
+    }
+
+    signingConfigs {
+        if (releaseStore != null && releaseStorePassword != null &&
+            releaseKeyAlias != null && releaseKeyPassword != null
+        ) {
+            create("release") {
+                storeFile = file(releaseStore)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // On: the app ships ~10 MB of OCR models, so every byte of code
+            // and unused resource is worth shrinking. proguard-rules.pro
+            // explains what has to survive and why.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // Null when no keystore was supplied; the build is unsigned then.
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
