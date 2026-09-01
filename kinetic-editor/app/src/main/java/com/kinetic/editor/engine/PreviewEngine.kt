@@ -10,7 +10,6 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.source.ConcatenatingMediaSource2
@@ -69,7 +68,8 @@ class PreviewEngine(
 
     private val player: ExoPlayer = ExoPlayer.Builder(
         context,
-        DefaultRenderersFactory(context).setEnableDecoderFallback(true),
+        // Effects must see window positions, whatever seeks came before: see PreviewRenderers.kt.
+        PreviewRenderersFactory(context).setEnableDecoderFallback(true),
     )
         .setLoadControl(
             DefaultLoadControl.Builder()

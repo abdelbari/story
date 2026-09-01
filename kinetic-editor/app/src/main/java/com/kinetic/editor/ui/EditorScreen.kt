@@ -61,6 +61,7 @@ import com.kinetic.editor.core.model.readFades
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.TransitionSpec
+import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.TransitionType
 import com.kinetic.editor.core.mvi.EditorIntent
 import kotlinx.collections.immutable.toPersistentList
@@ -222,7 +223,7 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
             vm = vm,
             viewport = viewport,
             recording = recording,
-            hasSelection = selectedClip != null,
+            hasSelection = selected != null,
         )
     }
 }

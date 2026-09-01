@@ -517,6 +517,32 @@ class CoreLogicTest {
     }
 
     @Test
+    fun exportGradeProviderMeasuresFromTheFirstFrameItSees() {
+        // Transformer adds the item's sequence offset ahead of its effects: the
+        // third clip of a sequence sees ~12.5s on its first frame, not 0.
+        val buf = GradeUniformsBuffer()
+        val p = ClipGradeProvider(
+            grade = ColorGradeSpec(),
+            lutBitmap = null, lutIntensity = 0f,
+            transOutType = TransitionType.DIP_TO_BLACK,
+            transOutStartUs = 5_750_000, transOutEndUs = 6_000_000,
+            transInType = TransitionType.ZOOM_PUNCH, transInEndUs = 250_000,
+        )
+        p.fill(12_500_000, buf)
+        assertEquals(3f, buf.transType, 1e-3f)
+        assertEquals(0.5f, buf.transProgress, 1e-3f)
+        p.fill(12_749_999, buf)
+        assertEquals(1f, buf.transProgress, 1e-2f)
+        p.fill(15_500_000, buf)
+        assertEquals(0f, buf.transType, 1e-3f)
+        p.fill(18_250_000, buf)
+        assertEquals(1f, buf.transType, 1e-3f)
+        assertEquals(0f, buf.transProgress, 1e-3f)
+        p.fill(18_499_999, buf)
+        assertEquals(0.5f, buf.transProgress, 1e-2f)
+    }
+
+    @Test
     fun fxTimelineBinarySearchGatesSegments() {
         fun seg(s: Long, e: Long) = FxSegment(s, e, 0.1f, 1f, 1f, 0f, null, 0f, 0f, e, 0f, s)
         val tl = PreviewFxTimeline(listOf(seg(0, 1_000_000), seg(1_000_000, 3_000_000)))

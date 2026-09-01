@@ -148,9 +148,15 @@ class GradeShaderProgram(
 /* ------------------------- provider implementations ------------------------ */
 
 /**
- * Export-side provider: clip-local time domain (timestamps restart near zero for
- * each EditedMediaItem, BEFORE SpeedChangeEffect in the chain). Transition
- * windows are pre-computed by CompositionMapper in that same domain.
+ * Export-side provider: clip-local SOURCE time, BEFORE SpeedChangeEffect in the
+ * chain, the domain CompositionMapper pre-computes the transition windows in.
+ *
+ * Transformer does not hand per-item effects clip-local timestamps: the frame
+ * processor adds each item's sequence offset (the summed durations of the items
+ * before it) at the input stage, ahead of the item's own effects. media3's own
+ * SpeedChangeEffect copes by measuring from the first frame it sees, and so
+ * does this: one provider serves exactly one EditedMediaItem, whose first frame
+ * is the clip's first frame.
  */
 class ClipGradeProvider(
     private val grade: ColorGradeSpec,
@@ -163,25 +169,34 @@ class ClipGradeProvider(
     private val transInEndUs: Long,
 ) : GradeUniformsProvider {
 
+    private var baseUs = UNSET
+
     override fun fill(presentationTimeUs: Long, out: GradeUniformsBuffer) {
+        if (baseUs == UNSET) baseUs = presentationTimeUs
+        val localUs = presentationTimeUs - baseUs
+
         out.reset()
         out.setGrade(grade)
         out.lutBitmap = lutBitmap
         out.lutIntensity = lutIntensity
 
         // Incoming half first (segment start), then outgoing half (segment end).
-        if (transInType != TransitionType.NONE && presentationTimeUs < transInEndUs && transInEndUs > 0) {
-            val f = presentationTimeUs.toFloat() / transInEndUs
+        if (transInType != TransitionType.NONE && localUs < transInEndUs && transInEndUs > 0) {
+            val f = localUs.toFloat() / transInEndUs
             out.transType = transInType.ordinal.toFloat()
             out.transProgress = 0.5f + 0.5f * f.coerceIn(0f, 1f)
         } else if (
             transOutType != TransitionType.NONE &&
-            presentationTimeUs >= transOutStartUs && transOutEndUs > transOutStartUs
+            localUs >= transOutStartUs && transOutEndUs > transOutStartUs
         ) {
-            val f = (presentationTimeUs - transOutStartUs).toFloat() / (transOutEndUs - transOutStartUs)
+            val f = (localUs - transOutStartUs).toFloat() / (transOutEndUs - transOutStartUs)
             out.transType = transOutType.ordinal.toFloat()
             out.transProgress = 0.5f * f.coerceIn(0f, 1f)
         }
+    }
+
+    private companion object {
+        const val UNSET = Long.MIN_VALUE
     }
 }
 

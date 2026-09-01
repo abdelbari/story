@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 35 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 36 pure-JVM logic tests
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
@@ -30,13 +30,18 @@ environment, so the app has not been assembled by Gradle there. Instead:
   ones. (This is what caught `OverlaySettings`/`VideoCompositorSettings` having
   moved to `androidx.media3.common`, and the deprecated composition-level
   `experimentalSetForceAudioTrack`.)
-- The Compose/activity/lifecycle-facing files (`EditorScreen`, `PreviewSurface`,
-  `ui/timeline/*`) are front-end checked with those symbols unresolved; what
-  remains after filtering the unresolved-symbol cascades is nothing.
+- The Compose UI (`EditorScreen`, `PreviewSurface`, `ui/timeline/*`,
+  `MainActivity`) **compiles against Compose Multiplatform's desktop artifacts**
+  — the same `androidx.compose.*` API surface, published to Maven Central —
+  with the Compose compiler plugin, in a small Gradle JVM project that adds the
+  android-all jar, the media3 sources and stubs for the handful of Android-only
+  pieces (`AndroidView`, `LocalContext`, activity results, WorkManager,
+  ViewModel). The whole tree type-checks clean. (This is what caught an
+  undefined name and a missing import in `EditorScreen`.)
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 35 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 38-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 36 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 39-scenario executable sandbox suite.
 
 ---
 
@@ -163,6 +168,15 @@ during pinch-zoom. Instead:
 - Per-clip speed and volume envelopes are applied by a 10 Hz control tick in
   preview (`setPlaybackSpeed`, `volume`) — the export applies them
   sample-exactly.
+- **Effect timestamps are window positions by construction**
+  (`engine/PreviewRenderers.kt`). Stock ExoPlayer hands the effects pipeline
+  `bufferTime − startOfFirstStream`, captured once per renderer: sequential
+  playback yields window positions, but a seek into another clip restarts the
+  renderer clock, after which the same formula yields that clip's source time
+  and the grade/LUT/transition lookups land on the wrong clip. A small
+  `MediaCodecVideoRenderer` subclass derives the adjustment per stream from
+  the period's position in the window instead, so the `PreviewFxTimeline`
+  lookup is exact however playback got there.
 - The preview is two nested frames, mirroring the export: the **canvas** (output
   size) holds the **picture** — the main clip letterboxed by its own display
   aspect, which is the fit the export's `Presentation` applies — so a landscape
@@ -197,7 +211,11 @@ during pinch-zoom. Instead:
   the **same GLSL grade/LUT/transition shader as preview** (windows computed in
   clip-local source time, placed *before* `SpeedChangeEffect`), then
   `SonicAudioProcessor(speed)` + `VolumeEnvelopeAudioProcessor` (which runs in
-  clip *timeline* time — same domain the keyframes are authored in).
+  clip *timeline* time — same domain the keyframes are authored in). Transformer
+  adds each item's sequence offset ahead of the item's own effects, so the
+  export provider measures from the first frame it sees — the same trick
+  media3's own `SpeedChangeEffect` uses — rather than trusting the timestamps
+  to start at zero.
 - Each **VIDEO_OVERLAY (PiP) track → its own video sequence**, positioned in
   time by gaps (blank frames) and in space by `PipCompositorSettings`, which
   resolves compositor input ids (0 = main track, 1..n = overlays) to the
