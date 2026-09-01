@@ -80,7 +80,7 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         if (text.isBlank() || textPositions.isEmpty()) return
         // The painted glyphs, not PDFBox's direction-corrected word: the
         // line is reconstructed as a whole in flushLine.
-        val painted = textPositions.joinToString(separator = "") { glyphText.of(it) }
+        val painted = textPositions.joinToString(separator = "") { ExtractedText.paintedForm(glyphText.of(it)) }
         if (painted.isEmpty()) return
         val baselineY = textPositions.first().yDirAdj
         if (lineText.isNotEmpty() && abs(baselineY - lineY) > SAME_LINE_TOLERANCE_PT) flushLine()

@@ -31,7 +31,6 @@ import com.tom_roush.pdfbox.text.PDFMarkedContentExtractor
 import com.tom_roush.pdfbox.text.TextPosition
 import java.util.Collections
 import kotlin.math.abs
-import kotlin.math.roundToInt
 import java.util.IdentityHashMap
 
 /**
@@ -60,6 +59,13 @@ import java.util.IdentityHashMap
  * tree exists but yields no text (some producers write empty shells), or is
  * nested beyond [MAX_DEPTH].
  */
+/**
+ * A painted glyph with the position it sorts by. Usually its own x; for a
+ * glyph a kerning hair to the left of the one painted just before it, a
+ * point past that one instead, so the two keep their painting order.
+ */
+private class Glyph(val position: TextPosition, val x: Float)
+
 internal object AndroidStructureTreeReader {
 
     private const val MAX_DEPTH = 128
@@ -71,6 +77,8 @@ internal object AndroidStructureTreeReader {
     private const val WORD_GAP_FACTOR = 0.2f
     /** How far above its baseline, as a share of type size, a glyph still belongs to a line. */
     private const val SUPERSCRIPT_REACH = 0.5f
+    /** A backward step no wider than this, right after the previous glyph, is kerning, not a new word. */
+    private const val KERNING_OVERLAP_PT = 1.5f
     private const val CONFIDENCE = 0.9f
 
     fun read(doc: PDDocument, images: List<PdfImage> = emptyList()): DocumentModel? {
@@ -127,7 +135,7 @@ internal object AndroidStructureTreeReader {
      */
     private class MarkedContentIndex(doc: PDDocument) {
         private val pageIndexByPage = IdentityHashMap<COSDictionary, Int>()
-        private val glyphsByPageAndMcid = HashMap<Long, List<TextPosition>>()
+        private val glyphsByPageAndMcid = HashMap<Long, List<Glyph>>()
         private val textByPageAndMcid = HashMap<Long, String>()
         private val sizeByPageAndMcid = HashMap<Long, Float>()
         private val boldByPageAndMcid = HashMap<Long, Boolean>()
@@ -154,7 +162,7 @@ internal object AndroidStructureTreeReader {
             }
             baseDirection = Bidi.directionOfLanguage(runCatching { doc.documentCatalog.language }.getOrNull())
                 ?: Bidi.dominantDirection(buildString {
-                    for (glyphs in glyphsByPageAndMcid.values) for (glyph in glyphs) append(glyph.unicode.orEmpty())
+                    for (glyphs in glyphsByPageAndMcid.values) for (glyph in glyphs) append(glyph.position.unicode.orEmpty())
                 })
         }
 
@@ -176,7 +184,7 @@ internal object AndroidStructureTreeReader {
             }
             gather(content)
             if (content.mcid >= 0 && glyphs.any { !it.unicode.isNullOrEmpty() }) {
-                glyphsByPageAndMcid[key(pageIndex, content.mcid)] = glyphs.toList()
+                glyphsByPageAndMcid[key(pageIndex, content.mcid)] = positioned(glyphs)
                 sizeByPageAndMcid[key(pageIndex, content.mcid)] = size
                 boldByPageAndMcid[key(pageIndex, content.mcid)] = bold
             }
@@ -184,6 +192,29 @@ internal object AndroidStructureTreeReader {
             for (item in content.contents.orEmpty()) {
                 if (item is PDMarkedContent) collect(item, pageIndex)
             }
+        }
+
+        /**
+         * The run's glyphs with the position each sorts by.
+         *
+         * Sorting strictly by x is right for everything but a kerning
+         * overlap: in الجزائر the ا was painted after the ز and sits 0.4pt to
+         * its left, and sorted by x the two swapped. A glyph painted right
+         * after another and a hair to its left is not to its left in any
+         * sense that matters, so it takes a position just past it. A real
+         * step backwards — the next word of a line positioned right to left
+         * — is many points wide and keeps its own x.
+         */
+        private fun positioned(glyphs: List<TextPosition>): List<Glyph> {
+            val out = ArrayList<Glyph>(glyphs.size)
+            var previous = Float.NEGATIVE_INFINITY
+            for (glyph in glyphs) {
+                val x = glyph.xDirAdj
+                val sortsAt = if (x < previous && previous - x <= KERNING_OVERLAP_PT) previous + 0.01f else x
+                out += Glyph(glyph, sortsAt)
+                previous = sortsAt
+            }
+            return out
         }
 
         /**
@@ -214,15 +245,15 @@ internal object AndroidStructureTreeReader {
          * with the Arabic beside it in view — alone, it stays put and ends up
          * doubled on one side of the word and missing on the other.
          */
-        fun readOffThePage(glyphs: List<Pair<Int, TextPosition>>): String {
+        fun readOffThePage(glyphs: List<Pair<Int, Glyph>>): String {
             if (glyphs.isEmpty()) return ""
             // Pages in order, then lines top to bottom within each; a line
             // never spans a page break however close the baselines land.
-            val lines = mutableListOf<MutableList<TextPosition>>()
+            val lines = mutableListOf<MutableList<Glyph>>()
             for ((_, onPage) in glyphs.groupBy { it.first }.toSortedMap()) {
-                var line: MutableList<TextPosition>? = null
+                var line: MutableList<Glyph>? = null
                 var lineSize = 0f
-                for (glyph in onPage.map { it.second }.sortedBy { it.yDirAdj }) {
+                for (glyph in onPage.map { it.second }.sortedBy { it.position.yDirAdj }) {
                     val current = line
                     // A superscript sits a third of an em above its line's
                     // baseline; a fixed two points would make it a line of
@@ -231,13 +262,14 @@ internal object AndroidStructureTreeReader {
                     // the glyph's, since top-down order meets the small
                     // raised glyph before the line it belongs to — and stays
                     // well short of a real line pitch.
-                    val reach = maxOf(SAME_LINE_TOLERANCE_PT, SUPERSCRIPT_REACH * maxOf(lineSize, glyph.fontSizeInPt))
-                    if (current != null && abs(glyph.yDirAdj - current.first().yDirAdj) <= reach) {
+                    val size = glyph.position.fontSizeInPt
+                    val reach = maxOf(SAME_LINE_TOLERANCE_PT, SUPERSCRIPT_REACH * maxOf(lineSize, size))
+                    if (current != null && abs(glyph.position.yDirAdj - current.first().position.yDirAdj) <= reach) {
                         current += glyph
-                        lineSize = maxOf(lineSize, glyph.fontSizeInPt)
+                        lineSize = maxOf(lineSize, size)
                     } else {
                         line = mutableListOf(glyph).also { lines += it }
-                        lineSize = glyph.fontSizeInPt
+                        lineSize = size
                     }
                 }
             }
@@ -253,20 +285,18 @@ internal object AndroidStructureTreeReader {
                 // read from the gaps, as PDFBox's own stripper does — a
                 // kerning gap inside a word is otherwise easy to mistake for
                 // one, and did split الجزائر in two.
-                val inferBreaks = line.none { glyphText.of(it).let { u -> u.isNotEmpty() && u.isBlank() } }
-                // Whole-point buckets, and a stable sort, so two glyphs a
-                // kerning hair apart keep their painting order instead of
-                // swapping on float noise.
-                for (glyph in line.sortedBy { it.xDirAdj.roundToInt() }) {
-                    val unicode = glyphText.of(glyph)
+                val inferBreaks = line.none { glyphText.of(it.position).let { u -> u.isNotEmpty() && u.isBlank() } }
+                for (glyph in line.sortedBy { it.x }) {
+                    val position = glyph.position
+                    val unicode = ExtractedText.paintedForm(glyphText.of(position))
                     if (inferBreaks && previous != null && previous.widthDirAdj > 0f &&
                         unicode.isNotBlank() && !visual.endsWith(' ')
                     ) {
-                        val gap = glyph.xDirAdj - (previous.xDirAdj + previous.widthDirAdj)
-                        if (gap > WORD_GAP_FACTOR * glyph.fontSizeInPt) visual.append(' ')
+                        val gap = position.xDirAdj - (previous.xDirAdj + previous.widthDirAdj)
+                        if (gap > WORD_GAP_FACTOR * position.fontSizeInPt) visual.append(' ')
                     }
                     visual.append(unicode)
-                    previous = glyph
+                    previous = position
                 }
                 ExtractedText.toLogical(visual.toString(), baseDirection)
             }
@@ -280,7 +310,7 @@ internal object AndroidStructureTreeReader {
         }
 
         /** The glyphs painted under [mcid], each tagged with its page index. */
-        fun glyphsFor(page: PDPage?, mcid: Int): List<Pair<Int, TextPosition>> {
+        fun glyphsFor(page: PDPage?, mcid: Int): List<Pair<Int, Glyph>> {
             val pageIndex = page?.cosObject?.let(pageIndexByPage::get) ?: return emptyList()
             return glyphsByPageAndMcid[key(pageIndex, mcid)]?.map { pageIndex to it }.orEmpty()
         }
@@ -529,7 +559,7 @@ internal object AndroidStructureTreeReader {
 
         /** All text under an element, in tag (logical) order. */
         private fun textOf(element: PDStructureElement): String {
-            val glyphs = mutableListOf<Pair<Int, TextPosition>>()
+            val glyphs = mutableListOf<Pair<Int, Glyph>>()
             fun gather(node: PDStructureElement, depth: Int) {
                 if (depth > MAX_DEPTH) throw TooDeepException()
                 for (kid in node.kids.orEmpty()) {

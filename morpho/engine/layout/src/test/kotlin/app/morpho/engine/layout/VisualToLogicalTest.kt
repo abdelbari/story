@@ -52,4 +52,40 @@ class VisualToLogicalTest {
     fun `an empty string is returned unchanged`() {
         assertEquals("", Bidi.visualToLogical(""))
     }
+
+    @Test
+    fun `a ligature glyph keeps its letters in order through the reversal`() {
+        // "الاستمارة" painted: the لا is one glyph whose text is two letters
+        // in logical order; entered backwards, the line's reversal rights it.
+        val painted = "ةرامتس" + ExtractedText.paintedForm("لا") + "ا"
+        assertEquals("الاستمارة", ExtractedText.toLogical(painted, TextDirection.RTL))
+    }
+
+    @Test
+    fun `a presentation-form ligature folds after the reversal, not before`() {
+        // ﻻ (U+FEFB) is one character while the line is put back in order.
+        assertEquals("الاستمارة", ExtractedText.toLogical("ةرامتس\uFEFBا", TextDirection.RTL))
+    }
+
+    @Test
+    fun `runs of spaces collapse to one`() {
+        assertEquals("تاريخ القبول: 2022", ExtractedText.toLogical("2022      :لوبقلا خيرات", TextDirection.RTL))
+    }
+
+
+    @Test
+    fun `a date after arabic letters keeps its components in order`() {
+        // As painted: the date at the left, then the label's words reversed.
+        // The bidi rules alone return 21-04-2022 here, while the same date
+        // at the start of a line comes back whole.
+        val visual = "2022-04-21:" + "الاستلام".reversed() + " " + "تاريخ".reversed()
+        assertEquals("تاريخ الاستلام:2022-04-21", Bidi.visualToLogical(visual, TextDirection.RTL))
+    }
+
+    @Test
+    fun `a page range inside arabic keeps its order too`() {
+        val visual = "12-15 " + "الصفحات".reversed()
+        assertEquals("الصفحات 12-15", Bidi.visualToLogical(visual, TextDirection.RTL))
+    }
+
 }

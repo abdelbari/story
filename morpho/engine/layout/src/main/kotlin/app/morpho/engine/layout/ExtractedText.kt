@@ -29,7 +29,42 @@ object ExtractedText {
      * work out for itself.
      */
     fun toLogical(text: String, base: TextDirection? = null): String =
-        Bidi.visualToLogical(foldPresentationForms(text), base)
+        // Reconstruct first, fold after: a presentation-form ligature such as
+        // ﻻ is one character while the line is put back in order and only
+        // then becomes the two letters لا — in logical order. Folding first
+        // would hand the reversal two letters to swap.
+        collapseSpaces(foldPresentationForms(Bidi.visualToLogical(text, base)))
+
+    /**
+     * A glyph's text as it should enter a line that is about to be
+     * reconstructed from visual order.
+     *
+     * A ligature glyph — لا drawn as one mark — carries two characters, and
+     * ToUnicode gives them in logical order. Reversing the line to recover
+     * logical order reverses those two as well, and every لا in a document
+     * comes out ال. So a multi-character right-to-left glyph is entered
+     * backwards, and the line's reversal puts it right. Left-to-right
+     * ligatures (ﬁ) are not reversed by the line, so they are left alone.
+     */
+    fun paintedForm(glyphText: String): String =
+        if (glyphText.length > 1 && glyphText.any(::isRtlLetter)) StringBuilder(glyphText).reverse().toString()
+        else glyphText
+
+    /**
+     * Runs of spaces become one. On a page, spacing is geometry — Word
+     * justifies an Arabic heading by widening its gaps, and a tab-aligned
+     * line of dates arrives as words separated by twenty spaces — and none
+     * of it is content.
+     */
+    private fun collapseSpaces(text: String): String = SPACE_RUN.replace(text, " ")
+
+    private val SPACE_RUN = Regex("[ \u00A0]{2,}")
+
+    private fun isRtlLetter(c: Char): Boolean = when (Character.getDirectionality(c)) {
+        Character.DIRECTIONALITY_RIGHT_TO_LEFT,
+        Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC -> true
+        else -> false
+    }
 
 
     /**

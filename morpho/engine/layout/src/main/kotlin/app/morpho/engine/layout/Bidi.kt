@@ -67,7 +67,18 @@ object Bidi {
             TextDirection.LTR -> java.text.Bidi.DIRECTION_LEFT_TO_RIGHT
             null -> java.text.Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT
         }
-        val bidi = java.text.Bidi(text, flags)
+        // A number with separators — a date, a time, a page range — reads
+        // left to right as one unit wherever it sits. Run through the bidi
+        // rules in visual order it does not: digits that happen to follow
+        // Arabic letters count as Arabic numbers, the hyphens between them
+        // become right-to-left separators, and 2022-04-21 comes back as
+        // 21-04-2022 — while the same date at the start of a line, with no
+        // letter before it, comes back whole. Fencing each such number with
+        // left-to-right marks gives its digits a left-to-right neighbour on
+        // both sides, so the rules see one European number; the marks are
+        // removed again once the line is in order.
+        val fenced = NUMBER_WITH_SEPARATORS.replace(text) { "\u200E${it.value}\u200E" }
+        val bidi = java.text.Bidi(fenced, flags)
         if (!bidi.isMixed && bidi.baseIsLeftToRight()) return text
         val runCount = bidi.runCount
         val levels = ByteArray(runCount)
@@ -79,19 +90,23 @@ object Bidi {
             logicalOrder[run] = run
         }
         java.text.Bidi.reorderVisually(levels, 0, logicalOrder, 0, runCount)
-        val out = StringBuilder(text.length)
+        val out = StringBuilder(fenced.length)
         for (position in 0 until runCount) {
             val run = logicalOrder[position] as Int
             val start = bidi.getRunStart(run)
             var end = bidi.getRunLimit(run)
             if (levels[run].toInt() and 1 == 1) {
-                while (end > start) out.append(text[--end])
+                while (end > start) out.append(fenced[--end])
             } else {
-                out.append(text, start, end)
+                out.append(fenced, start, end)
             }
         }
-        return out.toString()
+        return out.toString().replace("\u200E", "")
     }
+
+    /** Digits — European or Arabic-Indic — joined by the separators dates, times and ranges use. */
+    private val NUMBER_WITH_SEPARATORS =
+        Regex("[0-9\u0660-\u0669]+(?:[-\u2013/.:,][0-9\u0660-\u0669]+)+")
 
     /**
      * The direction most of [text] is written in — right-to-left if its
