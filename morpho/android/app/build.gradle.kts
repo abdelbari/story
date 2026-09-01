@@ -13,6 +13,37 @@ val releaseStorePassword = providers.gradleProperty("MORPHO_KEYSTORE_PASSWORD").
 val releaseKeyAlias = providers.gradleProperty("MORPHO_KEY_ALIAS").orNull
 val releaseKeyPassword = providers.gradleProperty("MORPHO_KEY_PASSWORD").orNull
 
+/**
+ * The commit this build came from, shown on the About screen.
+ *
+ * Read straight from .git rather than by running git, so it costs nothing,
+ * cannot fail a build on a machine without git on the PATH, and stays
+ * friendly to Gradle's configuration cache. Anything unreadable — a source
+ * archive with no .git, a worktree shape this does not know — reports
+ * "unknown" rather than breaking the build.
+ */
+fun gitCommit(): String = runCatching {
+    val gitDir = rootDir.resolve("../../.git").canonicalFile
+    if (!gitDir.exists()) return "unknown"
+    val head = gitDir.resolve("HEAD").readText().trim()
+    val sha = if (head.startsWith("ref:")) {
+        val ref = head.removePrefix("ref:").trim()
+        val loose = gitDir.resolve(ref)
+        if (loose.isFile) {
+            loose.readText().trim()
+        } else {
+            // A packed ref: the sha lives in packed-refs beside the name.
+            gitDir.resolve("packed-refs").takeIf { it.isFile }?.readLines()
+                ?.firstOrNull { it.endsWith(" $ref") }
+                ?.substringBefore(' ')
+                .orEmpty()
+        }
+    } else {
+        head // detached HEAD holds the sha itself
+    }
+    sha.take(7).ifEmpty { "unknown" }
+}.getOrDefault("unknown")
+
 android {
     namespace = "app.morpho.converter"
     compileSdk = 35
@@ -29,6 +60,10 @@ android {
         // stay in step with res/xml/locales_config.xml, which drives the
         // per-app language picker.
         resourceConfigurations += listOf("en", "ar", "fr", "es", "de")
+
+        // So "which build is on this phone?" is answerable from the About
+        // screen instead of guessed at.
+        buildConfigField("String", "GIT_COMMIT", "\"${gitCommit()}\"")
     }
 
     signingConfigs {

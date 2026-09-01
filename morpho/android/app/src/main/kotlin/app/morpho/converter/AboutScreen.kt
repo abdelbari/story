@@ -73,7 +73,10 @@ fun AboutScreen(onClose: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = stringResource(R.string.about_version, BuildConfig.VERSION_NAME),
+                text = stringResource(
+                    R.string.about_version,
+                    "${BuildConfig.VERSION_NAME} (${BuildConfig.GIT_COMMIT})",
+                ),
                 style = MaterialTheme.typography.bodyMedium,
             )
 
