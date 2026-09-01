@@ -1,8 +1,10 @@
 package app.morpho.engine.ooxml
 
+import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
+import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.ParagraphStyle
 import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
@@ -93,6 +95,60 @@ class LookRoundTripTest {
         assertEquals(91.7f, page.marginBottomPt)
         assertEquals(56.6f, page.marginLeftPt)
         assertEquals(84.8f, page.marginRightPt)
+    }
+
+    @Test
+    fun `every property is emitted in the order the schema fixes`() {
+        // WordprocessingML declares w:pPr and w:rPr as sequences, not
+        // choices: a file whose children are out of order is rejected by
+        // Word with nothing more helpful than "unreadable content". This
+        // pins the order of everything the writer emits, so an added
+        // property cannot quietly break every file the app writes.
+        val everything = DocumentModel(
+            blocks = listOf(
+                Paragraph(
+                    runs = listOf(
+                        TextRun(
+                            "text",
+                            bold = true,
+                            italic = true,
+                            underline = true,
+                            language = "ar",
+                            direction = TextDirection.RTL,
+                            fontFamily = "Arial",
+                            fontSizePt = 11f,
+                            superscript = true,
+                        )
+                    ),
+                    style = ParagraphStyle(
+                        kind = ParagraphKind.HEADING_2,
+                        direction = TextDirection.RTL,
+                        alignment = Alignment.JUSTIFY,
+                        firstLineIndentPt = 12f,
+                        startIndentPt = 24f,
+                        spaceBeforePt = 6f,
+                        spaceAfterPt = 6f,
+                        linePitchPt = 18f,
+                        tabStopsPt = listOf(100f),
+                        ruleAbove = true,
+                        ruleBelow = true,
+                    ),
+                )
+            ),
+            defaultDirection = TextDirection.RTL,
+        )
+        val xml = documentXml(DocxWriter.toByteArray(everything))
+        assertInOrder(xml, listOf("<w:pPr>", "<w:pStyle", "<w:pBdr>", "<w:tabs>", "<w:bidi/>", "<w:spacing", "<w:ind", "<w:jc", "</w:pPr>"))
+        assertInOrder(xml, listOf("<w:rPr>", "<w:rFonts", "<w:b/>", "<w:i/>", "<w:sz ", "<w:u ", "<w:vertAlign", "<w:rtl/>", "<w:lang", "</w:rPr>"))
+    }
+
+    private fun assertInOrder(xml: String, parts: List<String>) {
+        var cursor = 0
+        for (part in parts) {
+            val at = xml.indexOf(part, cursor)
+            assertTrue(at >= 0, "$part missing after index $cursor in $xml")
+            cursor = at + part.length
+        }
     }
 
     @Test
