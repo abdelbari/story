@@ -182,6 +182,12 @@ during pinch-zoom. Instead:
   hardware-to-hardware; progress is polled into a cold `callbackFlow`;
   `ExportWorker` (WorkManager foreground job) surfaces notification + WorkInfo
   progress and survives the app being backgrounded.
+- The render lands in app-private storage and is then copied into **MediaStore**
+  (`Movies/Kinetic`), because a file inside the app sandbox is one the gallery
+  and share sheet can never see. `IS_PENDING` hides it until the copy completes,
+  and the sandbox copy is deleted once the shared one exists. No permission is
+  needed from API 29; below that it fails soft and the file stays app-private,
+  which the UI reports honestly rather than claiming a save that did not happen.
 
 Decode → GL → encode never leaves GPU/codec surfaces, so 4K export memory is
 flat by construction — no frame ever exists as a Java `Bitmap`.
@@ -198,7 +204,7 @@ the exporter — the model, the preview and the export path agree on all three.
 | Transitions | dip-to-black, wipe, zoom-punch on any clip boundary |
 | Audio | music and voiceover lanes, per-clip volume, fade in/out, track mute |
 | Overlays | text (editable content, size, position), stickers, picture-in-picture with size/position |
-| Output | background MP4 export with live progress and the saved filename |
+| Output | background MP4 export with live progress, published to Movies/Kinetic |
 
 Volume fades deserve a note: the model stores a general keyframe envelope, but
 the UI exposes fade-in/fade-out durations, because that is what nearly every

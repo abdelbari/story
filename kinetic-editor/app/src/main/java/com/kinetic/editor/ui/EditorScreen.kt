@@ -237,10 +237,12 @@ private fun ExportStatus() {
             }
         }
         WorkInfo.State.SUCCEEDED -> {
-            val path = info.outputData.getString(ExportWorker.KEY_OUTPUT)
-            if (path != null) {
+            val name = info.outputData.getString(ExportWorker.KEY_NAME)
+            val published = info.outputData.getBoolean(ExportWorker.KEY_PUBLISHED, false)
+            if (name != null) {
                 Text(
-                    "Saved ${path.substringAfterLast('/')}",
+                    if (published) "Saved to Movies/Kinetic — $name"
+                    else "Saved $name (app storage only)",
                     color = Color(0xFF35C4B5),
                     fontSize = 11.sp,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),

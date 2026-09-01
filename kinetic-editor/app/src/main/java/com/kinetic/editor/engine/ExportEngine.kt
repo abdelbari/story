@@ -151,8 +151,23 @@ class ExportWorker(
                             setProgress(workDataOf(KEY_PROGRESS to event.fraction))
                             notifyProgress((event.fraction * 100).toInt())
                         }
-                        is ExportEngine.Event.Completed ->
-                            result = Result.success(workDataOf(KEY_OUTPUT to event.outputPath))
+                        is ExportEngine.Event.Completed -> {
+                            // Publishing copies the whole file, so it runs on IO —
+                            // and it consumes the sandbox copy, which is why the
+                            // reported location is the published URI when it works.
+                            val file = File(event.outputPath)
+                            val name = file.name
+                            val published = withContext(Dispatchers.IO) {
+                                MediaStorePublisher.publish(applicationContext, file)
+                            }
+                            result = Result.success(
+                                workDataOf(
+                                    KEY_NAME to name,
+                                    KEY_OUTPUT to (published?.toString() ?: event.outputPath),
+                                    KEY_PUBLISHED to (published != null),
+                                ),
+                            )
+                        }
                         is ExportEngine.Event.Failed ->
                             result = Result.failure(workDataOf(KEY_ERROR to event.error.message))
                     }
@@ -200,6 +215,10 @@ class ExportWorker(
         const val KEY_PROGRESS = "progress"
         const val KEY_OUTPUT = "output"
         const val KEY_ERROR = "error"
+        /** File name of the render, for display. */
+        const val KEY_NAME = "name"
+        /** True when the video reached the shared Movies collection. */
+        const val KEY_PUBLISHED = "published"
         private const val KEY_PROJECT = "project"
         private const val KEY_WIDTH = "width"
         private const val KEY_HEIGHT = "height"
