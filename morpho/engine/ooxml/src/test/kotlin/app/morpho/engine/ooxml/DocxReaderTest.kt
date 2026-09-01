@@ -5,6 +5,7 @@ import app.morpho.engine.layout.ListMarker
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.ParagraphStyle
+import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.layout.Table
 import app.morpho.engine.layout.TableCell
 import app.morpho.engine.layout.TableRow
@@ -112,6 +113,28 @@ class DocxReaderTest {
         assertTrue(body[4].underline)
         assertNull(body[0].language)
         assertNull(body[0].direction)
+    }
+
+    @Test
+    fun `uax9-refined mixed-direction runs survive the round trip`() {
+        // The importer's UAX #9 pass splits this RTL paragraph at every
+        // direction boundary; the writer marks each piece (w:rtl or its
+        // absence) and the reader must hand back the same effective runs.
+        val imported = PlainTextImporter.import("النص **bold** مع English مدمج")
+        val para = DocxReader.read(DocxWriter.toByteArray(imported)).blocks[0] as Paragraph
+        assertEquals(TextDirection.RTL, para.style.direction)
+        assertEquals(
+            listOf(
+                "النص " to TextDirection.RTL,
+                "bold" to TextDirection.LTR,
+                " مع " to TextDirection.RTL,
+                "English" to TextDirection.LTR,
+                " مدمج" to TextDirection.RTL,
+            ),
+            para.runs.map { it.text to (it.direction ?: TextDirection.RTL) },
+        )
+        assertTrue(para.runs[1].bold)
+        assertFalse(para.runs[3].bold)
     }
 
     @Test

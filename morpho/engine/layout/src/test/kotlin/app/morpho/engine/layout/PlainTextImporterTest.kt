@@ -84,7 +84,8 @@ class PlainTextImporterTest {
         assertTrue(runs[1].bold)
         assertFalse(runs[1].italic)
         assertFalse(runs[2].bold)
-        assertEquals(TextDirection.LTR, runs[1].direction)
+        // Same direction as the paragraph: inherited, not marked explicitly.
+        assertNull(runs[1].direction)
     }
 
     @Test
@@ -142,7 +143,8 @@ class PlainTextImporterTest {
         assertEquals(TextDirection.RTL, para.style.direction)
         assertEquals(listOf("قبل ", "عربي", " بعد"), para.runs.map { it.text })
         assertTrue(para.runs[1].bold)
-        assertEquals(TextDirection.RTL, para.runs[1].direction)
+        // Same direction as the paragraph: inherited, not marked explicitly.
+        assertNull(para.runs[1].direction)
     }
 
     @Test
@@ -151,8 +153,9 @@ class PlainTextImporterTest {
         assertEquals(TextDirection.RTL, para.style.direction)
         assertTrue(para.runs[1].bold)
         assertEquals(TextDirection.LTR, para.runs[1].direction)
-        assertEquals(TextDirection.RTL, para.runs[0].direction)
-        assertEquals(TextDirection.RTL, para.runs[2].direction)
+        // The Arabic runs match the paragraph direction, so they inherit it.
+        assertNull(para.runs[0].direction)
+        assertNull(para.runs[2].direction)
     }
 
     @Test

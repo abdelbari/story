@@ -125,7 +125,9 @@ object PdfLayout {
         val rtlCount = paragraphs.count { it.style.direction == TextDirection.RTL }
         val defaultDirection =
             if (rtlCount > paragraphs.size - rtlCount) TextDirection.RTL else TextDirection.LTR
-        return DocumentModel(blocks = blocks, defaultDirection = defaultDirection)
+        // Full UAX #9 pass: split mixed-direction runs so writers can mark
+        // direction per run instead of per paragraph.
+        return Bidi.refine(DocumentModel(blocks = blocks, defaultDirection = defaultDirection))
     }
 
     private fun tableOf(region: PdfTableDetector.Region, confidence: Float): Table =

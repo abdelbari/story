@@ -38,4 +38,149 @@ class BidiTest {
         assertEquals(TextDirection.RTL, Bidi.firstStrongDirection("مرحبا Morpho"))
         assertEquals(TextDirection.LTR, Bidi.firstStrongDirection("Morpho مرحبا"))
     }
+
+    // ---- UAX #9 run analysis ----
+
+    private fun segments(text: String, base: TextDirection) =
+        Bidi.directionalRuns(text, base).map { text.substring(it.start, it.end) to it.direction }
+
+    @Test
+    fun `uniform text is a single run`() {
+        assertEquals(
+            listOf("plain text" to TextDirection.LTR),
+            segments("plain text", TextDirection.LTR),
+        )
+        assertEquals(
+            listOf("نص عربي" to TextDirection.RTL),
+            segments("نص عربي", TextDirection.RTL),
+        )
+        assertEquals(emptyList<Pair<String, TextDirection>>(), segments("", TextDirection.LTR))
+    }
+
+    @Test
+    fun `neutrals between same-direction text stay with the base run`() {
+        assertEquals(
+            listOf(
+                "hello " to TextDirection.LTR,
+                "عربي" to TextDirection.RTL,
+                " world" to TextDirection.LTR,
+            ),
+            segments("hello عربي world", TextDirection.LTR),
+        )
+        assertEquals(
+            listOf(
+                "مرحبا " to TextDirection.RTL,
+                "hello" to TextDirection.LTR,
+                " بك" to TextDirection.RTL,
+            ),
+            segments("مرحبا hello بك", TextDirection.RTL),
+        )
+    }
+
+    @Test
+    fun `digits inside RTL text resolve to an even level, as UAX 9 says`() {
+        assertEquals(
+            listOf(
+                "عدد " to TextDirection.RTL,
+                "123" to TextDirection.LTR,
+                " بعد" to TextDirection.RTL,
+            ),
+            segments("عدد 123 بعد", TextDirection.RTL),
+        )
+    }
+
+    @Test
+    fun `refineRuns splits a mixed styled run and keeps its styling`() {
+        val refined = Bidi.refineRuns(
+            listOf(TextRun("hello عربي", bold = true)),
+            paragraphDirection = TextDirection.LTR,
+        )
+        assertEquals(
+            listOf(
+                TextRun("hello ", bold = true),
+                TextRun("عربي", bold = true, direction = TextDirection.RTL),
+            ),
+            refined,
+        )
+    }
+
+    @Test
+    fun `refineRuns splits around a styled span that straddles a boundary`() {
+        // "hello " + bold("عربي and") + " more" — the bold span itself is mixed.
+        val refined = Bidi.refineRuns(
+            listOf(
+                TextRun("hello "),
+                TextRun("عربي and", bold = true),
+                TextRun(" more"),
+            ),
+            paragraphDirection = TextDirection.LTR,
+        )
+        assertEquals(
+            listOf(
+                TextRun("hello "),
+                TextRun("عربي", bold = true, direction = TextDirection.RTL),
+                TextRun(" and", bold = true),
+                TextRun(" more"),
+            ),
+            refined,
+        )
+    }
+
+    @Test
+    fun `refineRuns preserves the concatenated text exactly`() {
+        val runs = listOf(
+            TextRun("42 — "),
+            TextRun("مرحبا ", italic = true),
+            TextRun("Morpho v2", bold = true),
+            TextRun(" النهاية"),
+        )
+        val refined = Bidi.refineRuns(runs, TextDirection.RTL)
+        assertEquals(
+            runs.joinToString("") { it.text },
+            refined.joinToString("") { it.text },
+        )
+    }
+
+    @Test
+    fun `refineRuns normalizes a stale explicit direction that matches the paragraph`() {
+        val refined = Bidi.refineRuns(
+            listOf(TextRun("نص واحد", direction = TextDirection.RTL)),
+            paragraphDirection = TextDirection.RTL,
+        )
+        assertEquals(listOf(TextRun("نص واحد")), refined)
+    }
+
+    @Test
+    fun `refine walks table cells`() {
+        val model = DocumentModel(
+            blocks = listOf(
+                Table(
+                    rows = listOf(
+                        TableRow(
+                            listOf(
+                                TableCell(
+                                    listOf(
+                                        Paragraph(
+                                            runs = listOf(TextRun("cell مع عربي")),
+                                            style = ParagraphStyle(direction = TextDirection.LTR),
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            ),
+        )
+        val cell = (Bidi.refine(model).blocks.single() as Table)
+            .rows.single().cells.single()
+        val runs = (cell.blocks.single() as Paragraph).runs
+        assertEquals(
+            listOf(
+                TextRun("cell "),
+                TextRun("مع عربي", direction = TextDirection.RTL),
+            ),
+            runs,
+        )
+    }
 }

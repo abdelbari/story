@@ -196,7 +196,11 @@ internal object AndroidStructureTreeReader {
             val rtl = paragraphs.count { it.style.direction == TextDirection.RTL }
             val defaultDirection =
                 if (rtl > paragraphs.size - rtl) TextDirection.RTL else TextDirection.LTR
-            return DocumentModel(blocks = blocks.toList(), defaultDirection = defaultDirection)
+            // Full UAX #9 pass: split mixed-direction runs so writers can
+            // mark direction per run instead of per paragraph.
+            return Bidi.refine(
+                DocumentModel(blocks = blocks.toList(), defaultDirection = defaultDirection)
+            )
         }
 
         fun walk(element: PDStructureElement, depth: Int) {
