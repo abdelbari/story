@@ -37,7 +37,7 @@ cd morpho/android && ./gradlew :app:assembleDebug
 ## What works today
 
 - **Engine (100+ tests):** document model with per-block confidence (the Fidelity Report seed); first-strong BiDi detection; text/Markdown import with inline `**bold**`/`*italic*` styling and per-run RTL direction; a from-scratch OOXML **writer** (styles, per-list restarting numbering, tables, `w:bidi`/`w:rtl`, run languages) and matching **reader** (.docx → model, numbering resolved through numbering.xml, tolerant of unknown content); a **Markdown writer** (model → .md); **PDF extraction with a tagged fast path** — structure, headings, lists, tables and logical reading order read straight from the tag tree when present (with a BDC named-properties fix PDFBox itself lacks), position-aware glyph-clustering heuristics with **column-alignment table detection** for untagged files, plain-text fallback; and a **FidelityScorer** (text + structure similarity) enforcing the multilingual corpus gate — 8 real documents (EN/FR/ES/DE/AR with tashkeel, Arabic headings, mixed Arabic-French) must survive import → write → read-back with exact text and ≥ 0.95 structure similarity. Adding a file to `ooxml/src/test/resources/corpus/` automatically extends the gate.
-- **App:** three conversion paths, all fully on-device — text/Markdown → Word (.docx), Word (.docx) → Markdown, and **PDF → Word** (text PDFs via the position-aware layout heuristics; scanned PDFs get an honest "OCR arrives with M3" message) — via SAF pick-and-save. UI localized in English, Arabic, French, Spanish, German with full RTL support, per-app language config, Material 3 dynamic color, and **no INTERNET permission in the manifest** — the Zero-Upload guarantee starts on day one.
+- **App:** three conversion paths, all fully on-device — text/Markdown → Word (.docx), Word (.docx) → Markdown, and **PDF → Word** (text PDFs via the position-aware layout heuristics; scanned PDFs get an honest "OCR arrives with M3" message) — via SAF pick-and-save, the share sheet (send a document to Morpho from any app), and "Open with" on supported types. UI localized in English, Arabic, French, Spanish, German with full RTL support, per-app language config, Material 3 dynamic color, and **no INTERNET permission in the manifest** — the Zero-Upload guarantee starts on day one.
 
 ## Decisions log
 
@@ -52,4 +52,4 @@ cd morpho/android && ./gradlew :app:assembleDebug
 
 ## Next (per the plan's roadmap)
 
-M1 remainder: share-sheet targets, tagged-path figures. M2: DOCX→PDF print pipeline + full BiDi run analysis (UAX #9). M3: OCR (ML Kit + Tesseract). M4: Google Docs sync + Review Mode.
+M1 remainder: tagged-path figures. M2: DOCX→PDF print pipeline + full BiDi run analysis (UAX #9). M3: OCR (ML Kit + Tesseract). M4: Google Docs sync + Review Mode.
