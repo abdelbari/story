@@ -132,20 +132,24 @@ export function wrapTextLines(ctx, el) {
     if (!raw) { lines.push(''); continue; }
     const words = raw.split(/(\s+)/).filter(w => w.length);
     let line = '';
+    const hardBreak = () => {
+      // Hard-break a fragment wider than the box (DOM break-word parity).
+      while (ctx.measureText(line).width > el.w + 1 && line.length > 1) {
+        let cut = line.length - 1;
+        while (cut > 1 && ctx.measureText(line.slice(0, cut)).width > el.w + 1) cut--;
+        lines.push(line.slice(0, cut));
+        line = line.slice(cut);
+      }
+    };
     for (const word of words) {
       const candidate = line + word;
       if (line && ctx.measureText(candidate).width > el.w + 1) {
         lines.push(line.trimEnd());
         line = word.trimStart();
-        // Hard-break single words wider than the box.
-        while (ctx.measureText(line).width > el.w + 1 && line.length > 1) {
-          let cut = line.length - 1;
-          while (cut > 1 && ctx.measureText(line.slice(0, cut)).width > el.w + 1) cut--;
-          lines.push(line.slice(0, cut));
-          line = line.slice(cut);
-        }
+        hardBreak();
       } else {
         line = candidate;
+        hardBreak();
       }
     }
     lines.push(line.trimEnd());

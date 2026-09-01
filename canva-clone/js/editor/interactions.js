@@ -147,6 +147,7 @@ export class Interactions {
     const store = this.store;
     const el = store.elementById(id);
     if (!el) return;
+    this.pendingShiftToggle = null;
 
     const groupIds = expandToGroup(store, id);
     const additive = e.shiftKey;
@@ -268,6 +269,7 @@ export class Interactions {
 
   moveResize(e, g) {
     const store = this.store;
+    g.moved = true;
     const el = store.elementById(g.id);
     if (!el) return;
     const p = this.toPage(e.clientX, e.clientY);
@@ -303,20 +305,22 @@ export class Interactions {
   // ---- group resize (corner-only, proportional) ----
   startGroupResize(e, handle) {
     const store = this.store;
-    const selected = store.selectedElements().filter(s => !s.locked);
-    if (!selected.length) return;
+    const movable = store.selectedElements().filter(s => !s.locked);
+    if (!movable.length) return;
     store.beginGesture();
-    const bounds = unionBounds(selected.map(elementAABB));
+    // Anchor on the full selection bounds -- the box the handles render on.
+    const bounds = unionBounds(store.selectedElements().map(elementAABB));
     this.beginGesture(e, {
       kind: 'group-resize',
       handle,
       bounds,
-      originals: selected.map(s => JSON.parse(JSON.stringify(s))),
+      originals: movable.map(s => JSON.parse(JSON.stringify(s))),
     });
   }
 
   moveGroupResize(e, g) {
     const store = this.store;
+    g.moved = true;
     const p = this.toPage(e.clientX, e.clientY);
     const b = g.bounds;
     // Anchor = corner opposite the dragged one.
@@ -362,6 +366,7 @@ export class Interactions {
 
   moveRotate(e, g) {
     const store = this.store;
+    g.moved = true;
     const el = store.elementById(g.id);
     if (!el) return;
     const p = this.toPage(e.clientX, e.clientY);
@@ -370,7 +375,7 @@ export class Interactions {
     if (!e.shiftKey) angle = snapAngle(angle, 45, 4);
     store.applyTransient(() => { el.rotation = Math.round(angle * 10) / 10; });
     this.overlay.setBadge({
-      text: `${Math.round(angle)}°`,
+      text: `${Math.round(angle) % 360}°`,
       x: g.center.x,
       y: el.y - 28 / store.zoom,
     });
@@ -418,6 +423,9 @@ export class Interactions {
 
   // ---- gesture plumbing ----
   beginGesture(e, gesture) {
+    // A second pointerdown mid-gesture (multi-touch, stray buttons) must not
+    // leak the previous move/up handlers or orphan an open store gesture.
+    if (this.gesture) this.onGestureEnd(e);
     this.gesture = gesture;
     this.moveHandler = ev => this.onGestureMove(ev);
     this.upHandler = ev => this.onGestureEnd(ev);
@@ -447,7 +455,8 @@ export class Interactions {
     if (!g) return;
     if (g.kind === 'drag') this.endDrag(e, g);
     else if (g.kind === 'resize' || g.kind === 'group-resize' || g.kind === 'rotate') {
-      this.store.commit();
+      if (g.moved) this.store.commit();
+      else this.store.endGesture();
     }
     this.overlay.setGuides(null, null);
     this.overlay.setMarquee(null);
@@ -469,13 +478,12 @@ export class Interactions {
     const old = store.zoom;
     newZoom = clamp(newZoom, 0.05, 4);
     if (Math.abs(newZoom - old) < 1e-4) return;
-    const wsRect = this.workspace.getBoundingClientRect();
-    const ox = clientX - wsRect.left + this.workspace.scrollLeft;
-    const oy = clientY - wsRect.top + this.workspace.scrollTop;
+    // Keep the page point under the cursor stationary. Page coords are
+    // unaffected by the sizer's fixed padding, so this stays exact.
+    const p = this.toPage(clientX, clientY);
     store.setZoom(newZoom);
-    const ratio = newZoom / old;
-    this.workspace.scrollLeft = ox * ratio - (clientX - wsRect.left);
-    this.workspace.scrollTop = oy * ratio - (clientY - wsRect.top);
+    this.workspace.scrollLeft += p.x * (newZoom - old);
+    this.workspace.scrollTop += p.y * (newZoom - old);
   }
 
   zoomCentered(newZoom) {

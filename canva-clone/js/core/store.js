@@ -80,6 +80,7 @@ export class Store extends Emitter {
   }
 
   commit() {
+    this._coalesceKey = null;
     this.past.push({
       doc: this._pending || this._lastCommitted || this.snapshot(),
       pageIndex: this._pendingPage ?? this.pageIndex,
@@ -152,7 +153,30 @@ export class Store extends Emitter {
     this._afterTimeTravel();
   }
 
+  // Merge rapid repeats of the same operation (e.g. held arrow-key nudges)
+  // into one undo step instead of flooding the history cap.
+  commitCoalesced(key, windowMs = 800) {
+    const now = Date.now();
+    if (this._coalesceKey === key && now - (this._coalesceTime || 0) < windowMs && this.past.length) {
+      this._pending = null;
+      this._pendingPage = null;
+      this._lastCommitted = this.snapshot();
+      this.doc.updatedAt = now;
+      this._coalesceTime = now;
+      this.emit('history');
+      this.emit('dirty');
+      return;
+    }
+    this.commit();
+    this._coalesceKey = key;
+    this._coalesceTime = now;
+  }
+
   _afterTimeTravel() {
+    this._pending = null;
+    this._pendingPage = null;
+    this._coalesceKey = null;
+    this.doc.updatedAt = Date.now();
     if (this.pageIndex >= this.doc.pages.length) this.pageIndex = this.doc.pages.length - 1;
     const ids = new Set(this.page.elements.map(e => e.id));
     this.selection = this.selection.filter(id => ids.has(id));

@@ -44,17 +44,22 @@ function bgMarkup(doc, page, defs) {
   }
   if (bg.type === 'gradient') {
     const id = 'bg-grad';
-    defs.push(gradientDef(id, bg.value));
+    defs.push(gradientDef(id, bg.value, doc.width, doc.height));
     return `<rect width="${doc.width}" height="${doc.height}" fill="url(#${id})"/>`;
   }
   return `<rect width="${doc.width}" height="${doc.height}" fill="${esc(bg.value || '#ffffff')}"/>`;
 }
 
-function gradientDef(id, paint) {
+// Aspect-compensated CSS-parity gradient vector: objectBoundingBox units
+// stretch with the box, so divide the direction by the box dimensions.
+function gradientDef(id, paint, w, h) {
   const rad = ((paint.angle - 90) * Math.PI) / 180;
-  const dx = Math.cos(rad) / 2, dy = Math.sin(rad) / 2;
+  const dx = Math.cos(rad), dy = Math.sin(rad);
+  const len = Math.abs(w * dx) + Math.abs(h * dy);
+  const ux = w > 0 ? (dx * len) / (2 * w) : 0;
+  const uy = h > 0 ? (dy * len) / (2 * h) : 0;
   const stops = paint.stops.map(s => `<stop offset="${s.offset}" stop-color="${esc(s.color)}"/>`).join('');
-  return `<linearGradient id="${id}" x1="${num(0.5 - dx)}" y1="${num(0.5 - dy)}" x2="${num(0.5 + dx)}" y2="${num(0.5 + dy)}">${stops}</linearGradient>`;
+  return `<linearGradient id="${id}" x1="${num(0.5 - ux)}" y1="${num(0.5 - uy)}" x2="${num(0.5 + ux)}" y2="${num(0.5 + uy)}">${stops}</linearGradient>`;
 }
 
 function elementMarkup(el, i, defs) {
@@ -79,7 +84,7 @@ function shapeMarkup(el, i, defs) {
   let fill;
   if (el.fill?.kind === 'gradient') {
     const id = `el-grad-${i}`;
-    defs.push(gradientDef(id, el.fill));
+    defs.push(gradientDef(id, el.fill, el.w, el.h));
     fill = `url(#${id})`;
   } else {
     fill = el.fill?.color || 'none';
@@ -161,7 +166,7 @@ function lineMarkup(el) {
   if (el.endCap === 'arrow') x2 -= capSize * 0.9;
   let dash = '';
   if (el.dash === 'dashed') dash = ` stroke-dasharray="${t * 3} ${t * 2}"`;
-  if (el.dash === 'dotted') dash = ` stroke-dasharray="0.01 ${t * 2.2}" stroke-linecap="round"`;
+  if (el.dash === 'dotted') dash = ` stroke-dasharray="0.01 ${t * 2.2}"`;
   let caps = '';
   const capMarkup = (atStart, kind) => {
     if (kind === 'arrow') {

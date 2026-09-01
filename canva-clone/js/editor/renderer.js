@@ -139,11 +139,15 @@ export class PageRenderer {
         grad.id = gradId;
         defs.appendChild(grad);
       }
-      // CSS gradient angle -> SVG gradient vector (0deg = up, 90deg = right).
+      // CSS gradient angle -> SVG vector, compensating the unit-box
+      // stretch so direction and line length match CSS on any aspect.
       const rad = ((el.fill.angle - 90) * Math.PI) / 180;
-      const dx = Math.cos(rad) / 2, dy = Math.sin(rad) / 2;
-      grad.setAttribute('x1', 0.5 - dx); grad.setAttribute('y1', 0.5 - dy);
-      grad.setAttribute('x2', 0.5 + dx); grad.setAttribute('y2', 0.5 + dy);
+      const dx = Math.cos(rad), dy = Math.sin(rad);
+      const len = Math.abs(el.w * dx) + Math.abs(el.h * dy);
+      const ux = el.w > 0 ? (dx * len) / (2 * el.w) : 0;
+      const uy = el.h > 0 ? (dy * len) / (2 * el.h) : 0;
+      grad.setAttribute('x1', 0.5 - ux); grad.setAttribute('y1', 0.5 - uy);
+      grad.setAttribute('x2', 0.5 + ux); grad.setAttribute('y2', 0.5 + uy);
       while (grad.childNodes.length > el.fill.stops.length) grad.lastChild.remove();
       el.fill.stops.forEach((stop, i) => {
         let node2 = grad.childNodes[i];
@@ -199,14 +203,34 @@ export class PageRenderer {
     s.webkitTextStroke = '';
     s.backgroundColor = 'transparent';
     s.padding = '0';
+    // Underline must stay visible for hollow/splice (text fill is
+    // transparent there, and decoration inherits the fill color).
+    s.textDecorationColor = el.underline ? el.color : '';
+    const isHighlight = (el.effect?.type || 'none') === 'highlight';
     const effectCss = textEffectCss(el);
-    for (const [prop, value] of Object.entries(effectCss)) s[prop] = value;
+    if (!isHighlight) {
+      for (const [prop, value] of Object.entries(effectCss)) s[prop] = value;
+    }
 
     if (!editing) {
       const content = el.listStyle === 'bullet'
         ? el.text.split('\n').map(line => line.trim() ? `•  ${line}` : line).join('\n')
         : el.text;
-      if (text.textContent !== content) text.textContent = content;
+      // Content lives in an inline span so the highlight effect can paint
+      // per-line backgrounds (box-decoration-break), matching the exporter.
+      let span = text.firstElementChild;
+      if (!span || span.tagName !== 'SPAN') {
+        text.textContent = '';
+        span = document.createElement('span');
+        text.appendChild(span);
+      }
+      if (span.textContent !== content) span.textContent = content;
+      if (isHighlight) {
+        for (const [prop, value] of Object.entries(effectCss)) span.style[prop] = value;
+      } else {
+        span.style.backgroundColor = '';
+        span.style.padding = '';
+      }
       if (text.contentEditable !== 'false') text.contentEditable = 'false';
       node.classList.remove('cc-editing');
     } else {
@@ -224,6 +248,19 @@ export class PageRenderer {
       // silently (no event) — the caller renders overlay after us.
       const h = Math.max(text.scrollHeight, el.fontSize * el.lineHeight);
       if (Math.abs(h - el.h) > 0.5) {
+        if (el.rotation) {
+          // Rotation pivots on the center, so a height change moves every
+          // point. Keep the rotated top-center anchored: c' = topCenter +
+          // R(rot)·(0, h'/2).
+          const rad = el.rotation * Math.PI / 180;
+          const cx = el.x + el.w / 2, cy = el.y + el.h / 2;
+          const topX = cx + (el.h / 2) * Math.sin(rad);
+          const topY = cy - (el.h / 2) * Math.cos(rad);
+          el.x = topX - (h / 2) * Math.sin(rad) - el.w / 2;
+          el.y = topY + (h / 2) * Math.cos(rad) - h / 2;
+          node.style.left = el.x + 'px';
+          node.style.top = el.y + 'px';
+        }
         el.h = h;
         node.style.height = h + 'px';
       }

@@ -56,11 +56,23 @@ export function deleteSelected(store) {
 export function duplicateSelected(store) {
   const selected = store.selectedElements().filter(el => !el.locked);
   if (!selected.length) return;
-  const copies = selected.map(el => cloneElement(el, 24));
+  const copies = remapGroups(selected.map(el => cloneElement(el, 24)));
   store.apply(doc => {
     doc.pages[store.pageIndex].elements.push(...copies);
   });
   store.select(copies.map(c => c.id));
+}
+
+// Copies must not stay welded to the source's group: give each source group
+// a fresh id, preserving grouping WITHIN the copies.
+function remapGroups(elements) {
+  const map = new Map();
+  for (const el of elements) {
+    if (!el.group) continue;
+    if (!map.has(el.group)) map.set(el.group, uid('grp'));
+    el.group = map.get(el.group);
+  }
+  return elements;
 }
 
 export function copySelected(store) {
@@ -78,7 +90,7 @@ export function cutSelected(store) {
 export function paste(store) {
   if (!clipboard.length) return;
   pasteCount += 1;
-  const copies = clipboard.map(el => cloneElement(el, 24 * pasteCount));
+  const copies = remapGroups(clipboard.map(el => cloneElement(el, 24 * pasteCount)));
   store.apply(doc => {
     doc.pages[store.pageIndex].elements.push(...copies);
   });
@@ -90,14 +102,22 @@ export function selectAll(store) {
 }
 
 export function nudgeSelected(store, dx, dy, { commit = true } = {}) {
-  const fn = doc => {
+  const fn = () => {
     for (const el of store.selectedElements()) {
       if (el.locked) continue;
       el.x += dx;
       el.y += dy;
     }
   };
-  if (commit) store.apply(fn); else store.applyTransient(fn);
+  if (commit) {
+    // Held arrow keys repeat fast; coalesce the burst into one undo step.
+    store.beginGesture();
+    fn();
+    store.commitCoalesced('nudge:' + store.selection.join(','));
+    store.emit('doc');
+  } else {
+    store.applyTransient(fn);
+  }
 }
 
 // ---- z-order -------------------------------------------------------------
