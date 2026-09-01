@@ -2,13 +2,13 @@ package com.kinetic.editor.ui.timeline
 
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -83,15 +83,16 @@ fun Modifier.timelineGestures(
             is TimelineGeometry.Hit.Body -> {
                 if (caughtMomentum) {
                     scrubGesture(down, hit, viewport, callbacks, flingScope, startAsScrubbing = true)
-                } else {
-                    val longPress = awaitLongPressOrCancellation(down.id)
-                    if (longPress != null) {
-                        clipDragGesture(longPress, hit, state, viewport, geometry, callbacks, canvasWidth)
-                    } else if (currentEvent.changes.none { it.pressed }) {
-                        callbacks.onTap(hit) // clean tap: select
-                    } else {
+                } else when (awaitLongPressOrSlop(down)) {
+                    // Held still past the timeout: pick the clip up.
+                    PressOutcome.LONG_PRESS ->
+                        clipDragGesture(down, hit, state, viewport, geometry, callbacks, canvasWidth)
+                    // Moved first: scrub, exactly as if the touch had begun on
+                    // empty timeline. scrubGesture re-checks slop against `down`,
+                    // which we have already exceeded, so it engages immediately.
+                    PressOutcome.MOVED ->
                         scrubGesture(down, hit, viewport, callbacks, flingScope)
-                    }
+                    PressOutcome.LIFTED -> callbacks.onTap(hit)
                 }
             }
 
@@ -99,6 +100,44 @@ fun Modifier.timelineGestures(
                 scrubGesture(down, hit, viewport, callbacks, flingScope, startAsScrubbing = caughtMomentum)
         }
     }
+}
+
+private enum class PressOutcome { LONG_PRESS, MOVED, LIFTED }
+
+/**
+ * Races the long-press timer against the touch slop.
+ *
+ * awaitLongPressOrCancellation alone is NOT enough here: it resolves only on
+ * pointer-up or a consumed change, never on movement, so a horizontal drag
+ * starting on a clip would block for the whole timeout and then be handled as a
+ * reorder. Scrubbing must win as soon as the finger travels past slop.
+ */
+private suspend fun AwaitPointerEventScope.awaitLongPressOrSlop(
+    down: PointerInputChange,
+): PressOutcome = try {
+    withTimeout(viewConfiguration.longPressTimeoutMillis) {
+        var outcome = PressOutcome.LIFTED
+        while (true) {
+            val event = awaitPointerEvent()
+            // A second finger means pinch-zoom: hand off to the scrub/zoom path.
+            if (event.changes.count { it.pressed } > 1) {
+                outcome = PressOutcome.MOVED
+                break
+            }
+            val change = event.changes.firstOrNull { it.id == down.id }
+            if (change == null || !change.pressed) {
+                outcome = PressOutcome.LIFTED
+                break
+            }
+            if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                outcome = PressOutcome.MOVED
+                break
+            }
+        }
+        outcome
+    }
+} catch (_: PointerEventTimeoutCancellationException) {
+    PressOutcome.LONG_PRESS
 }
 
 /* ------------------------------- scrubbing ------------------------------- */
@@ -220,7 +259,14 @@ private suspend fun AwaitPointerEventScope.trimGesture(
         }
     }
 
-    viewport.trimming?.let(callbacks::onTrimCommit)
+    // A tap that merely lands on a handle must not enter the undo history.
+    viewport.trimming
+        ?.takeIf {
+            it.trimInMs != clip.trimInMs ||
+                it.trimOutMs != clip.trimOutMs ||
+                it.startMs != placed.startMs
+        }
+        ?.let(callbacks::onTrimCommit)
     viewport.trimming = null
     callbacks.onEditEnd()
 }
@@ -241,13 +287,16 @@ private suspend fun AwaitPointerEventScope.clipDragGesture(
     val homeTrackIndex = state.tracks.indexOfFirst { it.id == homeTrack.id }
     val grabOffsetMs = geometry.xToTime(grab.position.x, canvasWidth) - placed.startMs
 
+    val homeIndex = if (homeTrack.type == TrackType.VIDEO_MAIN) {
+        homeTrack.clips.indexOfFirst { it.id == clip.id }
+    } else -1
+
     callbacks.onEditStart()
     viewport.dragging = DragGhost(
         clipId = clip.id,
         ghostStartMs = placed.startMs,
         ghostTrackIndex = homeTrackIndex,
-        insertIndex = if (homeTrack.type == TrackType.VIDEO_MAIN)
-            homeTrack.clips.indexOfFirst { it.id == clip.id } else -1,
+        insertIndex = homeIndex,
         widthMs = clip.durationMs,
     )
 
@@ -279,7 +328,14 @@ private suspend fun AwaitPointerEventScope.clipDragGesture(
         }
     }
 
-    viewport.dragging?.let(callbacks::onMoveCommit)
+    // Same for a long-press released without moving the clip anywhere.
+    viewport.dragging
+        ?.takeIf {
+            it.ghostStartMs != placed.startMs ||
+                it.ghostTrackIndex != homeTrackIndex ||
+                it.insertIndex != homeIndex
+        }
+        ?.let(callbacks::onMoveCommit)
     viewport.dragging = null
     callbacks.onEditEnd()
 }

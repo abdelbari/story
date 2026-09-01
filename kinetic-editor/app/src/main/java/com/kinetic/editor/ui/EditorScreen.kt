@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -87,6 +90,10 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
     val viewport = remember { TimelineViewportState() }
     val haptics = LocalHapticFeedback.current
 
+    // The engine and document survive configuration changes but the viewport does
+    // not; re-seed it from the player so a rotation keeps the playhead.
+    LaunchedEffect(Unit) { viewport.scrollToMs(vm.preview.timelinePositionMs()) }
+
     // Player is the position master while playing.
     LaunchedEffect(isPlaying) {
         while (isPlaying) {
@@ -142,7 +149,14 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
         }
     }
 
-    Column(Modifier.fillMaxSize().background(Color(0xFF0E0F13))) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0E0F13))
+            // targetSdk 35 + enableEdgeToEdge draws behind the system bars: without
+            // this the bottom tool row sits under the navigation bar.
+            .windowInsetsPadding(WindowInsets.safeDrawing),
+    ) {
         PreviewSurface(vm.preview, state, viewport, Modifier.fillMaxWidth().weight(1f))
 
         ExportProgressBar()

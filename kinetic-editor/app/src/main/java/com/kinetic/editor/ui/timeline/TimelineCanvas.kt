@@ -99,7 +99,7 @@ fun Timeline(
 
         // Visible-window prefetch: decoupled from drawing, throttled by 64px scroll
         // buckets so a fling doesn't spam the decoder queues.
-        LaunchedEffect(thumbnails, waveforms, geometry) {
+        LaunchedEffect(thumbnails, waveforms, geometry, widthPx) {
             snapshotFlow {
                 Triple(
                     (viewport.scrollXPx / 64f).toInt(),

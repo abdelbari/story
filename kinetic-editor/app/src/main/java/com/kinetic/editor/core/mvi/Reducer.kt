@@ -183,6 +183,10 @@ private inline fun replaceClip(
     transform: (ClipModel) -> ClipModel,
 ): TimelineState = mapTracks(state) { t ->
     val idx = t.clips.indexOfFirst { it.id == id }
-    if (idx < 0) t
-    else t.copy(clips = t.clips.mutate { it[idx] = transform(it[idx]) })
+    if (idx < 0) return@mapTracks t
+    val replacement = transform(t.clips[idx])
+    // Identity-preserving no-op: a gesture or slider that lands on the values
+    // the clip already has must not manufacture an undo entry.
+    if (replacement == t.clips[idx]) t
+    else t.copy(clips = t.clips.mutate { it[idx] = replacement })
 }

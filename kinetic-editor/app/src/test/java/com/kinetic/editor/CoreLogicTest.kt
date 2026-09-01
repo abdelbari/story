@@ -227,6 +227,16 @@ class CoreLogicTest {
     }
 
     @Test
+    fun noOpEditsPreserveStateIdentity() {
+        val c = clip("a", 10_000)
+        val s0 = stateWith(listOf(c))
+        assertTrue(reduce(s0, EditorIntent.TrimClip(c.id, c.trimInMs, c.trimOutMs)) === s0)
+        assertTrue(reduce(s0, EditorIntent.SetVolume(c.id, c.volume)) === s0)
+        assertTrue(reduce(s0, EditorIntent.SetGrade(c.id, c.grade)) === s0)
+        assertTrue(reduce(s0, EditorIntent.SetSpeed(c.id, 2f)) !== s0)
+    }
+
+    @Test
     fun moveReordersMainAndResortsFreeTracks() {
         val a = clip("a", 1_000); val b = clip("b", 1_000); val c = clip("c", 1_000)
         val s0 = stateWith(listOf(a, b, c))

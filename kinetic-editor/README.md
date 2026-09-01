@@ -16,8 +16,8 @@ was unreachable in the authoring environment, so androidx-facing call sites are
 reviewed, not compiled). The pure-logic core — models, reducer, store with
 coalescing undo, timeline<->preview segment mapping, transition-window math —
 compiles verbatim on the JVM and passes the executable test suite included at
-`app/src/test/java/com/kinetic/editor/CoreLogicTest.kt` (run with
-`./gradlew :app:testDebugUnitTest`).
+`app/src/test/java/com/kinetic/editor/CoreLogicTest.kt` — 21 tests, run with
+`./gradlew :app:testDebugUnitTest`.
 
 ---
 
@@ -107,8 +107,11 @@ during pinch-zoom. Instead:
 - `TimelineGestures` — one `pointerInput` arbitrates scrub-scroll (with decay
   fling), pinch zoom (playhead-anchored), frame-snapped trims, long-press
   drag-reorder with edge auto-scroll and magnetic snapping, and tap-select.
-  Catching a moving (flung) timeline transfers position ownership without
-  dropping a frame.
+  On a clip body the long-press timer is **raced against the touch slop**
+  (`awaitLongPressOrSlop`): move first and you scrub, hold still and you pick
+  the clip up. Catching a moving (flung) timeline transfers position ownership
+  without dropping a frame, and a gesture that ends where it started commits
+  nothing — no phantom undo entries.
 - The playhead is **fixed at center; content scrolls beneath it** (CapCut
   model), which makes `scrollX == playheadMs * pxPerMs` an invariant and gives
   playhead-anchored pinch zoom for free.
