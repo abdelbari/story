@@ -4,6 +4,10 @@ import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ClipModel
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.MediaRef
+import com.kinetic.editor.core.model.PlacedClip
+import com.kinetic.editor.core.model.TransitionSpec
+import com.kinetic.editor.core.model.planAudioSequence
+import com.kinetic.editor.core.model.transitionWindowsUs
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.TransitionType
@@ -159,6 +163,67 @@ class CoreLogicTest {
         val s0 = stateWith(emptyList(), audio = listOf(c))
         val s1 = reduce(s0, EditorIntent.TrimClip(c.id, 0, 1_234))
         assertEquals(1_234L, s1.tracks.first { it.type == TrackType.AUDIO }.clips[0].trimOutMs)
+    }
+
+    @Test
+    fun transitionWindowsScaleBySpeedAndClampToHalfTheClip() {
+        val c = clip("a", 10_000).copy(transitionOut = TransitionSpec(TransitionType.WIPE_LEFT, 500))
+        val w = transitionWindowsUs(c, null)
+        assertEquals(10_000_000L, w.durationUs)
+        assertEquals(250_000L, w.outHalfUs)
+        assertEquals(9_750_000L, w.outStartUs())
+        assertEquals(0L, w.inHalfUs)
+        assertEquals(500_000L, transitionWindowsUs(c.copy(speed = 2f), null).outHalfUs)
+
+        val tiny = clip("t", 10_000, 0, 200)
+            .copy(transitionOut = TransitionSpec(TransitionType.DIP_TO_BLACK, 5_000))
+        val tw = transitionWindowsUs(tiny, null)
+        assertEquals(100_000L, tw.outHalfUs)
+        assertTrue(tw.outStartUs() < tw.outEndUs())
+    }
+
+    @Test
+    fun noneOrNullPreviousTransitionMeansNoIncomingHalf() {
+        val c = clip("a", 4_000)
+        assertEquals(0L, transitionWindowsUs(c, null).inHalfUs)
+        assertEquals(0L, transitionWindowsUs(c, TransitionSpec(TransitionType.NONE, 800)).inHalfUs)
+        val w = transitionWindowsUs(c, TransitionSpec(TransitionType.ZOOM_PUNCH, 600))
+        assertEquals(300_000L, w.inHalfUs)
+        assertEquals(1_300_000L, w.inEndUs(1_000_000))
+    }
+
+    /** Guards the "what you see is what renders" property across both pipelines. */
+    @Test
+    fun previewAndExportDeriveIdenticalTransitionGeometry() {
+        val a = clip("a", 6_000, speed = 1.5f)
+            .copy(transitionOut = TransitionSpec(TransitionType.DIP_TO_BLACK, 700))
+        val b = clip("b", 5_000, speed = 0.5f)
+        val previewBase = a.sourceSpanMs * 1_000L
+        val export = transitionWindowsUs(b, a.transitionOut)
+        val preview = transitionWindowsUs(b, a.transitionOut)
+        assertEquals(export.inEndUs(), preview.inEndUs(previewBase) - previewBase)
+        assertEquals(export.outStartUs(), preview.outStartUs(previewBase) - previewBase)
+    }
+
+    @Test
+    fun audioPlanHeadTrimsOverlapsAndDropsCoveredClips() {
+        val x = clip("x", 4_000, start = 1_000)
+        val y = clip("y", 4_000, start = 3_000)
+        val plans = planAudioSequence(listOf(PlacedClip(x, 1_000), PlacedClip(y, 3_000)))
+        assertEquals(2, plans.size)
+        assertEquals(1_000L, plans[0].gapBeforeMs)
+        assertEquals(5_000L, plans[1].startMs)
+        assertEquals(2_000L, plans[1].trimInMs)
+
+        val covered = planAudioSequence(
+            listOf(PlacedClip(clip("big", 10_000), 0), PlacedClip(clip("c", 1_000, start = 2_000), 2_000)),
+        )
+        assertEquals(1, covered.size)
+
+        val fast = planAudioSequence(
+            listOf(PlacedClip(clip("pre", 2_000), 0), PlacedClip(clip("f", 8_000, speed = 2f), 1_000)),
+        )
+        assertEquals(2_000L, fast[1].trimInMs)
     }
 
     @Test

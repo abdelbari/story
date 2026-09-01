@@ -16,6 +16,8 @@ import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.Track
 import com.kinetic.editor.core.model.TrackType
+import com.kinetic.editor.core.model.TransitionSpec
+import com.kinetic.editor.core.model.transitionWindowsUs
 import com.kinetic.editor.core.model.gainAt
 import com.kinetic.editor.effects.FxSegment
 import com.kinetic.editor.effects.GradeGlEffect
@@ -317,40 +319,30 @@ class PreviewEngine(
         val placements = state.placements(state.mainTrack)
         val out = ArrayList<FxSegment>(placements.size)
         var previewUs = 0L
-        var prevTransition = com.kinetic.editor.core.model.TransitionSpec(
-            com.kinetic.editor.core.model.TransitionType.NONE, 0L,
-        )
+        var prevTransition: TransitionSpec? = null
         for (p in placements) {
             val clip = p.clip
-            val durUs = clip.sourceSpanMs * 1000L
-            // Transition halves live in each clip's own preview time, which runs
-            // at source rate: timeline-ms * speed.
-            val outHalfUs = clip.transitionOut
-                ?.let { (it.durationMs * 500L * clip.speed).roundToLong() }
-                ?.coerceAtMost(durUs / 2) ?: 0L
-            val inHalfUs = (prevTransition.durationMs * 500L * clip.speed).roundToLong()
-                .coerceAtMost(durUs / 2)
+            // Same shared windows the export mapper uses; here they are offset
+            // into the concatenated preview timeline instead of clip-local time.
+            val w = transitionWindowsUs(clip, prevTransition)
             out.add(
                 FxSegment(
                     startUs = previewUs,
-                    endUs = previewUs + durUs,
+                    endUs = previewUs + w.durationUs,
                     brightness = clip.grade.brightness,
                     contrast = clip.grade.contrast,
                     saturation = clip.grade.saturation,
                     temperature = clip.grade.temperature,
                     lutBitmap = clip.lut?.let { lutCache[it.assetPath] },
                     lutIntensity = clip.lut?.intensity ?: 0f,
-                    transOutType = (clip.transitionOut?.type?.ordinal ?: 0).toFloat(),
-                    transOutStartUs = previewUs + durUs - outHalfUs,
-                    transInType = if (inHalfUs > 0) prevTransition.type.ordinal.toFloat() else 0f,
-                    transInEndUs = previewUs + inHalfUs,
+                    transOutType = w.outTypeOrdinal.toFloat(),
+                    transOutStartUs = w.outStartUs(previewUs),
+                    transInType = w.inTypeOrdinal.toFloat(),
+                    transInEndUs = w.inEndUs(previewUs),
                 ),
             )
             prevTransition = clip.transitionOut
-                ?: com.kinetic.editor.core.model.TransitionSpec(
-                    com.kinetic.editor.core.model.TransitionType.NONE, 0L,
-                )
-            previewUs += durUs
+            previewUs += w.durationUs
         }
         return PreviewFxTimeline(out)
     }

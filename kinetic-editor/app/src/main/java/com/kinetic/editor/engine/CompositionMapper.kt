@@ -21,9 +21,10 @@ import com.kinetic.editor.core.model.Track
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.TransitionType
+import com.kinetic.editor.core.model.planAudioSequence
+import com.kinetic.editor.core.model.transitionWindowsUs
 import com.kinetic.editor.effects.ClipGradeProvider
 import com.kinetic.editor.effects.GradeGlEffect
-import kotlin.math.roundToLong
 
 data class ExportSpec(
     val width: Int = 1080,
@@ -104,16 +105,9 @@ object CompositionMapper {
             )
             .build()
 
-        // Transition halves in clip-local SOURCE µs (pre-speed timestamps):
-        // a timeline-ms duration converts by *speed.
-        val durUs = clip.sourceSpanMs * 1_000L
-        val outHalfUs = clip.transitionOut
-            ?.let { (it.durationMs * 500L * clip.speed).roundToLong() }
-            ?.coerceAtMost(durUs / 2) ?: 0L
-        val inHalfUs = previousTransition
-            ?.takeIf { it.type != TransitionType.NONE }
-            ?.let { (it.durationMs * 500L * clip.speed).roundToLong() }
-            ?.coerceAtMost(durUs / 2) ?: 0L
+        // Clip-local SOURCE µs windows — the exact same computation the preview
+        // engine feeds its shader, so export matches playback frame for frame.
+        val windows = transitionWindowsUs(clip, previousTransition)
 
         val lutBitmap = clip.lut?.let { lut ->
             lutCache.getOrPut(lut.assetPath) {
@@ -131,10 +125,10 @@ object CompositionMapper {
                         lutBitmap = lutBitmap,
                         lutIntensity = clip.lut?.intensity ?: 0f,
                         transOutType = clip.transitionOut?.type ?: TransitionType.NONE,
-                        transOutStartUs = durUs - outHalfUs,
-                        transOutEndUs = durUs,
+                        transOutStartUs = windows.outStartUs(),
+                        transOutEndUs = windows.outEndUs(),
                         transInType = previousTransition?.type ?: TransitionType.NONE,
-                        transInEndUs = inHalfUs,
+                        transInEndUs = windows.inEndUs(),
                     ),
                 ),
             )
@@ -156,32 +150,16 @@ object CompositionMapper {
 
     private fun audioSequence(state: TimelineState, track: Track): EditedMediaItemSequence {
         val builder = EditedMediaItemSequence.Builder()
-        var cursorMs = 0L
-        for (placed in state.placements(track).sortedBy { it.startMs }) {
-            val clip = placed.clip
-
-            // A sequence is strictly serial: an overlap with the previous clip
-            // cannot be mixed here (that needs a second track). Cut the head of
-            // the later clip instead, so the audio that DOES play stays exactly
-            // time-aligned with the preview rather than silently shifting right.
-            var trimInMs = clip.trimInMs
-            var startMs = placed.startMs
-            val overlapMs = cursorMs - startMs
-            if (overlapMs > 0) {
-                trimInMs += (overlapMs * clip.speed.toDouble()).roundToLong()
-                startMs = cursorMs
-                if (trimInMs >= clip.trimOutMs) continue // fully covered
-            }
-
-            val gapMs = startMs - cursorMs
-            if (gapMs > 0) builder.addGap(gapMs * 1_000L)
+        for (plan in planAudioSequence(state.placements(track))) {
+            val clip = plan.clip
+            if (plan.gapBeforeMs > 0) builder.addGap(plan.gapBeforeMs * 1_000L)
 
             val mediaItem = MediaItem.Builder()
                 .setUri(clip.media.uri)
                 .setClippingConfiguration(
                     MediaItem.ClippingConfiguration.Builder()
-                        .setStartPositionMs(trimInMs)
-                        .setEndPositionMs(clip.trimOutMs)
+                        .setStartPositionMs(plan.trimInMs)
+                        .setEndPositionMs(plan.trimOutMs)
                         .build(),
                 )
                 .build()
@@ -197,8 +175,6 @@ object CompositionMapper {
                     .setRemoveVideo(true) // music sourced from mp4 stays audio-only
                     .build(),
             )
-            cursorMs = startMs +
-                ((clip.trimOutMs - trimInMs) / clip.speed.toDouble()).roundToLong()
         }
         return builder.build()
     }
