@@ -380,7 +380,11 @@ internal object AndroidStructureTreeReader {
                 }
             }
             gather(element, 0)
-            return sb.toString()
+            // Marked content hands back glyphs in painting order, which for a
+            // right-to-left line is visual order — backwards. Nothing further
+            // down the pipeline can tell that from logical order, so it is
+            // reconstructed here, at the one place tagged text is assembled.
+            return Bidi.visualToLogical(sb.toString())
         }
 
         private fun childElements(element: PDStructureElement): List<PDStructureElement> =

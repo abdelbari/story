@@ -32,6 +32,74 @@ object Bidi {
         return null
     }
 
+    /**
+     * Rebuilds logical order from text captured in visual order.
+     *
+     * A PDF content stream paints glyphs in the order they land on the page,
+     * left to right, so a right-to-left line arrives backwards: characters
+     * reversed and words in the opposite order. PDFBox's text stripper undoes
+     * this before handing text to callers, but the marked-content path a
+     * tagged PDF is read through never goes past the raw glyphs, so the
+     * reconstruction has to happen here instead.
+     *
+     * This is UAX #9 run reordering run backwards: split the visual text into
+     * runs, put those runs back in logical order, and reverse the characters
+     * inside each right-to-left run.
+     *
+     * Paired punctuation is deliberately left alone. Rendering mirrors the
+     * glyph, not the character, and a PDF's ToUnicode maps that glyph back to
+     * the character the author typed — so "(" reaches us as "(" however it was
+     * drawn, and reversing the run is enough to put it back at the opening
+     * end. Mirroring here as well would turn a correct "(text)" into ")text(".
+     * PDFBox does mirror, which is why its own output disagrees on this.
+     *
+     * Text with no right-to-left character is returned unchanged, so
+     * left-to-right documents pass through untouched.
+     */
+    fun visualToLogical(text: String): String {
+        if (text.isEmpty() || !containsRtl(text)) return text
+        val bidi = java.text.Bidi(text, java.text.Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT)
+        if (!bidi.isMixed && bidi.baseIsLeftToRight()) return text
+        val runCount = bidi.runCount
+        val levels = ByteArray(runCount)
+        // reorderVisually permutes this array and reads levels by the original
+        // index, so the levels array itself must stay in run order.
+        val logicalOrder = arrayOfNulls<Any>(runCount)
+        for (run in 0 until runCount) {
+            levels[run] = bidi.getRunLevel(run).toByte()
+            logicalOrder[run] = run
+        }
+        java.text.Bidi.reorderVisually(levels, 0, logicalOrder, 0, runCount)
+        val out = StringBuilder(text.length)
+        for (position in 0 until runCount) {
+            val run = logicalOrder[position] as Int
+            val start = bidi.getRunStart(run)
+            var end = bidi.getRunLimit(run)
+            if (levels[run].toInt() and 1 == 1) {
+                while (end > start) out.append(text[--end])
+            } else {
+                out.append(text, start, end)
+            }
+        }
+        return out.toString()
+    }
+
+    /** True when [text] carries any strongly right-to-left character. */
+    private fun containsRtl(text: String): Boolean {
+        var i = 0
+        while (i < text.length) {
+            val cp = text.codePointAt(i)
+            when (Character.getDirectionality(cp)) {
+                Character.DIRECTIONALITY_RIGHT_TO_LEFT,
+                Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC -> return true
+                else -> {}
+            }
+            i += Character.charCount(cp)
+        }
+        return false
+    }
+
+
     /** One directional segment of a paragraph's text, in logical order. */
     data class DirectionalRun(val start: Int, val end: Int, val direction: TextDirection)
 
