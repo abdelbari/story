@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 33 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 34 pure-JVM logic tests
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
@@ -153,8 +153,17 @@ during pinch-zoom. Instead:
   sample-exactly.
 - Overlay audio **and PiP video** tracks play on **slave ExoPlayers** phase-locked
   to the master (re-seek on >80 ms drift). A PiP gets its own `SurfaceView`, laid
-  out by Compose from the same `PipSpec` the export compositor uses — so the box
-  on screen is the box that renders. Compositing both streams into one GL surface
+  out by Compose from the same `pipSpecAt` lookup the export compositor uses —
+  resolved for the current playhead behind a `derivedStateOf`, so the box only
+  re-lays out when a clip's framing actually changes, and the box on screen is
+  the box that renders. One known preview-only gap: grade/LUT on a PiP clip is
+  exported but not previewed, because the slave players carry no GL effects.
+- **Playback errors are surfaced, not swallowed.** A source that vanishes after
+  being added (a persisted project whose file was deleted, a revoked URI) would
+  otherwise be a silently black preview; `onPlayerError` on the master and every
+  slave maps the error code to a plain sentence the UI shows, and the state
+  clears when the pipeline is next rebuilt — which is what removing the bad clip
+  does. Compositing both streams into one GL surface
   just to preview them would cost a full render pass per frame for no visual
   difference. Text/stickers preview as a Compose layer above everything, matching
   the export layer order (compositor first, `OverlayEffect` last).

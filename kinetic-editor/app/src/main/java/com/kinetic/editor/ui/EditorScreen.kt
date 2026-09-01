@@ -92,6 +92,7 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
     val canUndo by vm.store.canUndo.collectAsState()
     val canRedo by vm.store.canRedo.collectAsState()
     val recording by vm.recorder.isRecording.collectAsState()
+    val playbackError by vm.preview.error.collectAsState()
 
     val viewport = remember { TimelineViewportState() }
     val haptics = LocalHapticFeedback.current
@@ -164,6 +165,18 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
             .windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
         PreviewSurface(vm.preview, state, viewport, Modifier.fillMaxWidth().weight(1f))
+
+        playbackError?.let { message ->
+            Text(
+                message,
+                color = Color(0xFFFF5C7A),
+                fontSize = 11.sp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0x33FF5C7A))
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+            )
+        }
 
         ExportStatus()
 

@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.view.SurfaceView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -12,7 +13,8 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.source.ConcatenatingMediaSource2
-import com.kinetic.editor.core.model.PipSpec
+import com.kinetic.editor.core.model.PipWindow
+import com.kinetic.editor.core.model.pipWindows
 import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.Track
@@ -95,8 +97,21 @@ class PreviewEngine(
     private val _overlays = MutableStateFlow<List<OverlayHandle>>(emptyList())
     val overlays: StateFlow<List<OverlayHandle>> = _overlays.asStateFlow()
 
-    /** Identifies one PiP preview surface and where it should sit in the frame. */
-    data class OverlayHandle(val trackId: String, val pip: PipSpec)
+    /**
+     * Identifies one PiP preview surface. Placement is a time-ordered list, not
+     * a single spec: the UI resolves the box for the current playhead, exactly
+     * as the export compositor resolves it per frame.
+     */
+    data class OverlayHandle(val trackId: String, val windows: List<PipWindow>)
+
+    /**
+     * Last playback failure, or null. A source that vanished after being added
+     * (a persisted project whose file was deleted, a revoked URI) otherwise shows
+     * as a silently black preview. Cleared when the pipeline is next rebuilt,
+     * which is what removing the bad clip does.
+     */
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
 
     private var latestState: TimelineState = TimelineState.empty()
     private var segments: PreviewSegments = PreviewSegments(emptyList())
@@ -144,6 +159,7 @@ class PreviewEngine(
     /** Structural change: rebuild the concatenated source, preserving position. */
     fun setTimeline(state: TimelineState, keepTimelineMs: Long) {
         latestState = state
+        _error.value = null
         rebuildSegments(state)
         val placements = state.placements(state.mainTrack)
         if (placements.isEmpty()) {
@@ -294,7 +310,24 @@ class PreviewEngine(
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (playbackState == Player.STATE_ENDED) pause()
         }
+
+        override fun onPlayerError(error: PlaybackException) {
+            _error.value = describe("Main track", error)
+            seekInFlight = false
+            pendingScrubMs = -1
+        }
     }
+
+    private fun describe(where: String, error: PlaybackException): String =
+        when (error.errorCode) {
+            PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
+            PlaybackException.ERROR_CODE_IO_NO_PERMISSION,
+            -> "$where: a media file is missing or no longer readable"
+            PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+            -> "$where: this device cannot decode one of the clips"
+            else -> "$where: ${error.errorCodeName}"
+        }
 
     /**
      * 10Hz control loop while playing: applies per-clip preview speed, samples
@@ -408,7 +441,7 @@ class PreviewEngine(
         }
         _overlays.value = slaveTracks
             .filter { it.type == TrackType.VIDEO_OVERLAY }
-            .map { OverlayHandle(it.id.value, it.clips.first().pip ?: PipSpec()) }
+            .map { OverlayHandle(it.id.value, pipWindows(state.placements(it))) }
     }
 
     /**
@@ -420,6 +453,18 @@ class PreviewEngine(
     private inner class SlavePlayer(val player: ExoPlayer) {
         private var track: Track? = null
         private var placements: List<PlacedClip> = emptyList()
+
+        init {
+            player.addListener(object : Player.Listener {
+                override fun onPlayerError(error: PlaybackException) {
+                    val label = when (track?.type) {
+                        TrackType.VIDEO_OVERLAY -> "Picture-in-picture"
+                        else -> "Audio track"
+                    }
+                    _error.value = describe(label, error)
+                }
+            })
+        }
 
         fun rebuild(state: TimelineState, newTrack: Track) {
             track = newTrack

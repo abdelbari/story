@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
@@ -34,8 +35,10 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.kinetic.editor.core.model.PipSpec
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TrackType
+import com.kinetic.editor.core.model.pipSpecAt
 import com.kinetic.editor.engine.PreviewEngine
 import com.kinetic.editor.ui.timeline.TimelineViewportState
 import kotlinx.coroutines.Dispatchers
@@ -65,7 +68,7 @@ fun PreviewSurface(
                 onRelease = { engine.detachSurface() },
                 modifier = Modifier.fillMaxSize(),
             )
-            PipLayer(engine)
+            PipLayer(engine, viewport)
             PreviewOverlayLayer(state, viewport, Modifier.fillMaxSize())
         }
     }
@@ -78,11 +81,18 @@ fun PreviewSurface(
  * matches the export layer order (compositor first, OverlayEffect last).
  */
 @Composable
-private fun PipLayer(engine: PreviewEngine) {
+private fun PipLayer(engine: PreviewEngine, viewport: TimelineViewportState) {
     val overlays by engine.overlays.collectAsState()
     for (overlay in overlays) {
         key(overlay.trackId) {
-            val pip = overlay.pip
+            // derivedStateOf: the playhead changes every frame, but the resolved
+            // placement only changes at clip boundaries — so this box re-lays out
+            // when a PiP clip's framing actually changes, not sixty times a second.
+            val pip by remember(overlay) {
+                derivedStateOf {
+                    pipSpecAt(overlay.windows, viewport.playheadMs * 1_000L) ?: PipSpec()
+                }
+            }
             Box(
                 Modifier
                     .fillMaxSize()
