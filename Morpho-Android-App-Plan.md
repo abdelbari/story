@@ -192,6 +192,9 @@ PDF has no paragraphs — only positioned glyphs. The pipeline:
 
 ## 10. Roadmap
 
+> **Status (as built so far):** M0 ✅ · M1 ✅ · M2 ✅ (print/PDF-render polish awaits device testing) · M3 core ✅ (on-device Tesseract OCR, five languages; tuning awaits device testing) · M4 data layer ✅ (FidelityReport + post-save notice; Review Mode UI next, Google Docs sync gated on the INTERNET-permission product decision). Details in `morpho/README.md`.
+
+
 | Milestone | Weeks | Deliverable |
 |---|---|---|
 | **M0 — Foundations** | 1–2 | Repo, CI (lint, tests, license audit, screenshot RTL tests), module skeleton, design system, SAF file flows |
