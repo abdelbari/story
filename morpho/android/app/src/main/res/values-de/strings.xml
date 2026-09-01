@@ -53,4 +53,6 @@
     <string name="about_privacy_body">Morpho besitzt überhaupt keine Internet-Berechtigung und hat damit keine Möglichkeit, Ihre Dokumente irgendwohin zu senden — auch nicht versehentlich. Alles, auch das Lesen gescannter Seiten, geschieht auf diesem Telefon. Es wird nichts erhoben, und es gibt weder Konto noch Server.</string>
     <string name="about_components_title">Open-Source-Komponenten</string>
     <string name="about_license_title">Apache-Lizenz 2.0</string>
+    <string name="encrypted_pdf">Dieses PDF ist passwortgeschützt. Öffnen Sie es in einer PDF-App, entfernen Sie den Schutz, und versuchen Sie es erneut.</string>
+    <string name="ocr_empty">Aus diesem Scan konnte nichts gelesen werden. Er ist möglicherweise leer oder in einer Schrift, für die Morpho noch kein Modell hat.</string>
 </resources>

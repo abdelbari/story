@@ -54,4 +54,6 @@
     <string name="about_privacy_body">Morpho has no internet permission at all, so it has no way to send your documents anywhere — not even by accident. Everything, including reading scanned pages, happens on this phone. Nothing is collected, and there is no account and no server.</string>
     <string name="about_components_title">Open-source components</string>
     <string name="about_license_title">Apache License 2.0</string>
+    <string name="encrypted_pdf">This PDF is password-protected. Open it in a PDF app, remove the password, then try again.</string>
+    <string name="ocr_empty">Nothing could be read from this scan. It may be blank, or in a script Morpho has no model for yet.</string>
 </resources>

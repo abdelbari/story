@@ -63,7 +63,7 @@ class AndroidOcrReader(private val context: Context) {
     ): DocumentModel {
         val dataParent = ensureTrainedData(languages)
         val pageTexts = mutableListOf<String>()
-        PDDocument.load(bytes).use { doc ->
+        AndroidPdfReader.load(bytes).use { doc ->
             val renderer = PDFRenderer(doc)
             val tess = TessBaseAPI()
             try {

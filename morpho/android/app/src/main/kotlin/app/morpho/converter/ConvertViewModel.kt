@@ -53,7 +53,9 @@ sealed interface ConvertUiState {
     data class Failed(val reason: FailReason) : ConvertUiState
 }
 
-enum class FailReason { UNSUPPORTED_TYPE, SCANNED_PDF, READ_ERROR, WRITE_ERROR }
+enum class FailReason {
+    UNSUPPORTED_TYPE, SCANNED_PDF, ENCRYPTED_PDF, OCR_EMPTY, READ_ERROR, WRITE_ERROR
+}
 
 /** What Review Mode shows: the report, and which blocks the reader corrected. */
 data class ReviewState(
@@ -278,6 +280,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         } catch (e: UnconvertibleContent) {
             _state.value = ConvertUiState.Failed(e.reason)
             return
+        } catch (e: AndroidPdfReader.EncryptedDocument) {
+            _state.value = ConvertUiState.Failed(FailReason.ENCRYPTED_PDF)
+            return
         } catch (e: AndroidOcrReader.Cancelled) {
             _state.value = pickedFile?.meta ?: ConvertUiState.Idle
             return
@@ -305,7 +310,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             convertPicked(
                 uri, source, "docx", DocxWriter.MIME_TYPE,
                 read = { bytes ->
-                    AndroidOcrReader(getApplication()).recognize(
+                    val model = AndroidOcrReader(getApplication()).recognize(
                         bytes = bytes,
                         languages = ocrLanguages(),
                         onPage = { page, pageCount ->
@@ -313,6 +318,13 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                         },
                         shouldContinue = { !ocrCancelled.get() },
                     )
+                    // Recognizing nothing is a real outcome — a blank scan, or
+                    // a script with no model. Saying so beats saving an empty
+                    // document that looks like a successful conversion.
+                    val recognized = model.blocks.filterIsInstance<Paragraph>()
+                        .any { it.text.isNotBlank() }
+                    if (!recognized) throw UnconvertibleContent(FailReason.OCR_EMPTY)
+                    model
                 },
                 write = { model -> DocxWriter.toByteArray(model) },
             )

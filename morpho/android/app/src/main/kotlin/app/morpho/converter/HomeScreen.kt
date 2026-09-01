@@ -314,6 +314,8 @@ private fun StateActions(
 private fun FailReason.messageRes(): Int = when (this) {
     FailReason.UNSUPPORTED_TYPE -> R.string.unsupported_type
     FailReason.SCANNED_PDF -> R.string.scanned_pdf
+    FailReason.ENCRYPTED_PDF -> R.string.encrypted_pdf
+    FailReason.OCR_EMPTY -> R.string.ocr_empty
     FailReason.READ_ERROR -> R.string.read_error
     FailReason.WRITE_ERROR -> R.string.write_error
 }

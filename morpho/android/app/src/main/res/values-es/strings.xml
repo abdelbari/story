@@ -53,4 +53,6 @@
     <string name="about_privacy_body">Morpho no tiene ningún permiso de internet, así que no tiene forma de enviar tus documentos a ninguna parte, ni siquiera por accidente. Todo, incluida la lectura de páginas escaneadas, ocurre en este teléfono. No se recopila nada, y no hay cuenta ni servidor.</string>
     <string name="about_components_title">Componentes de código abierto</string>
     <string name="about_license_title">Licencia Apache 2.0</string>
+    <string name="encrypted_pdf">Este PDF está protegido con contraseña. Ábrelo en una app de PDF, quita la protección e inténtalo de nuevo.</string>
+    <string name="ocr_empty">No se pudo leer nada de este escaneo. Puede estar en blanco o en una escritura para la que Morpho aún no tiene modelo.</string>
 </resources>

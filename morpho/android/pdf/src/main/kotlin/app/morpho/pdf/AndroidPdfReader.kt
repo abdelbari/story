@@ -10,6 +10,7 @@ import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLayout
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
 import com.tom_roush.pdfbox.text.PDFTextStripper
 
 /**
@@ -21,17 +22,23 @@ import com.tom_roush.pdfbox.text.PDFTextStripper
  *
  * Confidence follows the engine convention: 0.9 when the tags were actually
  * read, 0.6 for every heuristic path — even when a tree exists but yielded
- * nothing. A scanned PDF (no text layer) yields a model with no text —
- * callers decide how to surface that until M3 brings OCR.
+ * nothing. A scanned PDF (no text layer) yields a model with no text; the
+ * app offers [AndroidOcrReader] for those.
  */
 class AndroidPdfReader(context: Context) {
+
+    /**
+     * Raised for a PDF that needs a password. Worth its own type: "couldn't
+     * read that file" is useless advice when the fix is knowing the password.
+     */
+    class EncryptedDocument : Exception()
 
     init {
         ensureInitialized(context)
     }
 
     fun extract(bytes: ByteArray): DocumentModel =
-        PDDocument.load(bytes).use { doc ->
+        load(bytes).use { doc ->
             val tagged = doc.documentCatalog.structureTreeRoot != null
 
             val images = runCatching { AndroidImageCapture().capture(doc) }.getOrDefault(emptyList())
@@ -81,6 +88,14 @@ class AndroidPdfReader(context: Context) {
     }
 
     companion object {
+        /** [PDDocument.load], with an encrypted file reported as such. */
+        internal fun load(bytes: ByteArray): PDDocument =
+            try {
+                PDDocument.load(bytes)
+            } catch (e: InvalidPasswordException) {
+                throw EncryptedDocument()
+            }
+
         @Volatile
         private var initialized = false
 
