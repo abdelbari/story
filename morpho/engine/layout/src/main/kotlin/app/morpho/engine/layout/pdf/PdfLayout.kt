@@ -99,12 +99,19 @@ object PdfLayout {
     }
 
     private fun reconstructBody(
-        lines: List<PdfLine>,
+        asPainted: List<PdfLine>,
         confidence: Float,
         images: List<PdfImage>,
         sheets: List<PdfPageSheet>,
     ): DocumentModel {
-        val blockByPage = lines.groupBy { it.page }.mapValues { (_, pageLines) -> blockOf(pageLines) }
+        val blockByPage = asPainted.groupBy { it.page }.mapValues { (_, pageLines) -> blockOf(pageLines) }
+        // A page set in two columns paints its lines down the page, not down
+        // each column, so they are put into the order they are meant to be
+        // read in before anything is made of them. A page in one column is
+        // one run of text and comes back as it went in.
+        val rightToLeft = Bidi.dominantDirection(asPainted.joinToString(" ") { it.text }) == TextDirection.RTL
+        val flows = PdfColumns.flows(asPainted, rightToLeft)
+        val lines = asPainted.sortedWith(compareBy({ it.page }, { flows[it] ?: 0 }, { it.baselineY }))
         val regions = PdfTableDetector.detect(lines)
 
         // Text stretches between table regions, each remembering its lines.
@@ -121,17 +128,17 @@ object PdfLayout {
         val textLines = stretches.flatten()
         val bodySize = HeadingSizes.median((textLines.ifEmpty { lines }).map { it.maxFontSize })
         val justified = looksJustified(lines, blockByPage)
-        val clusters = stretches.map { cluster(it, blockByPage, justified) }
+        val clusters = stretches.map { cluster(it, blockByPage, justified, flows) }
         val kindBySize = headingKinds(clusters.flatten(), bodySize)
 
         // Every block gets a position anchor (page, y of its first line);
         // captured images join the same stream and a stable sort interleaves
         // them — text added first wins ties at identical coordinates.
-        class Positioned(val page: Int, val y: Float, val block: Block)
+        class Positioned(val page: Int, val flow: Int, val y: Float, val block: Block)
 
         val positioned = mutableListOf<Positioned>()
         for ((anchor, table) in tablesWithAnchor) {
-            positioned += Positioned(anchor.page, anchor.baselineY, table)
+            positioned += Positioned(anchor.page, flows[anchor] ?: 0, anchor.baselineY, table)
         }
         val flatClusters = clusters.flatten()
         // A heading set in bold at the body's own size is invisible to a
@@ -161,6 +168,7 @@ object PdfLayout {
             val next = flatClusters.getOrNull(index + 1)?.firstOrNull()
             positioned += Positioned(
                 first.page,
+                flows[first] ?: 0,
                 first.baselineY,
                 paragraph(clusterLines, kind, confidence, blockByPage, next),
             )
@@ -170,6 +178,8 @@ object PdfLayout {
         val imagesPositioned = images.map { image ->
             Positioned(
                 image.page,
+                // A picture belongs to the column it stands in.
+                PdfColumns.flowOf(flows, image.page, image.topY),
                 image.topY,
                 ImageBlock(
                     bytes = image.bytes,
@@ -189,7 +199,7 @@ object PdfLayout {
         val deliberate = deliberateBreaks(lines)
         var page = Int.MIN_VALUE
         val blocks = (positioned + imagesPositioned)
-            .sortedWith(compareBy({ it.page }, { it.y }))
+            .sortedWith(compareBy({ it.page }, { it.flow }, { it.y }))
             .map { entry ->
                 val starts = page != Int.MIN_VALUE && entry.page > page && entry.page in deliberate
                 page = maxOf(page, entry.page)
@@ -344,6 +354,7 @@ object PdfLayout {
         lines: List<PdfLine>,
         blockByPage: Map<Int, Pair<Float, Float>>,
         justified: Boolean,
+        flows: Map<PdfLine, Int>,
     ): List<List<PdfLine>> {
         if (lines.isEmpty()) return emptyList()
         val pitchByPage = lines.groupBy { it.page }.mapValues { (_, pageLines) ->
@@ -351,7 +362,7 @@ object PdfLayout {
         }
         val clusters = mutableListOf(mutableListOf(lines.first()))
         for ((previous, line) in lines.zipWithNext()) {
-            if (startsNewParagraph(previous, line, pitchByPage.getValue(line.page), blockByPage, justified)) {
+            if (startsNewParagraph(previous, line, pitchByPage.getValue(line.page), blockByPage, justified, flows)) {
                 clusters += mutableListOf(line)
             } else {
                 clusters.last() += line
@@ -407,8 +418,12 @@ object PdfLayout {
         medianPitch: Float,
         blockByPage: Map<Int, Pair<Float, Float>>,
         justified: Boolean,
+        flows: Map<PdfLine, Int>,
     ): Boolean {
         if (line.page != previous.page) return true
+        // The foot of one column and the head of the next are not one
+        // paragraph, however close their baselines happen to fall.
+        if ((flows[previous] ?: 0) != (flows[line] ?: 0)) return true
         val pitch =
             if (medianPitch > 0f) medianPitch
             else FALLBACK_PITCH_FACTOR * max(previous.maxFontSize, line.maxFontSize)
