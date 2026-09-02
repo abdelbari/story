@@ -44,7 +44,11 @@ class AndroidPdfReader(context: Context) {
 
     fun extract(bytes: ByteArray, password: String = ""): DocumentModel =
         load(bytes, password).use { doc ->
-            val tagged = doc.documentCatalog.structureTreeRoot != null
+            // A document somebody filled in is read from its pages: the
+            // answers are drawn onto them here, and a structure tree knows
+            // nothing about what was drawn after it was written.
+            val filled = drawFilledFields(doc)
+            val tagged = doc.documentCatalog.structureTreeRoot != null && !filled
 
             val images = runCatching { AndroidImageCapture().capture(doc) }.getOrDefault(emptyList())
 
@@ -73,6 +77,30 @@ class AndroidPdfReader(context: Context) {
             }
             Footnotes.refine(Links.refine(model))
         }
+
+    /**
+     * Draws what somebody typed into a form onto the page they typed it on.
+     *
+     * A filled-in PDF form keeps its answers in the fields rather than in
+     * the page: the government form, the application, the registration all
+     * look filled in and extract blank, because what a reader sees is the
+     * field's appearance and what the page holds is the empty form. Asking
+     * the document to flatten its form draws every appearance onto its
+     * page, in place, where the reader reads it like any other text. A form
+     * that cannot be flattened is left as it was rather than lost.
+     *
+     * True when something was drawn, which is to say the document is one
+     * somebody filled in.
+     */
+    private fun drawFilledFields(document: PDDocument): Boolean = runCatching {
+        val form = document.documentCatalog?.acroForm ?: return false
+        val filled = form.fields.any { field ->
+            runCatching { field.valueAsString }.getOrNull()?.isNotBlank() == true
+        }
+        if (!filled) return false
+        form.flatten()
+        true
+    }.getOrDefault(false)
 
     private fun plainTextFallback(
         doc: PDDocument,
