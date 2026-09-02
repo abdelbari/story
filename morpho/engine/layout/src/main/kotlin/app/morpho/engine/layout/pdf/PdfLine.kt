@@ -55,6 +55,8 @@ data class PdfLook(
     val raised: Int = 0,
     /** Packed 0xRRGGBB, or null for the black a page paints with unless it says otherwise. */
     val colorRgb: Int? = null,
+    /** Where the glyph points, when a link annotation covers it. */
+    val link: String? = null,
 )
 
 /** A stretch of a line's text set in one look. */

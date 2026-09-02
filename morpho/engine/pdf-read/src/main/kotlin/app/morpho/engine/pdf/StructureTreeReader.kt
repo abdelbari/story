@@ -240,11 +240,16 @@ internal object StructureTreeReader {
      * tag and the properties stay null. This subclass resolves named property
      * lists through the page resources, so both forms carry their MCID.
      */
-    private class ResolvingMarkedContentExtractor(private val page: PDPage) : PDFMarkedContentExtractor() {
+    private class ResolvingMarkedContentExtractor(
+        private val page: PDPage,
+        private val pageLinks: PageLinks.Page? = null,
+    ) : PDFMarkedContentExtractor() {
         /** The rules drawn on the page outside any artifact — a running header's own do not count. */
         val rules = mutableListOf<Rule>()
         /** The colour each glyph was painted in, where it was not the plain black a page paints with. */
         val colors = IdentityHashMap<TextPosition, Int>()
+        /** Where each glyph points, for the few a link annotation covers. */
+        val links = IdentityHashMap<TextPosition, String>()
         /**
          * What each top-level artifact drew besides text — rules and
          * pictures, as boxes — by the order the artifact was opened in,
@@ -382,6 +387,8 @@ internal object StructureTreeReader {
 
         override fun processTextPosition(text: TextPosition) {
             PaintColor.of(graphicsState)?.let { colors[text] = it }
+            pageLinks?.at(text.xDirAdj + text.widthDirAdj / 2, text.yDirAdj - text.heightDir / 2)
+                ?.let { links[text] = it }
             super.processTextPosition(text)
         }
 
@@ -469,6 +476,8 @@ internal object StructureTreeReader {
         private val rulesByPageIndex = HashMap<Int, List<Rule>>()
         /** The colour each glyph was painted in, gathered from every page's extractor before it is let go. */
         private val colorByPosition = IdentityHashMap<TextPosition, Int>()
+        /** Where each glyph points, for the few a link annotation covers. */
+        private val linkByPosition = IdentityHashMap<TextPosition, String>()
         private val glyphsByPageAndMcid = HashMap<Long, List<Glyph>>()
         private val textByPageAndMcid = HashMap<Long, String>()
         private val sizeByPageAndMcid = HashMap<Long, Float>()
@@ -486,11 +495,12 @@ internal object StructureTreeReader {
         private val baseDirection: TextDirection?
 
         init {
+            val pageLinks = runCatching { PageLinks(doc) }.getOrNull()
             for ((index, page) in doc.pages.withIndex()) {
                 pageIndexByPage[page.cosObject] = index
                 pageWidthByIndex[index] = runCatching { page.mediaBox.width }.getOrDefault(0f)
                 pageHeightByIndex[index] = runCatching { page.mediaBox.height }.getOrDefault(0f)
-                val extractor = ResolvingMarkedContentExtractor(page)
+                val extractor = ResolvingMarkedContentExtractor(page, pageLinks?.page(index))
                 runCatching { extractor.processPage(page) }
                 var artifacts = 0
                 for (content in extractor.markedContents.orEmpty()) {
@@ -502,6 +512,7 @@ internal object StructureTreeReader {
                 }
                 rulesByPageIndex[index] = extractor.rules.toList()
                 colorByPosition.putAll(extractor.colors)
+                linkByPosition.putAll(extractor.links)
             }
             baseDirection = Bidi.directionOfLanguage(runCatching { doc.documentCatalog.language }.getOrNull())
                 ?: Bidi.dominantDirection(buildString {
@@ -807,6 +818,7 @@ internal object StructureTreeReader {
             italic = isItalic(position),
             raised = raised,
             colorRgb = colorByPosition[position],
+            link = linkByPosition[position],
         )
 
         /**

@@ -6,6 +6,8 @@ import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.PDPageContentStream
 import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.pdmodel.font.PDType1Font
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
+import org.apache.pdfbox.pdmodel.interactive.action.PDActionURI
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -31,6 +33,47 @@ class PdfReaderTest {
                 }
                 content.endText()
             }
+            val out = ByteArrayOutputStream()
+            doc.save(out)
+            return out.toByteArray()
+        }
+    }
+
+    @Test
+    fun `a link annotation says where its words point, whatever they say`() {
+        // The one thing text alone cannot give: "click here" leads
+        // somewhere, and only the annotation over it knows where.
+        val pdf = linkedPdf()
+        val runs = PdfReader().extract(pdf).blocks.filterIsInstance<Paragraph>().flatMap { it.runs }
+        val linked = runs.filter { it.link != null }
+        assertTrue(linked.isNotEmpty(), "no link was read: $runs")
+        assertEquals("https://example.org/the-page", linked.first().link)
+        assertTrue(linked.joinToString("") { it.text }.contains("click here"), linked.toString())
+        // The words outside the rectangle are not part of it.
+        assertTrue(runs.any { it.link == null && it.text.contains("Plain") }, runs.toString())
+    }
+
+    /** An untagged page with "click here" under a link annotation, and plain text beside it. */
+    private fun linkedPdf(): ByteArray {
+        PDDocument().use { doc ->
+            val page = PDPage(PDRectangle.A4)
+            doc.addPage(page)
+            PDPageContentStream(doc, page).use { content ->
+                content.beginText()
+                content.setFont(PDType1Font.HELVETICA, 12f)
+                content.newLineAtOffset(72f, 700f)
+                content.showText("click here")
+                content.endText()
+                content.beginText()
+                content.setFont(PDType1Font.HELVETICA, 12f)
+                content.newLineAtOffset(300f, 700f)
+                content.showText("Plain words")
+                content.endText()
+            }
+            val link = PDAnnotationLink()
+            link.rectangle = PDRectangle(70f, 694f, 60f, 18f)
+            link.action = PDActionURI().apply { uri = "https://example.org/the-page" }
+            page.annotations.add(link)
             val out = ByteArrayOutputStream()
             doc.save(out)
             return out.toByteArray()

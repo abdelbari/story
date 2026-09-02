@@ -71,6 +71,8 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
     private val paintOrder = IdentityHashMap<TextPosition, Int>()
     /** The colour each glyph was painted in, where it was not the plain black a page paints with. */
     private val colors = IdentityHashMap<TextPosition, Int>()
+    /** Where the pages' link annotations point, when the document has any. */
+    private var links: AndroidPageLinks? = null
 
     init {
         // A text engine is given the operators it needs, and colour is not
@@ -101,7 +103,9 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         pending.clear()
         sheets.clear()
         paintOrder.clear()
+        colors.clear()
         paintedSoFar = 0
+        links = runCatching { AndroidPageLinks(document) }.getOrNull()
         resetLine()
         writeText(document, Writer.nullWriter())
         flushLine()
@@ -294,6 +298,17 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
             } ?: false,
             raised = raised,
             colorRgb = colors[position],
+            link = linkAt(position),
+        )
+    }
+
+    /** Where the annotation over [position] points, if one covers it. */
+    private fun linkAt(position: TextPosition): String? {
+        val links = links ?: return null
+        return links.at(
+            currentPageNo - 1,
+            position.xDirAdj + position.widthDirAdj / 2,
+            position.yDirAdj - position.heightDir / 2,
         )
     }
 
