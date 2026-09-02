@@ -367,6 +367,64 @@ class ArabicPdfTest {
     }
 
     @Test
+    fun `once a font is believed, a colon its map calls a digit is a colon`() {
+        // The regular face of the same paper named its colon glyph "4", so
+        // every "ملخص:" read "ملخص4". A digit for a colon is no evidence on
+        // its own — but a font already known to be broken is wrong about
+        // that glyph too.
+        val pdf = taggedArabicPdf(listOf("$title:", inWord, research), subset = false)
+        var shifted = 0
+        val broken = rewriteToUnicode(pdf) { text ->
+            when {
+                text == ":" -> "4"
+                text.length == 1 && text[0] in '\u0600'..'\u06FF' && shifted < 3 -> { shifted++; (text[0] + 1).toString() }
+                else -> text
+            }
+        }
+        assertEquals("$title: $inWord $research", paragraphs(broken).first().text)
+    }
+
+    /**
+     * The PDF with every font's ToUnicode map written afresh, entry by
+     * entry, as [mutate] rewrites it — so a single glyph can be mislabelled
+     * whatever ranges the original map grouped it into.
+     */
+    private fun rewriteToUnicode(pdf: ByteArray, mutate: (String) -> String): ByteArray {
+        val out = ByteArrayOutputStream()
+        PDDocument.load(pdf).use { document ->
+            val page = document.getPage(0)
+            for (name in page.resources.fontNames) {
+                val font = page.resources.getFont(name)
+                val entries = (0 until 0x10000).mapNotNull { code ->
+                    val text = runCatching { font.toUnicode(code) }.getOrNull() ?: return@mapNotNull null
+                    code to mutate(text)
+                }
+                assertTrue(entries.size > 50, "fixture font maps only ${'$'}{entries.size} codes")
+                val cmap = buildString {
+                    append("/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n")
+                    append("/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n")
+                    append("1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n")
+                    for (chunk in entries.chunked(100)) {
+                        append(chunk.size).append(" beginbfchar\n")
+                        for ((code, text) in chunk) {
+                            append("<%04X> <".format(code))
+                            for (unit in text) append("%04X".format(unit.code))
+                            append(">\n")
+                        }
+                        append("endbfchar\n")
+                    }
+                    append("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n")
+                }
+                val stream = document.document.createCOSStream()
+                stream.createOutputStream().use { it.write(cmap.toByteArray(Charsets.ISO_8859_1)) }
+                font.cosObject.setItem(COSName.TO_UNICODE, stream)
+            }
+            document.save(out)
+        }
+        return out.toByteArray()
+    }
+
+    @Test
     fun `a healthy ToUnicode map is left alone`() {
         // The corrector must not engage on a font whose maps agree.
         val healthy = taggedArabicPdf(listOf(title, "Morpho", research))

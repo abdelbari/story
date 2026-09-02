@@ -16,6 +16,14 @@ data class DocumentModel(
     val defaultDirection: TextDirection = TextDirection.LTR,
     /** The page the source was laid out on, when the reader could measure it. */
     val pageSetup: PageSetup? = null,
+    /**
+     * What every page repeats at its head and at its foot — a running
+     * title, a rule, a page number — kept apart from the text, which is
+     * what the blocks are. Empty when the source had none or the reader
+     * could not tell.
+     */
+    val header: List<Block> = emptyList(),
+    val footer: List<Block> = emptyList(),
 )
 
 enum class TextDirection { LTR, RTL }
@@ -81,7 +89,18 @@ data class TextRun(
     /** Raised or lowered off the baseline, the way a footnote mark or a chemical formula is set. */
     val superscript: Boolean = false,
     val subscript: Boolean = false,
+    /**
+     * A value the writer fills in rather than the text: the number of the
+     * page this run lands on. [text] then holds what the source showed
+     * where it was read, for a writer with no fields of its own.
+     */
+    val field: RunField? = null,
+    /** A picture set in the line like a character; [text] is empty. */
+    val image: ImageBlock? = null,
 )
+
+/** What a writer fills in for a run in place of fixed text. */
+enum class RunField { PAGE_NUMBER }
 
 data class Table(
     val rows: List<TableRow>,
@@ -98,6 +117,14 @@ class ImageBlock(
     val widthPx: Int,
     val heightPx: Int,
     override val confidence: Float = 1f,
+    /**
+     * The size the picture is shown at, in points, when the reader knows
+     * it — a crop of a page rendered at high resolution is placed at the
+     * size it had on the page, not at its pixel count. Null means the
+     * writer's own choice.
+     */
+    val widthPt: Float? = null,
+    val heightPt: Float? = null,
 ) : Block {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -106,6 +133,8 @@ class ImageBlock(
             widthPx == other.widthPx &&
             heightPx == other.heightPx &&
             confidence == other.confidence &&
+            widthPt == other.widthPt &&
+            heightPt == other.heightPt &&
             bytes.contentEquals(other.bytes)
     }
 
@@ -115,6 +144,8 @@ class ImageBlock(
         result = 31 * result + widthPx
         result = 31 * result + heightPx
         result = 31 * result + confidence.hashCode()
+        result = 31 * result + (widthPt?.hashCode() ?: 0)
+        result = 31 * result + (heightPt?.hashCode() ?: 0)
         return result
     }
 }
@@ -132,4 +163,9 @@ data class PageSetup(
     val marginBottomPt: Float,
     val marginLeftPt: Float,
     val marginRightPt: Float,
+    /** From the top edge of the page to the top of the running header, and from the bottom edge to the foot of the footer. */
+    val headerDistancePt: Float? = null,
+    val footerDistancePt: Float? = null,
+    /** The number the first page carries — a journal article starts where the issue left off. */
+    val firstPageNumber: Int = 1,
 )

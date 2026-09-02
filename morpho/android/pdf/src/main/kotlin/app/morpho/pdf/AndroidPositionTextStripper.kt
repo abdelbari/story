@@ -1,17 +1,17 @@
 package app.morpho.pdf
 
-import java.util.IdentityHashMap
-import app.morpho.engine.layout.pdf.PdfRun
-import app.morpho.engine.layout.pdf.PdfPageSheet
-import app.morpho.engine.layout.pdf.PdfLook
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.ExtractedText
 import app.morpho.engine.layout.pdf.PdfLine
+import app.morpho.engine.layout.pdf.PdfLook
+import app.morpho.engine.layout.pdf.PdfPageSheet
+import app.morpho.engine.layout.pdf.PdfRun
 import app.morpho.engine.layout.pdf.PdfSegment
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import com.tom_roush.pdfbox.text.TextPosition
 import java.io.Writer
+import java.util.IdentityHashMap
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -22,6 +22,23 @@ import kotlin.math.min
  * mirror each other line for line — change both together until the
  * shared-source split lands. java.io.Writer.nullWriter() is API 33+, hence
  * the explicit no-op writer.
+ *
+ * A [PDFTextStripper] that captures positioned lines instead of emitting
+ * text: [capture] returns every output line with its edges, baseline,
+ * largest font size, page number, and the look of each of its characters,
+ * in reading order. Nothing is ever written to the stripper's output.
+ *
+ * PDFBox is left to decide what a line is — that is what gives the layout
+ * heuristics their coordinates — but not what a line says. Its sort orders
+ * glyphs strictly left to right, which is the wrong way round for a
+ * right-to-left line, and its word breaks fall wherever that sort jumps. So
+ * each line is rebuilt here from its own glyphs: put back into the order
+ * they were painted, sorted left to right with a kerning step counted as
+ * the step it is, and handed to [ExtractedText] to reconstruct logical
+ * order over the whole line at once. Doing it per line rather than per word
+ * is what lets a Latin phrase or a number inside an Arabic sentence keep
+ * its own direction, and counting kerning is what keeps الجزائر one word
+ * with its letters in order.
  */
 internal class AndroidPositionTextStripper : PDFTextStripper() {
 

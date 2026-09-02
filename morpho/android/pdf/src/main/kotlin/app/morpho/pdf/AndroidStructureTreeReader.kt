@@ -11,6 +11,7 @@ import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.ParagraphStyle
+import app.morpho.engine.layout.RunField
 import app.morpho.engine.layout.Table
 import app.morpho.engine.layout.TableCell
 import app.morpho.engine.layout.TableRow
@@ -20,8 +21,10 @@ import app.morpho.engine.layout.pdf.HeadingSizes
 import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLook
 import app.morpho.engine.layout.pdf.PdfRuns
+import com.tom_roush.pdfbox.contentstream.operator.DrawObject
 import com.tom_roush.pdfbox.contentstream.operator.Operator
 import com.tom_roush.pdfbox.contentstream.operator.OperatorProcessor
+import com.tom_roush.pdfbox.cos.COSArray
 import com.tom_roush.pdfbox.cos.COSBase
 import com.tom_roush.pdfbox.cos.COSDictionary
 import com.tom_roush.pdfbox.cos.COSInteger
@@ -31,6 +34,8 @@ import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.documentinterchange.logicalstructure.PDMarkedContentReference
 import com.tom_roush.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureElement
 import com.tom_roush.pdfbox.pdmodel.documentinterchange.markedcontent.PDMarkedContent
+import com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject
+import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import com.tom_roush.pdfbox.text.PDFMarkedContentExtractor
 import com.tom_roush.pdfbox.text.TextPosition
 import com.tom_roush.pdfbox.util.Matrix
@@ -103,6 +108,30 @@ private class Placement(
 /** A rule drawn across a page: a stroked horizontal line or a filled sliver, in top-down page points. */
 private class Rule(val y: Float, val left: Float, val right: Float)
 
+/**
+ * What a page repeats in its margin — a running head, a footer with the
+ * page number — as the producer marked it: a pagination artifact, with the
+ * glyphs it drew and the boxes of the rules and pictures it drew, in
+ * top-down page points.
+ */
+private class Furniture(val page: Int, val atTop: Boolean, val glyphs: List<TextPosition>, val boxes: List<FloatArray>)
+
+/** The running header and footer a document was read with, ready for a writer. */
+private class Furnishings(
+    val header: List<Block>,
+    val footer: List<Block>,
+    val headerDistancePt: Float?,
+    val footerDistancePt: Float?,
+    val firstPageNumber: Int,
+) {
+    companion object {
+        val NONE = Furnishings(emptyList(), emptyList(), null, null, 1)
+    }
+}
+
+/** A run of digits drawn in a margin, with its value and where it sits. */
+private class NumberToken(val value: Int, val box: FloatArray, val positions: List<TextPosition>)
+
 /** The extent of a page's text — every glyph the structure tree can reach, so headers and footers stay out. */
 private class InkBox {
     var left = Float.POSITIVE_INFINITY
@@ -157,6 +186,14 @@ internal object AndroidStructureTreeReader {
     private const val DEFAULT_PITCH_SHARE = 1.2f
     /** How far below its baseline a glyph reaches, as a share of type size, for want of font metrics. */
     private const val DESCENT_SHARE = 0.25f
+    /** Room kept around a crop of the page's furniture, so no stroke is cut. */
+    private const val FURNITURE_PAD_PT = 1.5f
+    /** Clear space kept between a page number and the picture of the rest of its line. */
+    private const val FURNITURE_GAP_PT = 4f
+    /** A page number sits within this of the same place on every page. */
+    private const val PAGE_NUMBER_DRIFT_PT = 12f
+    /** A gap wider than this share of the type size splits a run of digits into two. */
+    private const val TOKEN_GAP_SHARE = 0.6f
     /** A filled rectangle no taller than this is a rule, not a box. */
     private const val RULE_MAX_THICKNESS_PT = 4f
     /** A rule shorter than this is a dash or a tick, not a rule. */
@@ -198,6 +235,16 @@ internal object AndroidStructureTreeReader {
     private class ResolvingMarkedContentExtractor(private val page: PDPage) : PDFMarkedContentExtractor() {
         /** The rules drawn on the page outside any artifact — a running header's own do not count. */
         val rules = mutableListOf<Rule>()
+        /**
+         * What each top-level artifact drew besides text — rules and
+         * pictures, as boxes — by the order the artifact was opened in,
+         * which is the order the marked contents are listed in afterwards;
+         * and whether the producer said it was pagination, and where.
+         */
+        val artifactBoxes = HashMap<Int, MutableList<FloatArray>>()
+        val artifactPlaces = HashMap<Int, String?>()
+        private var artifactsOpened = 0
+        private var currentArtifact: Int? = null
         private val openTags = ArrayDeque<String>()
         private var subpathStart: FloatArray? = null
         private var current: FloatArray? = null
@@ -218,6 +265,7 @@ internal object AndroidStructureTreeReader {
                                 .getOrNull()
                         else -> null
                     }
+                    openArtifact(tag, properties)
                     openTags.addLast(tag.name)
                     context.beginMarkedContentSequence(tag, properties)
                 }
@@ -227,6 +275,7 @@ internal object AndroidStructureTreeReader {
 
                 override fun process(operator: Operator, operands: List<COSBase>) {
                     val tag = operands.firstOrNull() as? COSName ?: return
+                    openArtifact(tag, null)
                     openTags.addLast(tag.name)
                     context.beginMarkedContentSequence(tag, null)
                 }
@@ -236,7 +285,35 @@ internal object AndroidStructureTreeReader {
 
                 override fun process(operator: Operator, operands: List<COSBase>) {
                     openTags.removeLastOrNull()
+                    if (openTags.isEmpty()) currentArtifact = null
                     context.endMarkedContentSequence()
+                }
+            })
+            // A picture drawn inside an artifact is part of the furniture;
+            // the stock operator still runs, so text inside a form is read.
+            addOperator(object : DrawObject() {
+                override fun process(operator: Operator, operands: List<COSBase>) {
+                    val artifact = currentArtifact
+                    if (artifact != null) {
+                        val name = operands.firstOrNull() as? COSName
+                        val xobject = name?.let { runCatching { context.resources?.getXObject(it) }.getOrNull() }
+                        val corners = when (xobject) {
+                            is PDImageXObject -> listOf(transform(0f, 0f), transform(1f, 0f), transform(0f, 1f), transform(1f, 1f))
+                            is PDFormXObject -> xobject.bBox?.let { box ->
+                                listOf(
+                                    transform(box.lowerLeftX, box.lowerLeftY), transform(box.upperRightX, box.lowerLeftY),
+                                    transform(box.lowerLeftX, box.upperRightY), transform(box.upperRightX, box.upperRightY),
+                                )
+                            }
+                            else -> null
+                        }
+                        if (corners != null) {
+                            artifactBoxes.getOrPut(artifact) { mutableListOf() } += floatArrayOf(
+                                corners.minOf { it[0] }, corners.minOf { it[1] }, corners.maxOf { it[0] }, corners.maxOf { it[1] },
+                            )
+                        }
+                    }
+                    super.process(operator, operands)
                 }
             })
             // Path construction: enough of it to see a horizontal line or a
@@ -283,6 +360,22 @@ internal object AndroidStructureTreeReader {
             addOperator(pathOperator("n") { _ -> paint(strokes = false, fills = false) })
         }
 
+        /** A top-level artifact opens: remember what kind the producer said it was, if any. */
+        private fun openArtifact(tag: COSName, properties: COSDictionary?) {
+            if (tag.name != "Artifact" || openTags.isNotEmpty()) return
+            val ordinal = artifactsOpened++
+            val type = properties?.getCOSName(COSName.TYPE)?.name
+            val place = when {
+                type != "Pagination" -> null
+                else -> (properties.getDictionaryObject(COSName.getPDFName("Attached")) as? COSArray)
+                    ?.firstOrNull()?.let { (it as? COSName)?.name }
+                    ?: properties.getCOSName(COSName.SUBTYPE)?.name
+                    ?: "Pagination"
+            }
+            artifactPlaces[ordinal] = place
+            currentArtifact = ordinal
+        }
+
         private fun pathOperator(name: String, body: (List<COSBase>) -> Unit) = object : OperatorProcessor() {
             override fun getName() = name
             override fun process(operator: Operator, operands: List<COSBase>) = body(operands)
@@ -315,6 +408,17 @@ internal object AndroidStructureTreeReader {
             if (!inArtifact) {
                 if (strokes) rules += pendingSegments.filter { it.right - it.left >= RULE_MIN_LENGTH_PT }
                 if (fills) rules += pendingSlivers.filter { it.right - it.left >= RULE_MIN_LENGTH_PT }
+            } else {
+                // The furniture's own rules: kept as the boxes they cover,
+                // so the crop reaches them.
+                val artifact = currentArtifact
+                if (artifact != null) {
+                    val painted = (if (strokes) pendingSegments else emptyList()) + (if (fills) pendingSlivers else emptyList())
+                    for (rule in painted) {
+                        artifactBoxes.getOrPut(artifact) { mutableListOf() } +=
+                            floatArrayOf(rule.left, rule.y - RULE_MAX_THICKNESS_PT, rule.right, rule.y + RULE_MAX_THICKNESS_PT)
+                    }
+                }
             }
             pendingSegments.clear()
             pendingSlivers.clear()
@@ -328,8 +432,10 @@ internal object AndroidStructureTreeReader {
      * their underlying COS dictionary: PDStructureElement.getPage() builds a
      * fresh PDPage wrapper on every call, so wrapper identity never matches.
      */
-    private class MarkedContentIndex(doc: PDDocument) {
+    private class MarkedContentIndex(private val doc: PDDocument) {
         private val pageIndexByPage = IdentityHashMap<COSDictionary, Int>()
+        /** The running header and footer of each page, as the producer marked them. */
+        private val furnitureByPage = HashMap<Int, MutableList<Furniture>>()
         private val pageWidthByIndex = HashMap<Int, Float>()
         private val pageHeightByIndex = HashMap<Int, Float>()
         /** The reach of each page's tagged text: the block the margins and indents are measured from. */
@@ -359,8 +465,13 @@ internal object AndroidStructureTreeReader {
                 pageHeightByIndex[index] = runCatching { page.mediaBox.height }.getOrDefault(0f)
                 val extractor = ResolvingMarkedContentExtractor(page)
                 runCatching { extractor.processPage(page) }
+                var artifacts = 0
                 for (content in extractor.markedContents.orEmpty()) {
                     collect(content, index)
+                    if (content.tag == "Artifact") {
+                        collectFurniture(content, index, artifacts, extractor)
+                        artifacts++
+                    }
                 }
                 rulesByPageIndex[index] = extractor.rules.toList()
             }
@@ -368,6 +479,38 @@ internal object AndroidStructureTreeReader {
                 ?: Bidi.dominantDirection(buildString {
                     for (glyphs in glyphsByPageAndMcid.values) for (glyph in glyphs) append(glyph.position.unicode.orEmpty())
                 })
+        }
+
+        /**
+         * A pagination artifact — a running header or footer — with what
+         * it drew, kept for the furniture the writer will repeat. Which
+         * margin it belongs to is what the producer said, else where it
+         * sits on the page.
+         */
+        private fun collectFurniture(content: PDMarkedContent, pageIndex: Int, ordinal: Int, extractor: ResolvingMarkedContentExtractor) {
+            val place = extractor.artifactPlaces[ordinal] ?: return
+            val glyphs = mutableListOf<TextPosition>()
+            fun gather(mc: PDMarkedContent) {
+                for (item in mc.contents.orEmpty()) {
+                    when (item) {
+                        is TextPosition -> if (!item.unicode.isNullOrBlank()) glyphs += item
+                        is PDMarkedContent -> gather(item)
+                    }
+                }
+            }
+            gather(content)
+            val boxes = extractor.artifactBoxes[ordinal].orEmpty()
+            if (glyphs.isEmpty() && boxes.isEmpty()) return
+            val height = pageHeightByIndex[pageIndex] ?: 0f
+            val atTop = when (place) {
+                "Top", "Header" -> true
+                "Bottom", "Footer" -> false
+                else -> {
+                    val middle = (glyphs.map { it.yDirAdj } + boxes.map { (it[1] + it[3]) / 2 }).average().toFloat()
+                    height <= 0f || middle < height / 2
+                }
+            }
+            furnitureByPage.getOrPut(pageIndex) { mutableListOf() } += Furniture(pageIndex, atTop, glyphs, boxes)
         }
 
         private fun collect(content: PDMarkedContent, pageIndex: Int) {
@@ -748,20 +891,202 @@ internal object AndroidStructureTreeReader {
          * all pages. Running headers and page numbers are artifacts, not
          * structure, so they do not pull the margins out.
          */
-        fun pageSetup(): PageSetup? {
+        fun pageSetup(bodyTopByPage: Map<Int, Float> = emptyMap()): PageSetup? {
             val width = pageWidthByIndex[0]?.takeIf { it > 0f } ?: return null
             val height = pageHeightByIndex[0]?.takeIf { it > 0f } ?: return null
             val boxes = inkByPageIndex.values.filter { !it.isEmpty }
             if (boxes.isEmpty()) return null
             fun margin(value: Float) = value.coerceIn(0f, minOf(width, height) / 3)
+            // The top margin is where the first line's box begins, as Word
+            // will place it — its baseline less the line's pitch, plus the
+            // descent below the baseline — not where the tallest glyph's
+            // ink starts, which is lower by the line's leading and would
+            // push every page's text down by that much.
+            val top = bodyTopByPage.values.minOrNull() ?: boxes.minOf { it.top }
             return PageSetup(
                 widthPt = width,
                 heightPt = height,
-                marginTopPt = margin(boxes.minOf { it.top }),
+                marginTopPt = margin(top),
                 marginBottomPt = margin(height - boxes.maxOf { it.bottom }),
                 marginLeftPt = margin(boxes.minOf { it.left }),
                 marginRightPt = margin(width - boxes.maxOf { it.right }),
             )
+        }
+
+        /**
+         * The running header and footer, from the pagination artifacts the
+         * producer marked: each as a crop of the page rendered at the size
+         * it had, placed against the same margins as the text. A page number
+         * — a run of digits whose value advances by one from page to page —
+         * is masked out of the crop and written as a field, at a tab stop
+         * where the number sat, so every page numbers itself; the number
+         * the first page carries is reported for the document to start at.
+         * The second page stands for the rest when there is one: a first
+         * page can carry a title where the others carry the running head.
+         */
+        fun furnishings(marginLeft: Float, marginRight: Float, rtl: Boolean): Furnishings {
+            val width = pageWidthByIndex[0]?.takeIf { it > 0f } ?: return Furnishings.NONE
+            val height = pageHeightByIndex[0]?.takeIf { it > 0f } ?: return Furnishings.NONE
+            var firstPageNumber = 1
+            fun side(atTop: Boolean): Pair<List<Block>, Float?> {
+                val byPage = furnitureByPage.mapValues { (_, list) -> list.filter { it.atTop == atTop } }
+                    .filterValues { it.isNotEmpty() }
+                if (byPage.isEmpty()) return emptyList<Block>() to null
+                val reference = if (byPage.containsKey(1)) 1 else byPage.keys.min()
+                val pieces = byPage.getValue(reference)
+                val box = boundsOf(pieces) ?: return emptyList<Block>() to null
+                val distance = if (atTop) box[1] else height - box[3]
+                val number = pageNumber(byPage, reference)
+                val left = minOf(marginLeft, box[0])
+                val right = maxOf(marginRight, box[2])
+                val top = box[1]
+                val bottom = box[3]
+                if (number == null) {
+                    val crop = AndroidPageImages.crop(doc, reference, left, top, right, bottom) ?: return emptyList<Block>() to null
+                    return listOf<Block>(crop) to distance
+                }
+                firstPageNumber = number.value - reference
+                val numberBox = number.box
+                val numberLook = number.positions.firstOrNull()?.let { lookOf(it, 0) }
+                val field = TextRun(
+                    text = firstPageNumber.toString(),
+                    field = RunField.PAGE_NUMBER,
+                    bold = numberLook?.bold ?: false,
+                    italic = numberLook?.italic ?: false,
+                    fontFamily = numberLook?.fontFamily,
+                    fontSizePt = numberLook?.fontSizePt?.takeIf { it > 0f },
+                )
+                val centre = (numberBox[0] + numberBox[2]) / 2
+                val atLeft = centre < width / 3
+                val atRight = centre > width * 2 / 3
+                if (!atLeft && !atRight) {
+                    // A number in the middle: the picture with the number
+                    // masked, and the field on a line of its own beneath.
+                    val crop = AndroidPageImages.crop(doc, reference, left, top, right, bottom, listOf(numberBox))
+                        ?: return listOf<Block>(Paragraph(listOf(field), ParagraphStyle(alignment = Alignment.CENTER))) to distance
+                    val centred = Paragraph(listOf(field), ParagraphStyle(alignment = Alignment.CENTER, spaceBeforePt = 0f, spaceAfterPt = 0f))
+                    return listOf(crop, centred) to distance
+                }
+                // The number at one end: the rest of the furniture as a
+                // picture in the line, a tab to where the number sat, and
+                // the field — all on the one line, as on the page.
+                val cropLeft = if (atLeft) numberBox[2] + FURNITURE_GAP_PT else left
+                val cropRight = if (atRight) numberBox[0] - FURNITURE_GAP_PT else right
+                val crop = AndroidPageImages.crop(doc, reference, cropLeft, top, cropRight, bottom)
+                val picture = crop?.let { TextRun("", image = it) }
+                val direction = if (rtl) TextDirection.RTL else TextDirection.LTR
+                val numberFirst = if (rtl) atRight else atLeft
+                val stop = when {
+                    numberFirst -> if (rtl) right - cropRight else cropLeft - left
+                    rtl -> right - numberBox[2]
+                    else -> numberBox[0] - left
+                }
+                val runs = if (numberFirst) listOfNotNull(field, TextRun("\t"), picture) else listOfNotNull(picture, TextRun("\t"), field)
+                val startIndent = if (numberFirst) 0f else if (rtl) right - cropRight else cropLeft - left
+                val style = ParagraphStyle(
+                    direction = direction,
+                    startIndentPt = startIndent.takeIf { it > 0.5f },
+                    tabStopsPt = listOf(stop).filter { it > 0f },
+                    spaceBeforePt = 0f,
+                    spaceAfterPt = 0f,
+                )
+                return listOf<Block>(Paragraph(runs, style)) to distance
+            }
+            val (header, headerDistance) = side(atTop = true)
+            val (footer, footerDistance) = side(atTop = false)
+            return Furnishings(header, footer, headerDistance, footerDistance, firstPageNumber)
+        }
+
+        /** The box, in top-down page points, that a page's furniture occupies. */
+        private fun boundsOf(pieces: List<Furniture>): FloatArray? {
+            var left = Float.POSITIVE_INFINITY
+            var top = Float.POSITIVE_INFINITY
+            var right = Float.NEGATIVE_INFINITY
+            var bottom = Float.NEGATIVE_INFINITY
+            for (piece in pieces) {
+                for (glyph in piece.glyphs) {
+                    left = minOf(left, glyph.xDirAdj)
+                    right = maxOf(right, glyph.xDirAdj + glyph.widthDirAdj)
+                    top = minOf(top, glyph.yDirAdj - glyph.heightDir)
+                    bottom = maxOf(bottom, glyph.yDirAdj + DESCENT_SHARE * glyph.fontSizeInPt)
+                }
+                for (box in piece.boxes) {
+                    left = minOf(left, box[0]); top = minOf(top, box[1])
+                    right = maxOf(right, box[2]); bottom = maxOf(bottom, box[3])
+                }
+            }
+            if (left > right || top > bottom) return null
+            return floatArrayOf(left - FURNITURE_PAD_PT, top - FURNITURE_PAD_PT, right + FURNITURE_PAD_PT, bottom + FURNITURE_PAD_PT)
+        }
+
+        /**
+         * The page number among a margin's runs of digits: the run, in the
+         * same place on every page, whose value is one more on each page
+         * than on the page before. Null when no run keeps step — a date, a
+         * volume number and a year all stay put.
+         */
+        private fun pageNumber(byPage: Map<Int, List<Furniture>>, reference: Int): NumberToken? {
+            val tokensByPage = byPage.mapValues { (_, pieces) -> numberTokens(pieces.flatMap { it.glyphs }) }
+            val referenceTokens = tokensByPage[reference] ?: return null
+            var best: NumberToken? = null
+            var bestPages = 1
+            for (candidate in referenceTokens) {
+                val pages = tokensByPage.count { (page, tokens) ->
+                    page == reference || tokens.any { token ->
+                        abs((token.box[0] + token.box[2]) / 2 - (candidate.box[0] + candidate.box[2]) / 2) < PAGE_NUMBER_DRIFT_PT &&
+                            token.value - candidate.value == page - reference
+                    }
+                }
+                if (pages >= 2 && pages > bestPages) {
+                    best = candidate
+                    bestPages = pages
+                }
+            }
+            return best
+        }
+
+        /** Runs of digits among [glyphs], each with its value and box. */
+        private fun numberTokens(glyphs: List<TextPosition>): List<NumberToken> {
+            val tokens = mutableListOf<NumberToken>()
+            val lines = glyphs.groupBy { (it.yDirAdj / SAME_LINE_TOLERANCE_PT).toInt() }
+            for (line in lines.values) {
+                var run = mutableListOf<TextPosition>()
+                fun flush() {
+                    if (run.isEmpty()) return
+                    val text = run.joinToString("") { glyphText.of(it) }.map { digitValue(it) }
+                    if (text.isNotEmpty() && text.all { it != null }) {
+                        val value = text.fold(0L) { acc, d -> acc * 10 + d!! }
+                        if (value in 0..99999) {
+                            tokens += NumberToken(
+                                value.toInt(),
+                                floatArrayOf(
+                                    run.minOf { it.xDirAdj }, run.minOf { it.yDirAdj - it.heightDir },
+                                    run.maxOf { it.xDirAdj + it.widthDirAdj }, run.maxOf { it.yDirAdj + DESCENT_SHARE * it.fontSizeInPt },
+                                ),
+                                run.toList(),
+                            )
+                        }
+                    }
+                    run = mutableListOf()
+                }
+                var previous: TextPosition? = null
+                for (glyph in line.sortedBy { it.xDirAdj }) {
+                    val text = glyphText.of(glyph)
+                    val gap = previous?.let { glyph.xDirAdj - (it.xDirAdj + it.widthDirAdj) } ?: 0f
+                    if (text.isBlank() || gap > TOKEN_GAP_SHARE * glyph.fontSizeInPt) flush()
+                    if (!text.isBlank()) run += glyph
+                    previous = glyph
+                }
+                flush()
+            }
+            return tokens.sortedBy { it.box[0] }
+        }
+
+        private fun digitValue(c: Char): Int? = when (c) {
+            in '0'..'9' -> c - '0'
+            in '\u0660'..'\u0669' -> c - '\u0660'
+            in '\u06F0'..'\u06F9' -> c - '\u06F0'
+            else -> null
         }
 
         fun textFor(page: PDPage?, mcid: Int): String {
@@ -839,6 +1164,8 @@ internal object AndroidStructureTreeReader {
         private val placementByBlockIndex = HashMap<Int, Placement>()
         /** The face most of each paragraph block is set in. */
         private val familyByBlockIndex = HashMap<Int, String?>()
+        /** Where each page's first line box begins, as a writer will place it: the top margin. */
+        private val bodyTopByPage = HashMap<Int, Float>()
         private val imageByPageAndMcid = HashMap<Long, PdfImage>().apply {
             for (image in images) {
                 if (image.mcid >= 0) putIfAbsent(imageKey(image.page, image.mcid), image)
@@ -874,13 +1201,23 @@ internal object AndroidStructureTreeReader {
             val rtl = paragraphs.count { it.style.direction == TextDirection.RTL }
             val defaultDirection =
                 if (rtl > paragraphs.size - rtl) TextDirection.RTL else TextDirection.LTR
+            val page = texts.pageSetup(bodyTopByPage)
+            val furnishings = page?.let {
+                texts.furnishings(it.marginLeftPt, it.widthPt - it.marginRightPt, defaultDirection == TextDirection.RTL)
+            } ?: Furnishings.NONE
             // Full UAX #9 pass: split mixed-direction runs so writers can
             // mark direction per run instead of per paragraph.
             return Bidi.refine(
                 DocumentModel(
                     blocks = blocks.toList(),
                     defaultDirection = defaultDirection,
-                    pageSetup = texts.pageSetup(),
+                    pageSetup = page?.copy(
+                        headerDistancePt = furnishings.headerDistancePt,
+                        footerDistancePt = furnishings.footerDistancePt,
+                        firstPageNumber = furnishings.firstPageNumber,
+                    ),
+                    header = furnishings.header,
+                    footer = furnishings.footer,
                 )
             )
         }
@@ -918,6 +1255,14 @@ internal object AndroidStructureTreeReader {
                 val paragraph = blocks[index] as? Paragraph ?: continue
                 val placement = placementByBlockIndex[index] ?: continue
                 val pitch = pitchOf(index)
+                // The first paragraph on a page says where the page's text
+                // begins: its first baseline less its pitch, plus what hangs
+                // below the baseline — the top of its line box.
+                if (pitch != null) {
+                    val size = sizeByBlockIndex[index]?.takeIf { it > 0f } ?: DEFAULT_SIZE_PT
+                    val boxTop = placement.firstBaseline - pitch + DESCENT_SHARE * size
+                    bodyTopByPage.merge(placement.firstPage, boxTop, ::minOf)
+                }
                 val next = placementByBlockIndex[index + 1]
                 val after = if (next != null && next.firstPage == placement.lastPage) {
                     pitchOf(index + 1)?.let { (next.firstBaseline - placement.lastBaseline - it).coerceIn(0f, SPACE_AFTER_MAX_PT) }

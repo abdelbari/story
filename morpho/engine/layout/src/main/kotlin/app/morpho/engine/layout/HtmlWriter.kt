@@ -32,7 +32,20 @@ object HtmlWriter {
         sb.append("<title>").append(escape(title ?: "Document")).append("</title>")
         sb.append("<style>").append(CSS).append(pageCss(document.pageSetup)).append("</style></head><body>\n")
 
+        // The running header and footer, once each: a flowing page has no
+        // page tops to repeat them on, so they stand at the head and the
+        // foot of the document, where a reader expects them.
+        if (document.header.isNotEmpty()) {
+            sb.append("""<header class="page-header">""").append("\n")
+            appendBlocks(sb, document.header, defaultDirection)
+            sb.append("</header>\n")
+        }
         appendBlocks(sb, document.blocks, defaultDirection)
+        if (document.footer.isNotEmpty()) {
+            sb.append("""<footer class="page-footer">""").append("\n")
+            appendBlocks(sb, document.footer, defaultDirection)
+            sb.append("</footer>\n")
+        }
 
         sb.append("</body></html>\n")
         return sb.toString()
@@ -50,7 +63,9 @@ object HtmlWriter {
             "table{border-collapse:collapse;margin:0 0 9pt;width:100%;}" +
             "td,th{border:1px solid #555;padding:4pt 8pt;vertical-align:top;}" +
             "img{max-width:100%;height:auto;}" +
-            "p.image{text-align:center;}"
+            "p.image{text-align:center;}" +
+            "img.inline{vertical-align:baseline;}" +
+            ".page-header{margin-bottom:12pt;}.page-footer{margin-top:12pt;}"
 
     private fun appendBlocks(
         sb: StringBuilder,
@@ -192,7 +207,13 @@ object HtmlWriter {
     }
 
     private fun appendRun(sb: StringBuilder, run: TextRun, paragraphDirection: TextDirection) {
-        var html = escape(run.text)
+        run.image?.let { image ->
+            sb.append(imageTag(image, inline = true))
+            return
+        }
+        // A field's last value stands in: a page has no number in a page
+        // that scrolls.
+        var html = escape(run.text.ifEmpty { if (run.field != null) "1" else "" })
         if (run.superscript) html = "<sup>$html</sup>"
         else if (run.subscript) html = "<sub>$html</sub>"
         if (run.underline) html = "<u>$html</u>"
@@ -259,12 +280,29 @@ object HtmlWriter {
     }
 
     private fun appendImage(sb: StringBuilder, image: ImageBlock) {
-        sb.append("""<p class="image"><img src="data:""")
+        sb.append("""<p class="image">""").append(imageTag(image, inline = false)).append("</p>\n")
+    }
+
+    /** A picture as a data URI, shown at the size the reader measured when it did. */
+    private fun imageTag(image: ImageBlock, inline: Boolean): String {
+        val sb = StringBuilder()
+        sb.append("<img")
+        if (inline) sb.append(""" class="inline"""")
+        sb.append(""" src="data:""")
         sb.append(escape(image.mimeType))
         sb.append(";base64,")
         sb.append(Base64.getEncoder().encodeToString(image.bytes))
-        sb.append("""" width="${image.widthPx.coerceAtLeast(1)}"""")
-        sb.append(""" height="${image.heightPx.coerceAtLeast(1)}" alt=""/></p>""").append("\n")
+        sb.append("\"")
+        val widthPt = image.widthPt?.takeIf { it > 0f }
+        val heightPt = image.heightPt?.takeIf { it > 0f }
+        if (widthPt != null && heightPt != null) {
+            sb.append(""" style="width:${pt(widthPt)};height:${pt(heightPt)}"""")
+        } else {
+            sb.append(""" width="${image.widthPx.coerceAtLeast(1)}"""")
+            sb.append(""" height="${image.heightPx.coerceAtLeast(1)}"""")
+        }
+        sb.append(""" alt=""/>""")
+        return sb.toString()
     }
 
     private fun escape(raw: String): String {

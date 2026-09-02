@@ -9,6 +9,7 @@ import app.morpho.engine.layout.ListMarker
 import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
+import app.morpho.engine.layout.RunField
 import app.morpho.engine.layout.Table
 import app.morpho.engine.layout.TableCell
 import app.morpho.engine.layout.TextDirection
@@ -54,15 +55,27 @@ object DocxWriter {
     fun write(document: DocumentModel, output: OutputStream) {
         val numbering = NumberingPlan(document)
         val images = ImagePlan(document)
+        val header = document.header.isNotEmpty()
+        val footer = document.footer.isNotEmpty()
         ZipOutputStream(output).use { zip ->
-            zip.part("[Content_Types].xml", contentTypesXml())
+            zip.part("[Content_Types].xml", contentTypesXml(header, footer))
             zip.part("_rels/.rels", packageRelsXml())
-            zip.part("word/_rels/document.xml.rels", documentRelsXml(images))
+            zip.part("word/_rels/document.xml.rels", documentRelsXml(images, header, footer))
             zip.part("word/document.xml", documentXml(document, numbering, images))
             zip.part("word/styles.xml", stylesXml())
             zip.part("word/numbering.xml", numberingXml(numbering))
             zip.part("docProps/core.xml", corePropsXml())
             zip.part("docProps/app.xml", appPropsXml())
+            // A running header or footer is a part of its own, with its own
+            // relationships to the pictures it shows.
+            if (header) {
+                zip.part("word/header1.xml", furnitureXml("hdr", document.header, document, numbering, images))
+                partRelsXml(images, ImagePlan.PART_HEADER)?.let { zip.part("word/_rels/header1.xml.rels", it) }
+            }
+            if (footer) {
+                zip.part("word/footer1.xml", furnitureXml("ftr", document.footer, document, numbering, images))
+                partRelsXml(images, ImagePlan.PART_FOOTER)?.let { zip.part("word/_rels/footer1.xml.rels", it) }
+            }
             for (entry in images.entries) {
                 zip.partBytes("word/media/${entry.fileName}", entry.block.bytes)
             }
@@ -151,41 +164,56 @@ object DocxWriter {
             val relId: String,
             val fileName: String,
             val docPrId: Int,
+            /** The part whose relationships carry this picture. */
+            val part: String,
         )
 
         val entries = mutableListOf<Entry>()
         private val byBlock = IdentityHashMap<ImageBlock, Entry>()
 
         init {
-            assign(document.blocks)
+            assign(document.blocks, PART_DOCUMENT)
+            assign(document.header, PART_HEADER)
+            assign(document.footer, PART_FOOTER)
         }
 
         fun entryFor(block: ImageBlock): Entry = byBlock.getValue(block)
 
-        private fun assign(blocks: List<Block>) {
+        fun entriesFor(part: String): List<Entry> = entries.filter { it.part == part }
+
+        private fun assign(blocks: List<Block>, part: String) {
             for (block in blocks) {
                 when (block) {
-                    is ImageBlock -> {
-                        val extension = EXTENSION_BY_MIME[block.mimeType]
-                            ?: throw UnsupportedOperationException(
-                                "Image type ${block.mimeType} is not supported yet (PNG and " +
-                                    "JPEG are). Refusing to write a document that would " +
-                                    "silently lose content."
-                            )
-                        val index = entries.size + 1
-                        val entry = Entry(
-                            block = block,
-                            relId = "rIdImg$index",
-                            fileName = "image$index.$extension",
-                            docPrId = index,
-                        )
-                        entries += entry
-                        byBlock[block] = entry
-                    }
-                    is Table -> for (row in block.rows) for (cell in row.cells) assign(cell.blocks)
-                    is Paragraph -> {}
+                    is ImageBlock -> register(block, part)
+                    is Table -> for (row in block.rows) for (cell in row.cells) assign(cell.blocks, part)
+                    is Paragraph -> for (run in block.runs) run.image?.let { register(it, part) }
                 }
             }
+        }
+
+        private fun register(block: ImageBlock, part: String) {
+            val extension = EXTENSION_BY_MIME[block.mimeType]
+                ?: throw UnsupportedOperationException(
+                    "Image type ${block.mimeType} is not supported yet (PNG and " +
+                        "JPEG are). Refusing to write a document that would " +
+                        "silently lose content."
+                )
+            val index = entries.size + 1
+            val entry = Entry(
+                block = block,
+                relId = "rIdImg$index",
+                fileName = "image$index.$extension",
+                docPrId = index,
+                part = part,
+            )
+            entries += entry
+            byBlock[block] = entry
+        }
+
+        companion object {
+            const val PART_DOCUMENT = "document"
+            const val PART_HEADER = "header"
+            const val PART_FOOTER = "footer"
         }
     }
 
@@ -200,12 +228,28 @@ object DocxWriter {
     ): String {
         val sb = StringBuilder(16 * 1024)
         sb.append(XML_DECL)
-        sb.append("""<w:document xmlns:w="$W"><w:body>""")
+        sb.append("""<w:document xmlns:w="$W" xmlns:r="$R_NS"><w:body>""")
         for (block in document.blocks) {
             appendBlock(sb, block, document, numbering, images)
         }
-        sb.append(sectPr(document.pageSetup))
+        sb.append(sectPr(document))
         sb.append("</w:body></w:document>")
+        return sb.toString()
+    }
+
+    /** A header (w:hdr) or footer (w:ftr) part: the blocks every page repeats. */
+    private fun furnitureXml(
+        root: String,
+        blocks: List<Block>,
+        document: DocumentModel,
+        numbering: NumberingPlan,
+        images: ImagePlan,
+    ): String {
+        val sb = StringBuilder(4 * 1024)
+        sb.append(XML_DECL)
+        sb.append("""<w:$root xmlns:w="$W" xmlns:r="$R_NS">""")
+        for (block in blocks) appendBlock(sb, block, document, numbering, images)
+        sb.append("</w:$root>")
         return sb.toString()
     }
 
@@ -217,7 +261,7 @@ object DocxWriter {
         images: ImagePlan,
     ) {
         when (block) {
-            is Paragraph -> appendParagraph(sb, block, document, numbering)
+            is Paragraph -> appendParagraph(sb, block, document, numbering, images)
             is Table -> appendTable(sb, block, document, numbering, images)
             is ImageBlock -> appendImage(sb, images.entryFor(block))
         }
@@ -228,12 +272,14 @@ object DocxWriter {
         paragraph: Paragraph,
         document: DocumentModel,
         numbering: NumberingPlan,
+        images: ImagePlan,
     ) {
         val effectiveDirection = paragraph.style.direction ?: document.defaultDirection
         sb.append("<w:p>")
-        appendParagraphProperties(sb, paragraph.style, effectiveDirection, numbering.numIdFor(paragraph))
+        val largest = paragraph.runs.maxOfOrNull { it.fontSizePt ?: 0f } ?: 0f
+        appendParagraphProperties(sb, paragraph.style, effectiveDirection, numbering.numIdFor(paragraph), largest)
         for (run in paragraph.runs) {
-            appendRun(sb, run, effectiveDirection)
+            appendRun(sb, run, effectiveDirection, images, document)
         }
         sb.append("</w:p>")
     }
@@ -244,6 +290,7 @@ object DocxWriter {
         style: app.morpho.engine.layout.ParagraphStyle,
         effectiveDirection: TextDirection,
         numId: Int?,
+        largestSizePt: Float = 0f,
     ) {
         val styleId = when {
             style.listMarker != null -> "ListParagraph"
@@ -264,7 +311,7 @@ object DocxWriter {
             Alignment.START, null -> null
         }
         val rtl = effectiveDirection == TextDirection.RTL
-        val spacing = spacingXml(style)
+        val spacing = spacingXml(style, largestSizePt)
         val indent = indentXml(style)
         val tabs = style.tabStopsPt?.filter { it > 0f }?.takeIf { it.isNotEmpty() }
         val rules = style.ruleAbove || style.ruleBelow
@@ -299,21 +346,30 @@ object DocxWriter {
 
     /**
      * The paragraph's measured spacing, when a reader supplied any. A line
-     * pitch is written as a minimum, not an exact height: a face Word
-     * substitutes for one it lacks may need more, and clipped ascenders are
-     * worse than a slightly taller line.
+     * pitch is written as an exact height: it is the distance the source
+     * put between its baselines, and a face Word substitutes for one it
+     * lacks must not be allowed to push every line below it down the page
+     * — that is how a converted paper ends up breaking its pages in
+     * different places from the original. Word puts the extra room of an
+     * exact line above the text and clips what will not fit, so the pitch
+     * is never written below what the paragraph's largest type needs.
      */
-    private fun spacingXml(style: app.morpho.engine.layout.ParagraphStyle): String? {
+    private fun spacingXml(style: app.morpho.engine.layout.ParagraphStyle, largestSizePt: Float): String? {
         val before = style.spaceBeforePt?.let(::twips)
         val after = style.spaceAfterPt?.let(::twips)
-        val line = style.linePitchPt?.takeIf { it > 0f }?.let(::twips)
+        val line = style.linePitchPt?.takeIf { it > 0f }
+            ?.let { maxOf(it, LEAST_LINE_SHARE * largestSizePt) }
+            ?.let(::twips)
         if (before == null && after == null && line == null) return null
         val sb = StringBuilder("<w:spacing")
         before?.let { sb.append(""" w:before="$it"""") }
         after?.let { sb.append(""" w:after="$it"""") }
-        line?.let { sb.append(""" w:line="$it" w:lineRule="atLeast"""") }
+        line?.let { sb.append(""" w:line="$it" w:lineRule="exact"""") }
         return sb.append("/>").toString()
     }
+
+    /** An exact line is never shorter than this share of its largest type size. */
+    private const val LEAST_LINE_SHARE = 1.15f
 
     /**
      * The paragraph's indents. `w:left` is the start edge — Word lays a
@@ -337,13 +393,29 @@ object DocxWriter {
     private fun twips(points: Float): Int = (points * 20f).roundToInt().coerceAtLeast(0)
 
     /** Children of w:rPr are emitted in the order the OOXML schema requires. */
-    private fun appendRun(sb: StringBuilder, run: TextRun, paragraphDirection: TextDirection) {
+    private fun appendRun(
+        sb: StringBuilder,
+        run: TextRun,
+        paragraphDirection: TextDirection,
+        images: ImagePlan,
+        document: DocumentModel,
+    ) {
+        run.image?.let { image ->
+            sb.append("<w:r>")
+            appendDrawing(sb, images.entryFor(image))
+            sb.append("</w:r>")
+            return
+        }
         val rtl = (run.direction ?: paragraphDirection) == TextDirection.RTL
         val family = run.fontFamily?.takeIf { it.isNotBlank() }
         val halfPoints = run.fontSizePt?.takeIf { it > 0f }?.let { (it * 2).roundToInt() }
         val hasProps = run.bold || run.italic || run.underline || rtl || run.language != null ||
             family != null || halfPoints != null || run.superscript || run.subscript
 
+        // A field is a run Word fills in; what it last showed goes in as the
+        // text, as the cached result a field carries.
+        val field = run.field
+        if (field != null) sb.append("""<w:fldSimple w:instr="${fieldInstruction(field)}">""")
         sb.append("<w:r>")
         if (hasProps) {
             sb.append("<w:rPr>")
@@ -372,7 +444,8 @@ object DocxWriter {
         }
         // A tab is an element of its own; the character itself has no
         // meaning in w:t.
-        val pieces = run.text.split('\t')
+        val text = if (field != null && run.text.isEmpty()) fieldPlaceholder(field, document) else run.text
+        val pieces = text.split('\t')
         for ((index, piece) in pieces.withIndex()) {
             if (index > 0) sb.append("<w:tab/>")
             if (piece.isEmpty()) continue
@@ -381,6 +454,15 @@ object DocxWriter {
             sb.append("</w:t>")
         }
         sb.append("</w:r>")
+        if (field != null) sb.append("</w:fldSimple>")
+    }
+
+    private fun fieldInstruction(field: RunField): String = when (field) {
+        RunField.PAGE_NUMBER -> " PAGE "
+    }
+
+    private fun fieldPlaceholder(field: RunField, document: DocumentModel): String = when (field) {
+        RunField.PAGE_NUMBER -> (document.pageSetup?.firstPageNumber ?: 1).toString()
     }
 
     private fun appendTable(
@@ -442,6 +524,10 @@ object DocxWriter {
     }
 
     private const val EMU_PER_PX = 9525L
+
+    /** EMUs in a point: 914400 in an inch, 72 points in an inch. */
+
+    private const val EMU_PER_PT = 12700L
     /** Content area inside the A4 margins, in EMU. */
     private const val MAX_CX_EMU = 5_731_933L
     private const val MAX_CY_EMU = 8_863_330L
@@ -453,8 +539,20 @@ object DocxWriter {
 
     /** An image as its own paragraph with an inline w:drawing. */
     private fun appendImage(sb: StringBuilder, entry: ImagePlan.Entry) {
-        var cx = entry.block.widthPx.coerceAtLeast(1) * EMU_PER_PX
-        var cy = entry.block.heightPx.coerceAtLeast(1) * EMU_PER_PX
+        sb.append("<w:p><w:r>")
+        appendDrawing(sb, entry)
+        sb.append("</w:r></w:p>")
+    }
+
+    /** One inline picture, in a run of the caller's. */
+    private fun appendDrawing(sb: StringBuilder, entry: ImagePlan.Entry) {
+        val block = entry.block
+        // Shown at the size the reader measured on the page when it did,
+        // else at its pixel size as CSS would show it.
+        var cx = block.widthPt?.takeIf { it > 0f }?.let { (it * EMU_PER_PT).toLong() }
+            ?: (block.widthPx.coerceAtLeast(1) * EMU_PER_PX)
+        var cy = block.heightPt?.takeIf { it > 0f }?.let { (it * EMU_PER_PT).toLong() }
+            ?: (block.heightPx.coerceAtLeast(1) * EMU_PER_PX)
         // Scale into the content area, preserving aspect ratio.
         if (cx > MAX_CX_EMU) {
             cy = cy * MAX_CX_EMU / cx
@@ -468,7 +566,7 @@ object DocxWriter {
         cy = cy.coerceAtLeast(1)
 
         val name = xmlEscape("Image ${entry.docPrId}")
-        sb.append("<w:p><w:r><w:drawing>")
+        sb.append("<w:drawing>")
         sb.append("""<wp:inline xmlns:wp="$WP_NS" distT="0" distB="0" distL="0" distR="0">""")
         sb.append("""<wp:extent cx="$cx" cy="$cy"/>""")
         sb.append("""<wp:docPr id="${entry.docPrId}" name="$name"/>""")
@@ -479,29 +577,42 @@ object DocxWriter {
         sb.append("""<pic:blipFill><a:blip xmlns:r="$R_NS" r:embed="${entry.relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>""")
         sb.append("""<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="$cx" cy="$cy"/></a:xfrm>""")
         sb.append("""<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>""")
-        sb.append("</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>")
+        sb.append("</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>")
     }
 
-    private fun sectPr(page: PageSetup?): String {
+    /** Children of w:sectPr in schema order: the header and footer references, the sheet, its margins, the numbering. */
+    private fun sectPr(document: DocumentModel): String {
+        val page = document.pageSetup
+        val sb = StringBuilder("<w:sectPr>")
+        if (document.header.isNotEmpty()) sb.append("""<w:headerReference w:type="default" r:id="$HEADER_REL_ID"/>""")
+        if (document.footer.isNotEmpty()) sb.append("""<w:footerReference w:type="default" r:id="$FOOTER_REL_ID"/>""")
         // The source's own page when the reader measured it; else A4
         // portrait with 2.54 cm margins (values in twentieths of a point).
         if (page == null) {
-            return """<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>""" +
-                """<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" """ +
-                """w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>"""
+            sb.append("""<w:pgSz w:w="11906" w:h="16838"/>""")
+            sb.append("""<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" """)
+            sb.append("""w:header="708" w:footer="708" w:gutter="0"/>""")
+        } else {
+            val landscape = if (page.widthPt > page.heightPt) """ w:orient="landscape"""" else ""
+            sb.append("""<w:pgSz w:w="${twips(page.widthPt)}" w:h="${twips(page.heightPt)}"$landscape/>""")
+            sb.append("""<w:pgMar w:top="${twips(page.marginTopPt)}" w:right="${twips(page.marginRightPt)}" """)
+            sb.append("""w:bottom="${twips(page.marginBottomPt)}" w:left="${twips(page.marginLeftPt)}" """)
+            val header = page.headerDistancePt?.let(::twips) ?: 708
+            val footer = page.footerDistancePt?.let(::twips) ?: 708
+            sb.append("""w:header="$header" w:footer="$footer" w:gutter="0"/>""")
+            if (page.firstPageNumber != 1) sb.append("""<w:pgNumType w:start="${page.firstPageNumber}"/>""")
         }
-        val landscape = if (page.widthPt > page.heightPt) """ w:orient="landscape"""" else ""
-        return """<w:sectPr><w:pgSz w:w="${twips(page.widthPt)}" w:h="${twips(page.heightPt)}"$landscape/>""" +
-            """<w:pgMar w:top="${twips(page.marginTopPt)}" w:right="${twips(page.marginRightPt)}" """ +
-            """w:bottom="${twips(page.marginBottomPt)}" w:left="${twips(page.marginLeftPt)}" """ +
-            """w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>"""
+        return sb.append("</w:sectPr>").toString()
     }
+
+    private const val HEADER_REL_ID = "rIdHdr1"
+    private const val FOOTER_REL_ID = "rIdFtr1"
 
     // ------------------------------------------------------------------
     // Static parts
     // ------------------------------------------------------------------
 
-    private fun contentTypesXml(): String = XML_DECL +
+    private fun contentTypesXml(header: Boolean, footer: Boolean): String = XML_DECL +
         """<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">""" +
         """<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>""" +
         """<Default Extension="xml" ContentType="application/xml"/>""" +
@@ -510,6 +621,8 @@ object DocxWriter {
         """<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>""" +
         """<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>""" +
         """<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>""" +
+        (if (header) """<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>""" else "") +
+        (if (footer) """<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>""" else "") +
         """<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>""" +
         """<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>""" +
         """</Types>"""
@@ -521,12 +634,29 @@ object DocxWriter {
         """<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>""" +
         """</Relationships>"""
 
-    private fun documentRelsXml(images: ImagePlan): String {
+    private fun documentRelsXml(images: ImagePlan, header: Boolean, footer: Boolean): String {
         val sb = StringBuilder(XML_DECL)
         sb.append("""<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""")
         sb.append("""<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>""")
         sb.append("""<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>""")
-        for (entry in images.entries) {
+        if (header) sb.append("""<Relationship Id="$HEADER_REL_ID" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>""")
+        if (footer) sb.append("""<Relationship Id="$FOOTER_REL_ID" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>""")
+        for (entry in images.entriesFor(ImagePlan.PART_DOCUMENT)) {
+            sb.append(
+                """<Relationship Id="${entry.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${entry.fileName}"/>"""
+            )
+        }
+        sb.append("</Relationships>")
+        return sb.toString()
+    }
+
+    /** The relationships of a header or footer part: its pictures, if it has any. */
+    private fun partRelsXml(images: ImagePlan, part: String): String? {
+        val entries = images.entriesFor(part)
+        if (entries.isEmpty()) return null
+        val sb = StringBuilder(XML_DECL)
+        sb.append("""<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""")
+        for (entry in entries) {
             sb.append(
                 """<Relationship Id="${entry.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${entry.fileName}"/>"""
             )

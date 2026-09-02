@@ -45,7 +45,9 @@ import java.util.IdentityHashMap
  * phone). A candidate in the private-use area is not: a symbol font's cmap
  * names shapes, not characters. And only a font's true Unicode cmap is
  * consulted, never a Macintosh or symbol table that some producers fill
- * with glyph numbers.
+ * with glyph numbers. Once a font is known to be broken, though, a glyph
+ * the two maps read as different kinds of character — the colon that
+ * paper's ToUnicode called a 4 — is overruled as well.
  *
  * Only a font that is really embedded qualifies. For one that is not, the
  * TrueType object is a substitute from the system, and its cmap describes
@@ -78,7 +80,7 @@ internal class AndroidGlyphUnicode {
             if (gid <= 0) return null
             val candidates = cmap.getCharCodes(gid)?.takeIf { it.isNotEmpty() } ?: return null
             if (agrees(candidates, declared)) return null
-            return contradiction(candidates, declared)?.let(::text)
+            return (contradiction(candidates, declared) ?: crossKind(candidates, declared))?.let(::text)
         }
 
         companion object {
@@ -107,6 +109,44 @@ internal class AndroidGlyphUnicode {
                         isCharacter(said) && sameScript(said, meant)
                     }
                     .minByOrNull { if (it in PRESENTATION_FORMS) it + 0x110000 else it }
+            }
+
+            /**
+             * The cmap's reading of a glyph where ToUnicode names a different
+             * kind of character altogether — a colon it calls a 4, a digit it
+             * calls a bracket. This is not evidence that a font is broken, so
+             * it is not counted; but once a font is known to be broken, it is
+             * a wrong answer like any other, and the paper's every "ملخص:"
+             * would otherwise read "ملخص4". Null when both readings are of a
+             * kind, whatever script: a comma named as the Arabic comma, or a
+             * hyphen as a dash, is a producer's choice, not a broken map.
+             */
+            private fun crossKind(candidates: List<Int>, declared: String): Int? {
+                val meant = ExtractedText.foldPresentationForms(declared).codePointAt(0)
+                val meantKind = kindOf(meant) ?: return null
+                return candidates
+                    .filter { candidate ->
+                        val said = ExtractedText.foldPresentationForms(text(candidate)).codePointAt(0)
+                        val kind = kindOf(said)
+                        kind != null && kind != meantKind
+                    }
+                    .minByOrNull { if (it in PRESENTATION_FORMS) it + 0x110000 else it }
+            }
+
+            private enum class Kind { LETTER, DIGIT, SIGN }
+
+            /** Whether a code point is a letter, a digit or a sign — punctuation or a symbol; null for anything else. */
+            private fun kindOf(codePoint: Int): Kind? {
+                if (codePoint in PRIVATE_USE || Character.isISOControl(codePoint) || Character.isWhitespace(codePoint)) return null
+                if (Character.isDigit(codePoint)) return Kind.DIGIT
+                if (Character.isLetter(codePoint) || Character.getType(codePoint) == Character.NON_SPACING_MARK.toInt()) return Kind.LETTER
+                return when (Character.getType(codePoint).toByte()) {
+                    Character.CONNECTOR_PUNCTUATION, Character.DASH_PUNCTUATION, Character.START_PUNCTUATION,
+                    Character.END_PUNCTUATION, Character.INITIAL_QUOTE_PUNCTUATION, Character.FINAL_QUOTE_PUNCTUATION,
+                    Character.OTHER_PUNCTUATION, Character.MATH_SYMBOL, Character.CURRENCY_SYMBOL,
+                    Character.MODIFIER_SYMBOL, Character.OTHER_SYMBOL -> Kind.SIGN
+                    else -> null
+                }
             }
 
             /** A letter, digit or mark of a real script — something a map can be wrong about. */

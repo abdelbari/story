@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 256 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 266 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -49,6 +49,14 @@ Work through, in this order — each exercises a path nothing else covers:
       not split or join. Check an untagged PDF the same way: it should also
       keep its faces and weights, drop the running header and footer, and
       break its paragraphs where the page does.
+- [ ] **The head and foot of the Arabic paper**, in Word and in the app's
+      preview. Every page should carry the journal's running head — its
+      title, the author, the two rules — at the same distance from the top
+      as the PDF, and the foot with the volume line and a page number that
+      counts 48, 49, 50 as the paper does, not 1, 2, 3. The first line of
+      each page should start where the PDF's does, and each page should end
+      on the same line; if the phone's pages run long or short, the line
+      pitch is not being honoured.
 - [ ] **A scanned PDF → OCR → Word.** Watch the page counter advance; try
       Cancel mid-way and confirm nothing is saved. Judge the recognition
       quality — this is the number one thing to tune (see §5).

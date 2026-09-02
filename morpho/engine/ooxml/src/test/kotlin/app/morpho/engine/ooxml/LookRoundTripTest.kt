@@ -2,6 +2,8 @@ package app.morpho.engine.ooxml
 
 import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.DocumentModel
+import app.morpho.engine.layout.ImageBlock
+import app.morpho.engine.layout.RunField
 import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
@@ -58,7 +60,7 @@ class LookRoundTripTest {
         assertTrue(xml.contains("""<w:rFonts w:ascii="Simplified Arabic" w:hAnsi="Simplified Arabic" w:cs="Simplified Arabic"/><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/><w:rtl/>"""), xml)
         assertTrue(xml.contains("""<w:sz w:val="16"/><w:szCs w:val="16"/><w:vertAlign w:val="superscript"/><w:rtl/>"""), xml)
         assertTrue(xml.contains("""<w:vertAlign w:val="subscript"/>"""), xml)
-        assertTrue(xml.contains("""<w:bidi/><w:spacing w:before="0" w:after="120" w:line="430" w:lineRule="atLeast"/><w:ind w:firstLine="720"/>"""), xml)
+        assertTrue(xml.contains("""<w:bidi/><w:spacing w:before="0" w:after="120" w:line="430" w:lineRule="exact"/><w:ind w:firstLine="720"/>"""), xml)
         assertTrue(xml.contains("""<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/></w:pBdr><w:tabs><w:tab w:val="left" w:pos="3650"/></w:tabs><w:bidi/><w:ind w:left="1200" w:hanging="600"/>"""), xml)
         assertTrue(xml.contains("""</w:t><w:tab/><w:t xml:space="preserve">"""), xml)
         assertTrue(xml.contains("""<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1222" w:right="1696" w:bottom="1834" w:left="1132" """), xml)
@@ -152,19 +154,96 @@ class LookRoundTripTest {
     }
 
     @Test
+    fun `an exact line is never shorter than its largest type needs`() {
+        // A measured pitch of nine points under twelve-point type would
+        // clip every ascender; Word is asked for 1.15 times the type instead.
+        val xml = documentXml(
+            DocxWriter.toByteArray(
+                DocumentModel(
+                    listOf(
+                        Paragraph(
+                            listOf(TextRun("tall", fontSizePt = 12f)),
+                            ParagraphStyle(linePitchPt = 9f),
+                        )
+                    )
+                )
+            )
+        )
+        assertTrue(xml.contains("""<w:spacing w:line="276" w:lineRule="exact"/>"""), xml)
+    }
+
+    @Test
+    fun `a running header and footer become parts of their own`() {
+        val picture = ImageBlock(PNG, "image/png", 2, 2, widthPt = 100f, heightPt = 20f)
+        val document = DocumentModel(
+            blocks = listOf(Paragraph(listOf(TextRun("body")))),
+            pageSetup = PageSetup(595f, 842f, 56f, 72f, 56f, 84f, headerDistancePt = 30f, footerDistancePt = 40f, firstPageNumber = 48),
+            header = listOf(picture),
+            footer = listOf(
+                Paragraph(
+                    listOf(
+                        TextRun("", image = ImageBlock(PNG, "image/png", 2, 2, widthPt = 50f, heightPt = 10f)),
+                        TextRun("\t"),
+                        TextRun("48", field = RunField.PAGE_NUMBER),
+                    ),
+                    ParagraphStyle(direction = TextDirection.RTL, tabStopsPt = listOf(400f)),
+                )
+            ),
+        )
+        val docx = DocxWriter.toByteArray(document)
+        val parts = entries(docx)
+        val body = parts.getValue("word/document.xml")
+        assertTrue(body.contains("""<w:sectPr><w:headerReference w:type="default" r:id="rIdHdr1"/><w:footerReference w:type="default" r:id="rIdFtr1"/><w:pgSz"""), body)
+        assertTrue(body.contains("""w:header="600" w:footer="800" w:gutter="0"/><w:pgNumType w:start="48"/></w:sectPr>"""), body)
+        assertTrue(parts.getValue("[Content_Types].xml").contains("/word/header1.xml"), "header content type")
+        assertTrue(parts.getValue("[Content_Types].xml").contains("/word/footer1.xml"), "footer content type")
+        val rels = parts.getValue("word/_rels/document.xml.rels")
+        assertTrue(rels.contains("""Id="rIdHdr1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml""""), rels)
+        assertTrue(rels.contains("""Target="footer1.xml""""), rels)
+        val header = parts.getValue("word/header1.xml")
+        assertTrue(header.startsWith("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr """) || header.contains("<w:hdr "), header.take(120))
+        // The picture at its measured size: 100pt by 20pt in EMUs.
+        assertTrue(header.contains("""<wp:extent cx="1270000" cy="254000"/>"""), header)
+        assertTrue(parts.getValue("word/_rels/header1.xml.rels").contains("media/image1.png"), "header picture relationship")
+        val footer = parts.getValue("word/footer1.xml")
+        assertTrue(footer.contains("<w:ftr "), footer.take(120))
+        // An inline picture in a run, then a tab, then the page field with the first page's number as its cached text.
+        assertTrue(footer.contains("""<w:r><w:drawing>"""), footer)
+        assertTrue(footer.contains("""<w:tab/>"""), footer)
+        assertTrue(footer.contains("""<w:fldSimple w:instr=" PAGE "><w:r><w:rPr><w:rtl/></w:rPr><w:t xml:space="preserve">48</w:t></w:r></w:fldSimple>"""), footer)
+        assertTrue(parts.getValue("word/_rels/footer1.xml.rels").contains("media/image2.png"), "footer picture relationship")
+        assertTrue(parts.containsKey("word/media/image1.png") && parts.containsKey("word/media/image2.png"), "media parts")
+    }
+
+    @Test
+    fun `a document without furniture writes no header or footer part`() {
+        val parts = entries(DocxWriter.toByteArray(DocumentModel(listOf(Paragraph(listOf(TextRun("plain")))))))
+        assertTrue(!parts.containsKey("word/header1.xml") && !parts.containsKey("word/footer1.xml"))
+        assertTrue(!parts.getValue("word/document.xml").contains("headerReference"))
+    }
+
+    @Test
     fun `a document that measured nothing keeps the defaults`() {
         val xml = documentXml(DocxWriter.toByteArray(DocumentModel(listOf(Paragraph(listOf(TextRun("plain")))))))
         assertTrue(xml.contains("""<w:p><w:r><w:t xml:space="preserve">plain</w:t></w:r></w:p>"""), xml)
         assertTrue(xml.contains("""<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" """), xml)
     }
 
-    private fun documentXml(docx: ByteArray): String {
+    private fun documentXml(docx: ByteArray): String = entries(docx).getValue("word/document.xml")
+
+    private fun entries(docx: ByteArray): Map<String, String> {
+        val parts = LinkedHashMap<String, String>()
         ZipInputStream(ByteArrayInputStream(docx)).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
-                if (entry.name == "word/document.xml") return zip.readBytes().toString(Charsets.UTF_8)
+                parts[entry.name] = zip.readBytes().toString(Charsets.ISO_8859_1)
             }
         }
-        error("word/document.xml missing")
+        return parts
     }
+
+    /** A 2x2 PNG. */
+    private val PNG: ByteArray = java.util.Base64.getDecoder().decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAC0lEQVR4nGNgQAcAABIAAeRVjecAAAAASUVORK5CYII="
+    )
 }
