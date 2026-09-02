@@ -87,15 +87,22 @@ object PdfLayout {
     private const val MIN_LINES_TO_JUDGE = 8
     /** A page whose text stopped this many lines short of where it could have run was broken on purpose. */
     private const val EARLY_BREAK_LINES = 2f
+    /** How far a paragraph looks for a rule of its own, in its own line pitch. */
+    private const val RULE_REACH = 1.6f
+    /** A rule this much of a line's own height away from a baseline is the paragraph's, not the line's. */
+    private const val RULE_CLEARANCE = 0.4f
+    /** A rule must cross this share of the text block to be one at all. */
+    private const val RULE_LEAST_SHARE = 0.25f
 
     fun reconstruct(
         lines: List<PdfLine>,
         confidence: Float,
         images: List<PdfImage> = emptyList(),
         sheets: List<PdfPageSheet> = emptyList(),
+        rules: List<PdfRule> = emptyList(),
     ): DocumentModel {
         val body = withoutRunningHeadsAndFeet(lines, sheets)
-        return reconstructBody(body.ifEmpty { lines }, confidence, images, sheets)
+        return reconstructBody(body.ifEmpty { lines }, confidence, images, sheets, rules)
     }
 
     private fun reconstructBody(
@@ -103,6 +110,7 @@ object PdfLayout {
         confidence: Float,
         images: List<PdfImage>,
         sheets: List<PdfPageSheet>,
+        rules: List<PdfRule>,
     ): DocumentModel {
         val blockByPage = asPainted.groupBy { it.page }.mapValues { (_, pageLines) -> blockOf(pageLines) }
         // A page set in two columns paints its lines down the page, not down
@@ -170,7 +178,7 @@ object PdfLayout {
                 first.page,
                 flows[first] ?: 0,
                 first.baselineY,
-                paragraph(clusterLines, kind, confidence, blockByPage, next),
+                paragraph(clusterLines, kind, confidence, blockByPage, next, rules, flatClusters.getOrNull(index - 1)?.lastOrNull()),
             )
         }
         val textCount = positioned.size
@@ -491,6 +499,8 @@ object PdfLayout {
         confidence: Float,
         blockByPage: Map<Int, Pair<Float, Float>>,
         next: PdfLine?,
+        rules: List<PdfRule> = emptyList(),
+        previous: PdfLine? = null,
     ): Paragraph {
         val text = LineJoiner.join(cluster.map { it.text })
         val direction = Bidi.firstStrongDirection(text)
@@ -515,9 +525,54 @@ object PdfLayout {
                 spaceBeforePt = 0f,
                 spaceAfterPt = after ?: 0f,
                 linePitchPt = pitch,
+                // A rule nearer this paragraph than its neighbour, and clear
+                // of its own baselines: the line under a paper's dates, the
+                // separator above the note at the foot of a page.
+                ruleAbove = hasRule(
+                    rules,
+                    cluster.first().page,
+                    from = midway(previous?.baselineY, cluster.first().baselineY, pitch, above = true),
+                    to = cluster.first().baselineY - RULE_CLEARANCE * cluster.first().maxFontSize,
+                    block = block,
+                ),
+                ruleBelow = hasRule(
+                    rules,
+                    last.page,
+                    from = last.baselineY + RULE_CLEARANCE * last.maxFontSize,
+                    to = midway(next?.takeIf { it.page == last.page }?.baselineY, last.baselineY, pitch, above = false),
+                    block = block,
+                ),
             ),
             confidence = confidence,
         )
+    }
+
+    /** Halfway between a paragraph's edge and its neighbour's, or a line's room away when it has none. */
+    private fun midway(neighbour: Float?, edge: Float, pitch: Float?, above: Boolean): Float {
+        val reach = (pitch ?: 0f).takeIf { it > 0f } ?: FALLBACK_PITCH_FACTOR * 12f
+        val far = neighbour ?: (if (above) edge - RULE_REACH * reach else edge + RULE_REACH * reach)
+        return (far + edge) / 2
+    }
+
+    /**
+     * Whether a rule crosses the page between [from] and [to], inside the
+     * text block: a running header's own rule sits outside it, and is the
+     * header's business rather than a paragraph's.
+     */
+    private fun hasRule(
+        rules: List<PdfRule>,
+        page: Int,
+        from: Float,
+        to: Float,
+        block: Pair<Float, Float>?,
+    ): Boolean {
+        if (rules.isEmpty() || from >= to) return false
+        val width = block?.let { it.second - it.first } ?: return false
+        if (width <= 0f) return false
+        return rules.any { rule ->
+            rule.page == page && rule.y in from..to &&
+                rule.right - rule.left >= RULE_LEAST_SHARE * width
+        }
     }
 
     /**

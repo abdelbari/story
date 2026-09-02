@@ -5,6 +5,7 @@ import app.morpho.engine.layout.ExtractedText
 import app.morpho.engine.layout.pdf.PdfLine
 import app.morpho.engine.layout.pdf.PdfLook
 import app.morpho.engine.layout.pdf.PdfPageSheet
+import app.morpho.engine.layout.pdf.PdfRule
 import app.morpho.engine.layout.pdf.PdfRun
 import app.morpho.engine.layout.pdf.PdfSegment
 import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingColor
@@ -67,8 +68,11 @@ internal class PositionTextStripper : PDFTextStripper() {
     private val colors = IdentityHashMap<TextPosition, Int>()
     /** Where the pages' link annotations point, when the document has any. */
     private var links: PageLinks? = null
+    /** The rules the pages draw: a text engine is not given the path operators unless it asks. */
+    private val ruleCatcher = RuleCatcher({ runCatching { currentPage }.getOrNull() }, { currentPageNo })
 
     init {
+        ruleCatcher.installOn(this)
         // A text engine is given the operators it needs, and colour is not
         // among them: without these the graphics state stays the black a
         // page starts in, and every heading a producer set in its own
@@ -98,6 +102,7 @@ internal class PositionTextStripper : PDFTextStripper() {
         sheets.clear()
         paintOrder.clear()
         colors.clear()
+        ruleCatcher.rules.clear()
         paintedSoFar = 0
         links = runCatching { PageLinks(document) }.getOrNull()
         resetLine()
@@ -130,6 +135,9 @@ internal class PositionTextStripper : PDFTextStripper() {
         return captured.toList()
     }
 
+    /** The rules drawn on the pages of the last [capture]. */
+    fun rules(): List<PdfRule> = ruleCatcher.rules.toList()
+
     /** The sheet of every page that drew text in the last [capture]. */
     fun pages(): List<PdfPageSheet> =
         sheets.toSortedMap().map { (page, sheet) -> PdfPageSheet(page, sheet[0], sheet[1]) }
@@ -144,7 +152,7 @@ internal class PositionTextStripper : PDFTextStripper() {
         if (textPositions.isEmpty()) return
         rememberSheet()
         val baselineY = textPositions.first().yDirAdj
-        if (lineGlyphs.isNotEmpty() && abs(baselineY - lineY) > SAME_LINE_TOLERANCE_PT) flushLine()
+        if (lineGlyphs.isNotEmpty() && abs(baselineY - lineY) > sameLineTolerance(textPositions)) flushLine()
         if (lineGlyphs.isEmpty()) {
             lineY = baselineY
             linePage = currentPageNo
@@ -158,6 +166,21 @@ internal class PositionTextStripper : PDFTextStripper() {
                 xEnd = ink.maxOf { it.xDirAdj + it.widthDirAdj },
             )
         }
+    }
+
+    /**
+     * How far off a line's baseline a glyph may sit and still belong to it.
+     * A footnote mark is set small and raised a third of the line's height,
+     * and a fixed hair of tolerance leaves it stranded as a line of its own
+     * — the mark then reads as a paragraph, and the note it calls has
+     * nothing to attach to. Measured against the type of the line, it is
+     * still nowhere near the step to the next line, which is at least a
+     * whole line's height away.
+     */
+    private fun sameLineTolerance(incoming: List<TextPosition>): Float {
+        val sizes = (lineGlyphs + incoming).mapNotNull { it.fontSizeInPt.takeIf { size -> size > 0f } }
+        val largest = sizes.maxOrNull() ?: return SAME_LINE_TOLERANCE_PT
+        return max(SAME_LINE_TOLERANCE_PT, RAISED_TOLERANCE_SHARE * largest)
     }
 
     /** Word breaks come from the page, so PDFBox's own are not needed. */
@@ -324,6 +347,8 @@ internal class PositionTextStripper : PDFTextStripper() {
     private companion object {
         /** Glyphs further apart vertically than this sit on different lines. */
         const val SAME_LINE_TOLERANCE_PT = 2f
+        /** …unless they are within this share of the line's own type of it, which a raised mark is. */
+        const val RAISED_TOLERANCE_SHARE = 0.45f
         /** A painted space needs this share of its own width clear between its neighbours to be a word break. */
         const val VISIBLE_SPACE_SHARE = 0.3f
         /** A gap wider than this share of the type size is a word break, where no space was painted. */

@@ -63,6 +63,20 @@ data class PdfLook(
 data class PdfRun(val text: String, val look: PdfLook?)
 
 /**
+ * A line drawn across a page: a stroked rule or a filled sliver, in
+ * top-down page points, with the page it was drawn on. Under a paper's
+ * dates, above the note at its foot, between the rows of a table — a
+ * conversion that keeps only the words loses all of it.
+ */
+data class PdfRule(
+    /** 1-based page number. */
+    val page: Int,
+    val y: Float,
+    val left: Float,
+    val right: Float,
+)
+
+/**
  * The sheet a page was drawn on, in points. The text box is not part of
  * it: the heuristics measure it from the lines they keep, so a running
  * header does not widen the block that alignment and margins are read

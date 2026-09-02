@@ -127,6 +127,73 @@ class PdfReaderTest {
     }
 
     @Test
+    fun `a page with no tags keeps the rules it draws, and the note under one`() {
+        // The line under a paper's dates and the separator above the note
+        // at its foot are drawn as paths, which a text engine never sees
+        // unless it asks. Without them an untagged paper loses its rules
+        // and its footnote lands in the middle of the text.
+        val model = PdfReader().extract(ruledPdf())
+        val paragraphs = model.blocks.filterIsInstance<Paragraph>()
+        val dates = paragraphs.first { it.text.contains("2022-04-21") }
+        assertTrue(dates.style.ruleBelow, "the rule under the dates was lost")
+        val note = paragraphs.firstOrNull { it.text.contains("corresponding author") }
+        assertTrue(note == null, "the note stayed in the text: ${paragraphs.map { it.text }}")
+        val mark = paragraphs.flatMap { it.runs }.firstOrNull { it.note != null }
+        assertTrue(mark != null, "no note was found on any mark")
+        assertTrue(
+            (mark!!.note!!.single() as Paragraph).text.contains("corresponding author"),
+            mark.note.toString(),
+        )
+    }
+
+    /** An untagged page whose dates carry a rule under them and whose foot carries a note under another. */
+    private fun ruledPdf(): ByteArray {
+        PDDocument().use { doc ->
+            val page = PDPage(PDRectangle.A4)
+            doc.addPage(page)
+            val height = PDRectangle.A4.height
+            PDPageContentStream(doc, page).use { content ->
+                fun text(what: String, y: Float, size: Float = 11f, at: Float = 72f) {
+                    content.beginText()
+                    content.setFont(PDType1Font.HELVETICA, size)
+                    content.newLineAtOffset(at, height - y)
+                    content.showText(what)
+                    content.endText()
+                }
+                text("The Form In Scientific Research", 100f, 15f)
+                text("by an author of this paper", 130f)
+                text("Received 2022-04-21    Accepted 2022-05-19", 160f)
+                // The rule under the dates.
+                content.moveTo(72f, height - 168f)
+                content.lineTo(500f, height - 168f)
+                content.stroke()
+                for (row in 0 until 6) {
+                    text("A line of the body of the paper, number $row, running on.", 200f + row * 16f)
+                }
+                // The separator above the note, and the note itself.
+                content.moveTo(72f, height - 320f)
+                content.lineTo(220f, height - 320f)
+                content.stroke()
+                content.beginText()
+                content.setFont(PDType1Font.HELVETICA, 6f)
+                content.newLineAtOffset(72f, height - 330f + 3f)
+                content.showText("*")
+                content.endText()
+                text(" the corresponding author of the paper", 330f, 9f, at = 78f)
+                // The mark in the text, raised beside the author.
+                content.beginText()
+                content.setFont(PDType1Font.HELVETICA, 6f)
+                content.newLineAtOffset(210f, height - 130f + 4f)
+                content.showText("*")
+                content.endText()
+            }
+            val out = ByteArrayOutputStream()
+            doc.save(out)
+            return out.toByteArray()
+        }
+    }
+
+    @Test
     fun `a page with no tags still gives up the colours it paints in`() {
         // The untagged reader is a text engine of its own, and a text
         // engine is not given the colour operators unless it asks for

@@ -59,7 +59,7 @@ class PdfReader {
             val stripper = PositionTextStripper()
             val lines = runCatching { stripper.capture(doc) }.getOrDefault(emptyList())
             val model = if (lines.isNotEmpty()) {
-                PdfLayout.reconstruct(lines, confidence, images, stripper.pages())
+                PdfLayout.reconstruct(lines, confidence, images, stripper.pages(), stripper.rules())
             } else {
                 plainTextFallback(doc, confidence, images)
             }
