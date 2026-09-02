@@ -63,9 +63,11 @@ import kotlin.math.roundToInt
  * pages hold what the same pages held; paragraphs split across pages
  * line-by-line. Honest
  * v1 limits, documented rather than hidden: tables take the widths their
- * columns were measured at and are ruled only where the page ruled them,
- * but render only their paragraph content, and a single row never splits
- * across pages (one taller than a page is clipped); images scale
+ * columns were measured at, are ruled only where the page ruled them, and
+ * spread a cell across the columns it covers, but they render only their
+ * paragraph content, draw a cell that covers several rows in the first of
+ * them alone, and never split a row across pages (one taller than a page
+ * is clipped); images scale
  * into the content box at their measured size, else at the CSS px→pt
  * ratio; list markers are plain text prefixes, so an RTL numbered item
  * shows its number on the right but with Western digits.
@@ -551,7 +553,9 @@ internal object PdfFileExporter {
     }
 
     private fun table(cursor: Cursor, block: Table, defaultDirection: TextDirection) {
-        val columns = block.rows.maxOfOrNull { it.cells.size } ?: return
+        // A cell can cover several columns, so a row's places are not its
+        // cells: the widest row, counted in places, is the grid.
+        val columns = block.rows.maxOfOrNull { row -> row.sumOf { cell -> cell.columnSpan.coerceAtLeast(1) } } ?: return
         if (columns == 0) return
         // The widths a reader measured off the page, scaled to the content
         // box; a table nothing measured shares the width equally.
@@ -567,15 +571,29 @@ internal object PdfFileExporter {
         // A right-to-left document lays its columns out from the right, so
         // the first cell of a row is drawn in the last column — and is set
         // to that column's width, not the first one's.
-        val placed = { index: Int -> if (defaultDirection == TextDirection.RTL) columns - 1 - index else index }
+        val placed = { index: Int, span: Int ->
+            if (defaultDirection == TextDirection.RTL) columns - index - span else index
+        }
         val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = 0.75f
             color = 0xFF9E9E9E.toInt()
         }
         for (row in block.rows) {
-            val cellLayouts = row.cells.mapIndexed { index, cell ->
-                val textWidth = (columnWidths[placed(index)] - 2 * CELL_PADDING).toInt().coerceAtLeast(1)
+            // Where each cell of the row starts, and how many places it takes.
+            val places = mutableListOf<Pair<Int, Int>>()
+            var place = 0
+            for (cell in row.cells) {
+                val span = cell.columnSpan.coerceIn(1, columns - place)
+                places += place to span
+                place += span
+                if (place >= columns) break
+            }
+            val cellLayouts = row.cells.take(places.size).mapIndexed { index, cell ->
+                val (at, span) = places[index]
+                val start = placed(at, span)
+                val width = (start until start + span).sumOf { columnWidths[it].toDouble() }.toFloat()
+                val textWidth = (width - 2 * CELL_PADDING).toInt().coerceAtLeast(1)
                 // Numbered items restart per cell, same contiguity rule as
                 // the top-level walk.
                 var numbered = 0
@@ -604,9 +622,10 @@ internal object PdfFileExporter {
             cursor.ensureRoom(rowHeight)
             val canvas = cursor.canvas
             for ((index, layouts) in cellLayouts.withIndex()) {
-                val column = placed(index)
+                val (at, span) = places[index]
+                val column = placed(at, span)
                 val x = cursor.sheet.marginLeft + offsets[column]
-                val width = columnWidths[column]
+                val width = (column until column + span).sumOf { columnWidths[it].toDouble() }.toFloat()
                 if (block.ruled) canvas.drawRect(x, cursor.y, x + width, cursor.y + rowHeight, border)
                 var textY = cursor.y + CELL_PADDING
                 for (layout in layouts) {

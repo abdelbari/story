@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 310 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 311 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -59,7 +59,8 @@ Work through, in this order — each exercises a path nothing else covers:
 - [ ] **A document with a table** — one with rules and one that is only
       aligned columns. The columns must keep their widths (a column of
       dates stays narrow), and the second must arrive with no lines
-      around it.
+      around it. A table with a heading over two columns must keep it
+      over two columns, not split into two headings.
 - [ ] **The author's email on the paper's first page** must be clickable
       in Word and open a mail window, and no ordinary word may have turned
       into a link.

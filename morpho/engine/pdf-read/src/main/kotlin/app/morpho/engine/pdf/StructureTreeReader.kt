@@ -40,6 +40,7 @@ import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDMarkedContentReference
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureElement
 import org.apache.pdfbox.pdmodel.documentinterchange.markedcontent.PDMarkedContent
+import org.apache.pdfbox.pdmodel.documentinterchange.taggedpdf.PDTableAttributeObject
 import org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject
 import org.apache.pdfbox.text.PDFMarkedContentExtractor
@@ -196,6 +197,8 @@ internal object StructureTreeReader {
     private const val PAGE_NUMBER_DRIFT_PT = 12f
     /** A gap wider than this share of the type size splits a run of digits into two. */
     private const val TOKEN_GAP_SHARE = 0.6f
+    /** However many a cell claims to cover, no more than this: a broken file will not build a table of millions. */
+    private const val MOST_SPANNED_CELLS = 256
     /** A page whose text stopped this many lines short of where it could have run was broken on purpose. */
     private const val EARLY_BREAK_LINES = 2f
     /** How far outside a table's text a rule still counts as the table's. */
@@ -1665,29 +1668,29 @@ internal object StructureTreeReader {
             if (depth > MAX_DEPTH) throw TooDeepException()
             // Each cell's glyphs are kept: they say what the cell holds and
             // also where it sits, which is what the table's columns are.
-            val cellGlyphs = childElements(table)
+            val cellElements = childElements(table)
                 .filter { resolvedType(it) == "TR" }
-                .map { row ->
-                    childElements(row)
-                        .filter { resolvedType(it) in setOf("TD", "TH") }
-                        .map(::glyphsOf)
-                }
-            val rows = cellGlyphs
-                .map { row ->
+                .map { row -> childElements(row).filter { resolvedType(it) in setOf("TD", "TH") } }
+            val cellGlyphs = cellElements.map { row -> row.map(::glyphsOf) }
+            val rows = cellElements.withIndex()
+                .map { (rowIndex, row) ->
                     TableRow(
-                        row.map { glyphs ->
+                        row.withIndex().map { (columnIndex, element) ->
+                            val glyphs = cellGlyphs[rowIndex][columnIndex]
                             val styled = trimmed(texts.readStyled(glyphs).logical)
                             val text = styled.text
                             if (text.isNotEmpty()) sawText = true
                             val direction = Bidi.firstStrongDirection(text)
                             TableCell(
-                                listOf(
+                                blocks = listOf(
                                     Paragraph(
                                         runs = runsOf(styled).ifEmpty { listOf(TextRun("")) },
                                         style = ParagraphStyle(direction = direction),
                                         confidence = CONFIDENCE,
                                     )
-                                )
+                                ),
+                                columnSpan = spanOf(element, across = true),
+                                rowSpan = spanOf(element, across = false),
                             )
                         }
                     )
@@ -1703,6 +1706,18 @@ internal object StructureTreeReader {
                 columnWidthsPt = columnWidthsOf(cellGlyphs),
                 ruled = texts.ruledLike(cellGlyphs.flatten().flatten()),
             )
+        }
+
+        /**
+         * How many columns or rows a cell covers, as the producer wrote it
+         * in the cell's own attributes. One, when it says nothing — which
+         * is what a cell that covers only its own place says.
+         */
+        private fun spanOf(cell: PDStructureElement, across: Boolean): Int {
+            val attributes = runCatching { cell.attributes?.getObject(0) }.getOrNull()
+            val table = attributes as? PDTableAttributeObject ?: return 1
+            val span = runCatching { if (across) table.colSpan else table.rowSpan }.getOrDefault(1)
+            return span.coerceIn(1, MOST_SPANNED_CELLS)
         }
 
         /**

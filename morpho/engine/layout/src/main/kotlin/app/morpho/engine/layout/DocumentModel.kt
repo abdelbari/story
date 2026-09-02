@@ -145,7 +145,18 @@ data class Table(
 
 data class TableRow(val cells: List<TableCell>)
 
-data class TableCell(val blocks: List<Block>)
+data class TableCell(
+    val blocks: List<Block>,
+    /**
+     * How many of the table's columns and rows the cell covers. A merged
+     * cell is one cell that spans several: a heading over two columns, a
+     * label beside three rows. The rows hold only the cells that begin —
+     * the ones a merge covers are not there — so a writer that needs a
+     * rectangle of cells fills the covered places itself.
+     */
+    val columnSpan: Int = 1,
+    val rowSpan: Int = 1,
+)
 
 class ImageBlock(
     val bytes: ByteArray,

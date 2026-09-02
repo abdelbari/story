@@ -361,7 +361,10 @@ object HtmlWriter {
         for (row in table.rows) {
             sb.append("<tr>")
             for (cell in row.cells) {
-                sb.append("<td").append(cellStyle).append(">")
+                sb.append("<td")
+                if (cell.columnSpan > 1) sb.append(""" colspan="${cell.columnSpan}"""")
+                if (cell.rowSpan > 1) sb.append(""" rowspan="${cell.rowSpan}"""")
+                sb.append(cellStyle).append(">")
                 appendBlocks(sb, cell.blocks, defaultDirection)
                 sb.append("</td>")
             }

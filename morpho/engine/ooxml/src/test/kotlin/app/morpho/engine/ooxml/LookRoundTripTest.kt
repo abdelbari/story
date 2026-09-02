@@ -385,6 +385,48 @@ class LookRoundTripTest {
     }
 
     @Test
+    fun `a merged cell covers the places it claims, and comes back saying so`() {
+        // A heading over two columns, and a label beside two rows:
+        //   | span-two-columns   | side |
+        //   | a  | b             |      |   <- "side" continues down
+        val document = DocumentModel(
+            listOf(
+                Table(
+                    rows = listOf(
+                        TableRow(
+                            listOf(
+                                TableCell(listOf(Paragraph(listOf(TextRun("wide")))), columnSpan = 2),
+                                TableCell(listOf(Paragraph(listOf(TextRun("side")))), rowSpan = 2),
+                            )
+                        ),
+                        TableRow(
+                            listOf(
+                                TableCell(listOf(Paragraph(listOf(TextRun("a"))))),
+                                TableCell(listOf(Paragraph(listOf(TextRun("b"))))),
+                            )
+                        ),
+                    ),
+                    columnWidthsPt = listOf(60f, 60f, 120f),
+                )
+            )
+        )
+        val xml = documentXml(DocxWriter.toByteArray(document))
+        // Three columns, though no row lists three cells.
+        assertEquals(3, Regex("<w:gridCol ").findAll(xml).count(), xml)
+        assertTrue(xml.contains("""<w:gridSpan w:val="2"/>"""), xml)
+        assertTrue(xml.contains("""<w:vMerge w:val="restart"/>"""), xml)
+        assertTrue(xml.contains("<w:vMerge/>"), "the covered place was left empty")
+        // The wide cell is as wide as the two columns it covers.
+        assertTrue(xml.contains("""<w:tcW w:w="2400" w:type="dxa"/><w:gridSpan w:val="2"/>"""), xml)
+
+        val read = DocxReader.read(DocxWriter.toByteArray(document)).blocks.filterIsInstance<Table>().single()
+        assertEquals(2, read.rows[0].cells[0].columnSpan)
+        assertEquals(2, read.rows[0].cells[1].rowSpan)
+        assertEquals(2, read.rows[1].cells.size, "the covered place is not a cell of its own")
+        assertEquals(listOf("wide", "side"), read.rows[0].cells.map { (it.blocks.single() as Paragraph).text })
+    }
+
+    @Test
     fun `a running header and footer become parts of their own`() {
         val picture = ImageBlock(PNG, "image/png", 2, 2, widthPt = 100f, heightPt = 20f)
         val document = DocumentModel(

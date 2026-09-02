@@ -435,6 +435,33 @@ object DocxReader {
         )
     }
 
+    /** One cell as the file writes it, before the merges are read out of the grid. */
+    private class Cell(
+        val blocks: List<Block>,
+        val columnSpan: Int,
+        val startsMerge: Boolean,
+        val continuesMerge: Boolean,
+    )
+
+    /**
+     * How many rows a merge that begins at ([row], [column]) reaches down:
+     * itself and every row below whose cell in that same column of the
+     * grid — not the same place in the row's own list — continues it.
+     */
+    private fun mergeDepth(grid: List<List<Cell>>, columns: List<List<Int>>, row: Int, column: Int): Int {
+        var depth = 1
+        for (below in row + 1 until grid.size) {
+            val index = columns[below].indexOf(column)
+            val cell = if (index >= 0) grid[below][index] else null
+            if (cell == null || !cell.continuesMerge) break
+            depth++
+        }
+        return depth
+    }
+
+    /** However many a cell claims to cover, no more than this: a broken file will not build a table of millions. */
+    private const val MOST_SPANNED_CELLS = 256
+
     /** A border element that draws something: any style but none or nil. */
     private fun isBorder(border: Element): Boolean =
         attr(border, "val")?.let { it != "none" && it != "nil" } ?: false
@@ -507,10 +534,46 @@ object DocxReader {
         depth: Int,
         notes: Map<Int, List<Block>> = emptyMap(),
     ): Table? {
-        val rows = children(tbl, "tr").map { tr ->
+        // A cell that continues a merge from the row above holds nothing of
+        // its own; the model keeps only the cell that began the merge, and
+        // says how far down it reaches.
+        val cells = children(tbl, "tr").map { tr ->
+            children(tr, "tc").map { tc ->
+                val properties = firstChild(tc, "tcPr")
+                val merge = firstChild(properties, "vMerge")
+                val continues = merge != null && (attr(merge, "val") ?: "continue") != "restart"
+                Cell(
+                    blocks = parseBlocks(tc, numbering, media, depth + 1, notes = notes),
+                    columnSpan = firstChild(properties, "gridSpan")?.let { attr(it, "val") }?.toIntOrNull()
+                        ?.coerceIn(1, MOST_SPANNED_CELLS) ?: 1,
+                    startsMerge = merge != null && !continues,
+                    continuesMerge = continues,
+                )
+            }
+        }
+        // Every place of the grid has a cell in the file, continuations
+        // included, so a cell's column is what the cells before it cover.
+        val columns = cells.map { row ->
+            var column = 0
+            row.map { cell ->
+                val at = column
+                column += cell.columnSpan
+                at
+            }
+        }
+        val rows = cells.mapIndexed { rowIndex, row ->
             TableRow(
-                children(tr, "tc").map { tc ->
-                    TableCell(parseBlocks(tc, numbering, media, depth + 1, notes = notes))
+                row.mapIndexedNotNull { index, cell ->
+                    if (cell.continuesMerge) return@mapIndexedNotNull null
+                    TableCell(
+                        blocks = cell.blocks,
+                        columnSpan = cell.columnSpan,
+                        rowSpan = if (cell.startsMerge) {
+                            mergeDepth(cells, columns, rowIndex, columns[rowIndex][index])
+                        } else {
+                            1
+                        },
+                    )
                 }
             )
         }

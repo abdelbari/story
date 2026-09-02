@@ -646,7 +646,7 @@ object DocxWriter {
         notes: NotePlan? = null,
     ) {
         if (table.rows.isEmpty()) return
-        val columnCount = table.rows.maxOf { it.cells.size }.coerceAtLeast(1)
+        val columnCount = gridWidth(table)
         // The widths a reader measured off the page, in twentieths of a
         // point; a table nothing measured shares the text width equally,
         // which is what Word does with an "auto" grid.
@@ -677,14 +677,44 @@ object DocxWriter {
         }
         sb.append("</w:tblGrid>")
 
+        // A merged cell covers places in later rows that hold no cell of
+        // their own; Word wants every place filled, so the covered ones are
+        // written as continuations of the merge above them.
+        val covered = IntArray(columnCount)
         for (row in table.rows) {
             sb.append("<w:tr>")
-            for ((column, cell) in row.cells.withIndex()) {
-                appendCell(sb, cell, document, numbering, images, links, part, widths?.getOrNull(column), notes)
+            var column = 0
+            fun fillCovered() {
+                while (column < columnCount && covered[column] > 0) {
+                    covered[column]--
+                    appendCell(
+                        sb, TableCell(emptyList()), document, numbering, images, links, part,
+                        widths?.getOrNull(column), notes, merge = Merge.CONTINUE,
+                    )
+                    column++
+                }
             }
+            for (cell in row.cells) {
+                fillCovered()
+                if (column >= columnCount) break
+                val span = cell.columnSpan.coerceIn(1, columnCount - column)
+                val width = widths?.let { all -> (column until column + span).sumOf { all[it] } }
+                appendCell(
+                    sb, cell, document, numbering, images, links, part, width, notes,
+                    span = span,
+                    merge = if (cell.rowSpan > 1) Merge.START else Merge.NONE,
+                )
+                if (cell.rowSpan > 1) covered[column] = cell.rowSpan - 1
+                column += span
+            }
+            fillCovered()
             // Pad short rows so every row has the full column count.
-            for (column in row.cells.size until columnCount) {
-                appendCell(sb, TableCell(emptyList()), document, numbering, images, links, part, widths?.getOrNull(column), notes)
+            while (column < columnCount) {
+                appendCell(
+                    sb, TableCell(emptyList()), document, numbering, images, links, part,
+                    widths?.getOrNull(column), notes,
+                )
+                column++
             }
             sb.append("</w:tr>")
         }
@@ -692,6 +722,38 @@ object DocxWriter {
         // WordprocessingML requires a paragraph after a table at body level.
         sb.append("<w:p/>")
     }
+
+    /**
+     * How many columns the table's grid has: the widest row, counting each
+     * cell for the columns it covers and each place a merge from an
+     * earlier row has already taken.
+     */
+    private fun gridWidth(table: Table): Int {
+        var widest = 1
+        val covered = HashMap<Int, Int>()
+        fun skipCovered(from: Int): Int {
+            var column = from
+            while ((covered[column] ?: 0) > 0) {
+                covered[column] = covered.getValue(column) - 1
+                column++
+            }
+            return column
+        }
+        for (row in table.rows) {
+            var column = 0
+            for (cell in row.cells) {
+                column = skipCovered(column)
+                if (cell.rowSpan > 1) covered[column] = cell.rowSpan - 1
+                column += cell.columnSpan.coerceAtLeast(1)
+            }
+            column = skipCovered(column)
+            widest = maxOf(widest, column)
+        }
+        return widest
+    }
+
+    /** Whether a cell begins a merge down the rows, continues one, or neither. */
+    private enum class Merge { NONE, START, CONTINUE }
 
     private fun appendCell(
         sb: StringBuilder,
@@ -703,13 +765,25 @@ object DocxWriter {
         part: String,
         widthTwips: Int? = null,
         notes: NotePlan? = null,
+        span: Int = 1,
+        merge: Merge = Merge.NONE,
     ) {
         sb.append("<w:tc>")
+        sb.append("<w:tcPr>")
         if (widthTwips != null) {
-            sb.append("""<w:tcPr><w:tcW w:w="$widthTwips" w:type="dxa"/></w:tcPr>""")
+            sb.append("""<w:tcW w:w="$widthTwips" w:type="dxa"/>""")
         } else {
-            sb.append("""<w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>""")
+            sb.append("""<w:tcW w:w="0" w:type="auto"/>""")
         }
+        // The schema puts the width first, then how many columns the cell
+        // covers, then whether it continues a merge from the row above.
+        if (span > 1) sb.append("""<w:gridSpan w:val="$span"/>""")
+        when (merge) {
+            Merge.START -> sb.append("""<w:vMerge w:val="restart"/>""")
+            Merge.CONTINUE -> sb.append("<w:vMerge/>")
+            Merge.NONE -> {}
+        }
+        sb.append("</w:tcPr>")
         for (block in cell.blocks) {
             appendBlock(sb, block, document, numbering, images, links, part, notes)
         }
