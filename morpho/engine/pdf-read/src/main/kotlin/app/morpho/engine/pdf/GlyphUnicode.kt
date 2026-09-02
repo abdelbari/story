@@ -24,12 +24,24 @@ import java.util.IdentityHashMap
  * So, per font, the two are compared over its character codes. A font whose
  * maps agree — after folding presentation forms, since a cmap says ﻠ where
  * ToUnicode says ل and both mean the same letter — is left entirely alone.
- * One whose maps disagree on a meaningful share of its glyphs gets its
- * ToUnicode overruled by its cmap, glyph by glyph, and only for glyphs the
- * cmap actually knows: a contextual form with no cmap entry keeps whatever
- * ToUnicode said. A glyph ToUnicode maps to more than one character — a
- * ligature — is never touched, because that is the one thing a cmap cannot
- * express.
+ * One whose maps disagree gets its ToUnicode overruled by its cmap, glyph
+ * by glyph, and only for glyphs the cmap actually knows: a contextual form
+ * with no cmap entry keeps whatever ToUnicode said. A glyph ToUnicode maps
+ * to more than one character — a ligature — is never touched, because that
+ * is the one thing a cmap cannot express.
+ *
+ * What counts as a disagreement is a glyph the two maps name as different
+ * characters of the same script — a lam called a meem, a 0 called a 5 —
+ * and two of those are enough: each one is wrong in every word it appears
+ * in. Nothing else is evidence. A code the PDF never mapped at all is not,
+ * whatever a library makes up for it (desktop PDFBox answers with the code
+ * as a character, the Android port with the font's own reading, and a rule
+ * that counted either would reach different verdicts on the same file — as
+ * one did, repairing a paper's bold words on the desktop and not on the
+ * phone). A candidate in the private-use area is not: a symbol font's cmap
+ * names shapes, not characters. And only a font's true Unicode cmap is
+ * consulted, never a Macintosh or symbol table that some producers fill
+ * with glyph numbers.
  *
  * Only a font that is really embedded qualifies. For one that is not, the
  * TrueType object is a substitute from the system, and its cmap describes
@@ -57,24 +69,60 @@ internal class GlyphUnicode {
 
         fun correct(code: Int, declared: String): String? {
             // A ligature is the one thing a cmap cannot describe; leave it.
-            if (declared.codePointCount(0, declared.length) > 1) return null
+            if (declared.codePointCount(0, declared.length) != 1) return null
             val gid = runCatching { cid.codeToGID(code) }.getOrNull() ?: return null
             if (gid <= 0) return null
             val candidates = cmap.getCharCodes(gid)?.takeIf { it.isNotEmpty() } ?: return null
             if (agrees(candidates, declared)) return null
-            // Several code points can share a glyph (a space and a no-break
-            // space, say); prefer a nominal letter over a presentation form.
-            val chosen = candidates.minByOrNull { if (it in PRESENTATION_FORMS) it + 0x110000 else it }
-            return chosen?.let(::text)
+            return contradiction(candidates, declared)?.let(::text)
         }
 
         companion object {
             private val PRESENTATION_FORMS = 0xFB00..0xFEFF
+            private val PRIVATE_USE = 0xE000..0xF8FF
             private const val PROBE_CODES = 2048
-            private const val MIN_DISAGREEMENTS = 5
-            private const val MIN_DISAGREEMENT_SHARE = 0.10f
+            /** Disagreements of the kind that count before a font's ToUnicode is overruled. */
+            private const val MIN_DISAGREEMENTS = 2
 
             private fun text(codePoint: Int) = String(Character.toChars(codePoint))
+
+            /**
+             * The cmap's reading of a glyph where it contradicts ToUnicode's
+             * in a way that counts: a character of the same script, not a
+             * private-use code or a control, with a nominal letter preferred
+             * over a presentation form when several code points share the
+             * glyph (a space and a no-break space, say). Null when the two
+             * merely differ — which is not the same as one being wrong.
+             */
+            private fun contradiction(candidates: List<Int>, declared: String): Int? {
+                val meant = ExtractedText.foldPresentationForms(declared).codePointAt(0)
+                if (!isCharacter(meant)) return null
+                return candidates
+                    .filter { candidate ->
+                        val said = ExtractedText.foldPresentationForms(text(candidate)).codePointAt(0)
+                        isCharacter(said) && sameScript(said, meant)
+                    }
+                    .minByOrNull { if (it in PRESENTATION_FORMS) it + 0x110000 else it }
+            }
+
+            /** A letter, digit or mark of a real script — something a map can be wrong about. */
+            private fun isCharacter(codePoint: Int): Boolean =
+                codePoint !in PRIVATE_USE && !Character.isISOControl(codePoint) &&
+                    !Character.isWhitespace(codePoint) &&
+                    (Character.isLetterOrDigit(codePoint) || Character.getType(codePoint) == Character.NON_SPACING_MARK.toInt())
+
+            /**
+             * Whether two characters belong to the same writing system,
+             * digits counting as one and a combining mark — whose script is
+             * "inherited" from the letter it sits on — as belonging to any.
+             */
+            private fun sameScript(a: Int, b: Int): Boolean {
+                if (Character.isDigit(a) && Character.isDigit(b)) return true
+                val scriptA = Character.UnicodeScript.of(a)
+                val scriptB = Character.UnicodeScript.of(b)
+                if (scriptA == Character.UnicodeScript.INHERITED || scriptB == Character.UnicodeScript.INHERITED) return true
+                return scriptA == scriptB && scriptA != Character.UnicodeScript.COMMON
+            }
 
             /**
              * Whether the font's [candidates] for a glyph mean the same
@@ -109,8 +157,9 @@ internal class GlyphUnicode {
                 val cid = type0.descendantFont as? PDCIDFontType2 ?: return null
                 if (cid.fontDescriptor?.fontFile2 == null) return null
                 val ttf = cid.trueTypeFont ?: return null
-                val cmap = runCatching { ttf.getUnicodeCmapLookup(false) }.getOrNull() ?: return null
-                var agree = 0
+                // Strictly the font's Unicode cmap: in lenient mode a font
+                // without one hands back its Macintosh or symbol table.
+                val cmap = runCatching { ttf.getUnicodeCmapLookup(true) }.getOrNull() ?: return null
                 var disagree = 0
                 for (code in 1 until PROBE_CODES) {
                     val declared = runCatching { type0.toUnicode(code) }.getOrNull() ?: continue
@@ -118,12 +167,11 @@ internal class GlyphUnicode {
                     val gid = runCatching { cid.codeToGID(code) }.getOrNull() ?: continue
                     if (gid <= 0) continue
                     val candidates = cmap.getCharCodes(gid)?.takeIf { it.isNotEmpty() } ?: continue
-                    if (agrees(candidates, declared)) agree++ else disagree++
+                    if (agrees(candidates, declared)) continue
+                    if (contradiction(candidates, declared) != null) disagree++
+                    if (disagree >= MIN_DISAGREEMENTS) return Corrector(cid, cmap)
                 }
-                val total = agree + disagree
-                if (disagree < MIN_DISAGREEMENTS || total == 0) return null
-                if (disagree.toFloat() / total < MIN_DISAGREEMENT_SHARE) return null
-                return Corrector(cid, cmap)
+                return null
             }
         }
     }

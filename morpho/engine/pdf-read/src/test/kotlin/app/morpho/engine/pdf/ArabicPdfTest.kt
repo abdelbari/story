@@ -356,6 +356,17 @@ class ArabicPdfTest {
     }
 
     @Test
+    fun `two wrong entries are enough for the font to be believed`() {
+        // The bold face of a real paper had three: the digits 1 and 0
+        // swapped and the medial lam called a meem — and that lam is in
+        // every other word. A rule that waited for a share of the map to
+        // be wrong repaired the paper on one PDF library and not another,
+        // because the two fill the map's gaps differently.
+        val broken = corruptToUnicode(taggedArabicPdf(listOf(title, inWord, research), subset = false), limit = 2)
+        assertEquals("$title $inWord $research", paragraphs(broken).first().text)
+    }
+
+    @Test
     fun `a healthy ToUnicode map is left alone`() {
         // The corrector must not engage on a font whose maps agree.
         val healthy = taggedArabicPdf(listOf(title, "Morpho", research))
@@ -368,7 +379,12 @@ class ArabicPdfTest {
      * font's own cmap are untouched, so the page still renders correctly —
      * only the text a reader is told about is wrong.
      */
-    private fun corruptToUnicode(pdf: ByteArray): ByteArray {
+    /**
+     * The PDF with its ToUnicode map broken the way Word 2010 breaks one:
+     * each Arabic letter labelled as the next, for the first [limit]
+     * entries — all of them by default.
+     */
+    private fun corruptToUnicode(pdf: ByteArray, limit: Int = Int.MAX_VALUE): ByteArray {
         val out = ByteArrayOutputStream()
         PDDocument.load(pdf).use { document ->
             var rewritten = 0
@@ -378,12 +394,13 @@ class ArabicPdfTest {
                 val stream = font.cosObject.getDictionaryObject(COSName.TO_UNICODE) as? COSStream ?: continue
                 val text = stream.createInputStream().use { it.readBytes().toString(Charsets.ISO_8859_1) }
                 val corrupted = Regex("<06([0-9A-Fa-f]{2})>").replace(text) { match ->
+                    if (rewritten >= limit) return@replace match.value
                     rewritten++
                     "<%04X>".format(0x0600 + match.groupValues[1].toInt(16) + 1)
                 }
                 stream.createOutputStream().use { it.write(corrupted.toByteArray(Charsets.ISO_8859_1)) }
             }
-            assertTrue(rewritten >= 5, "fixture corrupted only $rewritten mappings; the corrector would not engage")
+            assertTrue(rewritten >= minOf(limit, 5), "fixture corrupted only $rewritten mappings")
             document.save(out)
         }
         return out.toByteArray()
