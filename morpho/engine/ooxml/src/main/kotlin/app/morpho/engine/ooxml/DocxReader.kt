@@ -277,8 +277,27 @@ object DocxReader {
                     parseParagraph(child, numbering, media, inline, notes, styles, fromTable)
                         ?.let(blocks::add)
                     if (!inline) blocks += parseImages(child, media)
+                    // What a text box holds is text of the document, and it
+                    // is written inside the run it is anchored to rather
+                    // than in the body: a poster, a CV, a form laid out in
+                    // boxes converts to almost nothing without this.
+                    for (box in textBoxesIn(child)) {
+                        blocks += parseBlocks(
+                            box, numbering, media, depth + 1,
+                            inline = inline, notes = notes, styles = styles, fromTable = fromTable,
+                        )
+                    }
                 }
                 "tbl" -> parseTable(child, numbering, media, depth, notes, styles)?.let(blocks::add)
+                // A content control wraps what it holds rather than
+                // replacing it: a cover page, a table of contents, the
+                // fields of a template. What is inside is the document.
+                "sdt" -> firstChild(child, "sdtContent")?.let { held ->
+                    blocks += parseBlocks(
+                        held, numbering, media, depth + 1,
+                        inline = inline, notes = notes, styles = styles, fromTable = fromTable,
+                    )
+                }
                 else -> {} // sectPr, bookmarks, anything the reader does not know
             }
         }
@@ -306,6 +325,42 @@ object DocxReader {
             widthPt = (cx.toFloat() / EMU_PER_PT).takeIf { it > 0f },
             heightPt = (cy.toFloat() / EMU_PER_PT).takeIf { it > 0f },
         )
+    }
+
+    /**
+     * The text boxes anchored in [element], in document order.
+     *
+     * Word writes a text box inside the run it is anchored to, twice over:
+     * once as it draws one now and once as a Word of 2007 would, wrapped in
+     * a choice between them. Reading both would say everything in the box
+     * twice, so only the one Word itself would use is read.
+     */
+    private fun textBoxesIn(element: Element, depth: Int = 0): List<Element> {
+        if (depth > MAX_NESTING_DEPTH) return emptyList()
+        val found = mutableListOf<Element>()
+        for (child in elementChildren(element)) {
+            when (child.localName) {
+                "AlternateContent" -> {
+                    val chosen = elementChildren(child).firstOrNull { it.localName == "Choice" }
+                        ?: elementChildren(child).firstOrNull { it.localName == "Fallback" }
+                    if (chosen != null) found += textBoxesIn(chosen, depth + 1)
+                }
+                "txbxContent" -> found += child
+                else -> found += textBoxesIn(child, depth + 1)
+            }
+        }
+        return found
+    }
+
+    /** Every element directly inside [parent], whatever namespace it is written in. */
+    private fun elementChildren(parent: Element): List<Element> {
+        val result = mutableListOf<Element>()
+        var node = parent.firstChild
+        while (node != null) {
+            if (node is Element) result += node
+            node = node.nextSibling
+        }
+        return result
     }
 
     /** All descendants in [ns] with [localName], any depth, document order. */
