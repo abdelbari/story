@@ -28,9 +28,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -160,11 +162,11 @@ private fun PagedPreview(pdf: ByteArray, modifier: Modifier) {
 
 @Composable
 private fun PreviewPage(document: PreviewDocument, index: Int, widthPx: Int) {
-    val bitmap by produceState<Bitmap?>(initialValue = null, document, index, widthPx) {
-        // Drawn off the main thread; assigned here, where lint can see the
-        // producer set its value.
-        val drawn = withContext(Dispatchers.IO) { document.render(index, widthPx) }
-        value = drawn
+    var bitmap by remember(document, index, widthPx) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(document, index, widthPx) {
+        // Drawn off the main thread; a page that scrolls away before it is
+        // drawn is simply not drawn, since the effect is cancelled with it.
+        bitmap = withContext(Dispatchers.IO) { document.render(index, widthPx) }
     }
     val label = stringResource(R.string.preview_page, index + 1, document.pageCount)
     Box(
