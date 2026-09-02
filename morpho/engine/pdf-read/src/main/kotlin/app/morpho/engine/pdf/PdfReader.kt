@@ -72,8 +72,13 @@ class PdfReader {
             val confidence = 0.6f
             val stripper = PositionTextStripper()
             val lines = runCatching { stripper.capture(doc) }.getOrDefault(emptyList())
+            // A document that names its own chapters says which lines are
+            // headings; without one, only the type they were set in tells.
+            val outline = DocumentOutline.read(doc)
             val model = if (lines.isNotEmpty()) {
-                PdfLayout.reconstruct(lines, confidence, images, stripper.pages(), stripper.rules())
+                PdfLayout.reconstruct(
+                    lines, confidence, images, stripper.pages(), stripper.rules(), outline,
+                )
             } else {
                 plainTextFallback(doc, confidence, images)
             }

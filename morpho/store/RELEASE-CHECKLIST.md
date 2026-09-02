@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 382 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 393 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -92,6 +92,9 @@ Work through, in this order — each exercises a path nothing else covers:
 - [ ] **A Word document laid out in text boxes** — a CV or a certificate
       from a template. Every box's text must be in the converted file, once
       each, in the order the boxes are anchored.
+- [ ] **A PDF with bookmarks but no tags** — a manual or a book, where the
+      sidebar lists the chapters. Every chapter it lists must come back as a
+      heading, at the depth the sidebar gives it.
 - [ ] **A filled-in PDF form** — an official form with typed answers. Every
       answer must be in the converted file, beside the label it answers.
 - [ ] **A PDF somebody highlighted** — mark a few lines in any PDF reader,

@@ -100,9 +100,10 @@ object PdfLayout {
         images: List<PdfImage> = emptyList(),
         sheets: List<PdfPageSheet> = emptyList(),
         rules: List<PdfRule> = emptyList(),
+        outline: List<PdfOutlineEntry> = emptyList(),
     ): DocumentModel {
         val body = withoutRunningHeadsAndFeet(lines, sheets)
-        return reconstructBody(body.ifEmpty { lines }, confidence, images, sheets, rules)
+        return reconstructBody(body.ifEmpty { lines }, confidence, images, sheets, rules, outline)
     }
 
     private fun reconstructBody(
@@ -111,6 +112,7 @@ object PdfLayout {
         images: List<PdfImage>,
         sheets: List<PdfPageSheet>,
         rules: List<PdfRule>,
+        outline: List<PdfOutlineEntry> = emptyList(),
     ): DocumentModel {
         val blockByPage = asPainted.groupBy { it.page }.mapValues { (_, pageLines) -> blockOf(pageLines) }
         // A page set in two columns paints its lines down the page, not down
@@ -136,7 +138,7 @@ object PdfLayout {
         val textLines = stretches.flatten()
         val bodySize = HeadingSizes.median((textLines.ifEmpty { lines }).map { it.maxFontSize })
         val justified = looksJustified(lines, blockByPage)
-        val clusters = stretches.map { cluster(it, blockByPage, justified, flows) }
+        val clusters = stretches.map { cluster(it, blockByPage, justified, flows, outline) }
         val kindBySize = headingKinds(clusters.flatten(), bodySize)
 
         // Every block gets a position anchor (page, y of its first line);
@@ -166,13 +168,19 @@ object PdfLayout {
                 } else {
                     ParagraphKind.BODY
                 }
+            val first = clusterLines.first()
+            // What the document's own outline calls a heading is a heading,
+            // whatever size it was set in: a manual's sections are often set
+            // in the body's own face, and the outline is the producer saying
+            // outright which lines they are.
+            val named = PdfOutline.kindOf(outline, first.page, clusterLines.joinToString(" ") { it.text })
             val kind = when {
+                named != null -> named
                 bySize != ParagraphKind.BODY -> bySize
                 boldLevel != null && isBold(clusterLines) &&
                     clusterLines.sumOf { it.text.length } <= HeadingSizes.MAX_CHARS -> boldLevel
                 else -> ParagraphKind.BODY
             }
-            val first = clusterLines.first()
             val next = flatClusters.getOrNull(index + 1)?.firstOrNull()
             positioned += Positioned(
                 first.page,
@@ -363,14 +371,25 @@ object PdfLayout {
         blockByPage: Map<Int, Pair<Float, Float>>,
         justified: Boolean,
         flows: Map<PdfLine, Int>,
+        outline: List<PdfOutlineEntry> = emptyList(),
     ): List<List<PdfLine>> {
         if (lines.isEmpty()) return emptyList()
         val pitchByPage = lines.groupBy { it.page }.mapValues { (_, pageLines) ->
             HeadingSizes.median(pageLines.zipWithNext { a, b -> b.baselineY - a.baselineY }.filter { it > 0f })
         }
+
+        /** A line the document's outline names is a heading, and stands alone. */
+        fun named(line: PdfLine) = PdfOutline.kindOf(outline, line.page, line.text) != null
+
         val clusters = mutableListOf(mutableListOf(lines.first()))
         for ((previous, line) in lines.zipWithNext()) {
-            if (startsNewParagraph(previous, line, pitchByPage.getValue(line.page), blockByPage, justified, flows)) {
+            // A heading set in the body's own size, a line clear of it in
+            // the body's own spacing, is invisible to every rule below: only
+            // the outline knows it is a heading, so only the outline can
+            // keep it out of the paragraph that follows it.
+            if (named(line) || named(previous) ||
+                startsNewParagraph(previous, line, pitchByPage.getValue(line.page), blockByPage, justified, flows)
+            ) {
                 clusters += mutableListOf(line)
             } else {
                 clusters.last() += line
