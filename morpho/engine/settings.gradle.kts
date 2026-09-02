@@ -20,3 +20,6 @@ rootProject.name = "morpho-engine"
 include(":layout")
 include(":ooxml")
 include(":pdf-read")
+// Not a conversion module: it runs the app's Android readers against the
+// real PDFBox-Android port on the JVM. See port-check/README.md.
+include(":port-check")
