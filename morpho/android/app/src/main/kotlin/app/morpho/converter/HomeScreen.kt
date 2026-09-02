@@ -13,10 +13,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,6 +35,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import app.morpho.engine.ooxml.DocxWriter
 
@@ -138,6 +146,16 @@ fun HomeScreen(viewModel: ConvertViewModel) {
         return
     }
 
+    val locked = state as? ConvertUiState.NeedsPassword
+    if (locked != null) {
+        PasswordDialog(
+            fileName = locked.fileName,
+            wrongPassword = locked.wrongPassword,
+            onUnlock = viewModel::unlock,
+            onDismiss = viewModel::cancelUnlock,
+        )
+    }
+
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         Column(
             modifier = Modifier
@@ -202,6 +220,15 @@ private fun StateContent(state: ConvertUiState) {
 
         is ConvertUiState.Picked ->
             Text(state.fileName, style = MaterialTheme.typography.titleMedium)
+
+        is ConvertUiState.NeedsPassword -> {
+            Text(state.fileName, style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = stringResource(R.string.password_locked),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 
         is ConvertUiState.Converting -> {
             if (state.pageCount > 0) {
@@ -380,10 +407,78 @@ private fun StateActions(
     }
 }
 
+/**
+ * Asks for the password of a locked PDF. What is typed opens the document
+ * on this phone for this conversion and is kept nowhere — the app has no
+ * network permission to send it anywhere even if it wanted to.
+ */
+@Composable
+private fun PasswordDialog(
+    fileName: String,
+    wrongPassword: Boolean,
+    onUnlock: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var password by remember { mutableStateOf("") }
+    var shown by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.password_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.password_body, fileName))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text(stringResource(R.string.password_label)) },
+                    singleLine = true,
+                    isError = wrongPassword,
+                    visualTransformation =
+                        if (shown) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = { if (password.isNotEmpty()) onUnlock(password) },
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (wrongPassword) {
+                    Text(
+                        text = stringResource(R.string.password_wrong),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                TextButton(onClick = { shown = !shown }) {
+                    Text(
+                        stringResource(
+                            if (shown) R.string.password_hide else R.string.password_show
+                        )
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onUnlock(password) },
+                enabled = password.isNotEmpty(),
+            ) {
+                Text(stringResource(R.string.password_open))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel))
+            }
+        },
+    )
+}
+
 private fun FailReason.messageRes(): Int = when (this) {
     FailReason.UNSUPPORTED_TYPE -> R.string.unsupported_type
     FailReason.SCANNED_PDF -> R.string.scanned_pdf
-    FailReason.ENCRYPTED_PDF -> R.string.encrypted_pdf
     FailReason.OCR_EMPTY -> R.string.ocr_empty
     FailReason.TOO_LARGE -> R.string.too_large
     FailReason.READ_ERROR -> R.string.read_error

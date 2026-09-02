@@ -10,6 +10,7 @@ import app.morpho.engine.layout.Table
 import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLayout
 import org.apache.pdfbox.pdmodel.PDDocument
+import org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException
 import org.apache.pdfbox.text.PDFTextStripper
 
 /**
@@ -28,22 +29,31 @@ import org.apache.pdfbox.text.PDFTextStripper
  */
 class PdfReader {
 
+    /**
+     * Raised for a PDF that will not open without a password. Worth a type
+     * of its own: "couldn't read that file" is useless advice when the fix
+     * is knowing the password. [passwordWasTried] tells a caller which
+     * question to ask — for one, what the password is; for the other,
+     * that the one just given was not it.
+     */
+    class EncryptedDocument(val passwordWasTried: Boolean = false) : Exception()
+
     data class PdfInspection(
         val pageCount: Int,
         /** True when the PDF carries a structure tree (tagged PDF). */
         val isTagged: Boolean,
     )
 
-    fun inspect(bytes: ByteArray): PdfInspection =
-        PDDocument.load(bytes).use { doc ->
+    fun inspect(bytes: ByteArray, password: String = ""): PdfInspection =
+        load(bytes, password).use { doc ->
             PdfInspection(
                 pageCount = doc.numberOfPages,
                 isTagged = doc.documentCatalog.structureTreeRoot != null,
             )
         }
 
-    fun extract(bytes: ByteArray): DocumentModel =
-        PDDocument.load(bytes).use { doc ->
+    fun extract(bytes: ByteArray, password: String = ""): DocumentModel =
+        load(bytes, password).use { doc ->
             val tagged = doc.documentCatalog.structureTreeRoot != null
 
             val images = runCatching { ImageCapture().capture(doc) }.getOrDefault(emptyList())
@@ -87,4 +97,17 @@ class PdfReader {
             } + imageBlocks
         )
     }
+
+    /**
+     * [PDDocument.load], with a document that needs a password reported as
+     * needing one. A PDF locked with an owner password alone — printing
+     * or copying restricted, opening not — opens on the empty password,
+     * as it is meant to.
+     */
+    private fun load(bytes: ByteArray, password: String): PDDocument =
+        try {
+            PDDocument.load(bytes, password)
+        } catch (e: InvalidPasswordException) {
+            throw EncryptedDocument(passwordWasTried = password.isNotEmpty())
+        }
 }

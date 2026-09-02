@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 333 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 338 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -85,6 +85,10 @@ Work through, in this order — each exercises a path nothing else covers:
       older tool. Each column must be read to its foot before the next one
       starts, and a heading that runs across both must sit between the
       bands, not inside one.
+- [ ] **A password-protected PDF.** The app must ask for the password rather
+      than refuse the file; a wrong one must say so and let it be typed
+      again; Cancel must leave the document picked and unconverted. Check a
+      scanned locked PDF too — OCR reads it with the same password.
 - [ ] **A scanned PDF → OCR → Word.** Watch the page counter advance; try
       Cancel mid-way and confirm nothing is saved. Judge the recognition
       quality — this is the number one thing to tune (see §5).

@@ -53,7 +53,14 @@
     <string name="about_privacy_body">Morpho besitzt überhaupt keine Internet-Berechtigung und hat damit keine Möglichkeit, Ihre Dokumente irgendwohin zu senden — auch nicht versehentlich. Alles, auch das Lesen gescannter Seiten, geschieht auf diesem Telefon. Es wird nichts erhoben, und es gibt weder Konto noch Server.</string>
     <string name="about_components_title">Open-Source-Komponenten</string>
     <string name="about_license_title">Apache-Lizenz 2.0</string>
-    <string name="encrypted_pdf">Dieses PDF ist passwortgeschützt. Öffnen Sie es in einer PDF-App, entfernen Sie den Schutz, und versuchen Sie es erneut.</string>
+    <string name="password_title">Dieses PDF ist geschützt</string>
+    <string name="password_body">%1$s verlangt sein Passwort, bevor es gelesen werden kann. Es wird auf diesem Telefon verwendet und nirgends gespeichert.</string>
+    <string name="password_label">Passwort</string>
+    <string name="password_show">Anzeigen</string>
+    <string name="password_hide">Verbergen</string>
+    <string name="password_open">Öffnen</string>
+    <string name="password_wrong">Mit diesem Passwort lässt es sich nicht öffnen. Versuchen Sie es erneut.</string>
+    <string name="password_locked">Geschützt – wartet auf das Passwort.</string>
     <string name="ocr_empty">Aus diesem Scan konnte nichts gelesen werden. Er ist möglicherweise leer oder in einer Schrift, für die Morpho noch kein Modell hat.</string>
     <string name="too_large">Dieses Dokument braucht mehr Speicher, als dieses Gerät hat. Versuchen Sie eine kleinere Datei, oder teilen Sie sie auf.</string>
     <string name="converted_ready">Konvertiert – bereit zum Speichern.</string>

@@ -54,7 +54,14 @@
     <string name="about_privacy_body">Morpho has no internet permission at all, so it has no way to send your documents anywhere — not even by accident. Everything, including reading scanned pages, happens on this phone. Nothing is collected, and there is no account and no server.</string>
     <string name="about_components_title">Open-source components</string>
     <string name="about_license_title">Apache License 2.0</string>
-    <string name="encrypted_pdf">This PDF is password-protected. Open it in a PDF app, remove the password, then try again.</string>
+    <string name="password_title">This PDF is locked</string>
+    <string name="password_body">%1$s asks for its password before it can be read. It is used here on this phone and kept nowhere.</string>
+    <string name="password_label">Password</string>
+    <string name="password_show">Show</string>
+    <string name="password_hide">Hide</string>
+    <string name="password_open">Open</string>
+    <string name="password_wrong">That password did not open it. Try again.</string>
+    <string name="password_locked">Locked — waiting for the password.</string>
     <string name="ocr_empty">Nothing could be read from this scan. It may be blank, or in a script Morpho has no model for yet.</string>
     <string name="too_large">This document needs more memory than this device has. Try a smaller file, or split it into parts.</string>
     <string name="converted_ready">Converted — ready to save.</string>

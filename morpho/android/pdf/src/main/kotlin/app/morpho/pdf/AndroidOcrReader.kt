@@ -51,12 +51,13 @@ class AndroidOcrReader(private val context: Context) {
     fun recognize(
         bytes: ByteArray,
         languages: String = DEFAULT_LANGUAGES,
+        password: String = "",
         onPage: (page: Int, pageCount: Int) -> Unit = { _, _ -> },
         shouldContinue: () -> Boolean = { true },
     ): DocumentModel {
         val dataParent = ensureTrainedData(languages)
         val pageTexts = mutableListOf<String>()
-        AndroidPdfReader.load(bytes).use { doc ->
+        AndroidPdfReader.load(bytes, password).use { doc ->
             val renderer = PDFRenderer(doc)
             val tess = TessBaseAPI()
             try {

@@ -31,16 +31,19 @@ class AndroidPdfReader(context: Context) {
 
     /**
      * Raised for a PDF that needs a password. Worth its own type: "couldn't
-     * read that file" is useless advice when the fix is knowing the password.
+     * read that file" is useless advice when the fix is knowing the
+     * password. [passwordWasTried] tells the screen which question to ask
+     * — for one, what the password is; for the other, that the one just
+     * typed was not it.
      */
-    class EncryptedDocument : Exception()
+    class EncryptedDocument(val passwordWasTried: Boolean = false) : Exception()
 
     init {
         ensureInitialized(context)
     }
 
-    fun extract(bytes: ByteArray): DocumentModel =
-        load(bytes).use { doc ->
+    fun extract(bytes: ByteArray, password: String = ""): DocumentModel =
+        load(bytes, password).use { doc ->
             val tagged = doc.documentCatalog.structureTreeRoot != null
 
             val images = runCatching { AndroidImageCapture().capture(doc) }.getOrDefault(emptyList())
@@ -94,12 +97,17 @@ class AndroidPdfReader(context: Context) {
     }
 
     companion object {
-        /** [PDDocument.load], with an encrypted file reported as such. */
-        internal fun load(bytes: ByteArray): PDDocument =
+        /**
+         * [PDDocument.load], with a document that needs a password reported
+         * as needing one. A PDF locked with an owner password alone —
+         * printing or copying restricted, opening not — opens on the
+         * empty password, as it is meant to.
+         */
+        internal fun load(bytes: ByteArray, password: String = ""): PDDocument =
             try {
-                PDDocument.load(bytes)
+                PDDocument.load(bytes, password)
             } catch (e: InvalidPasswordException) {
-                throw EncryptedDocument()
+                throw EncryptedDocument(passwordWasTried = password.isNotEmpty())
             }
 
         @Volatile

@@ -53,7 +53,14 @@
     <string name="about_privacy_body">Morpho ne possède aucune autorisation d’accès à Internet : il n’a donc aucun moyen d’envoyer vos documents où que ce soit, pas même par accident. Tout, y compris la lecture des pages numérisées, se passe sur ce téléphone. Rien n’est collecté, il n’y a ni compte ni serveur.</string>
     <string name="about_components_title">Composants open source</string>
     <string name="about_license_title">Licence Apache 2.0</string>
-    <string name="encrypted_pdf">Ce PDF est protégé par un mot de passe. Ouvrez-le dans une application PDF, retirez la protection, puis réessayez.</string>
+    <string name="password_title">Ce PDF est protégé</string>
+    <string name="password_body">%1$s demande son mot de passe avant de pouvoir être lu. Il sert sur ce téléphone et n’est conservé nulle part.</string>
+    <string name="password_label">Mot de passe</string>
+    <string name="password_show">Afficher</string>
+    <string name="password_hide">Masquer</string>
+    <string name="password_open">Ouvrir</string>
+    <string name="password_wrong">Ce mot de passe ne l’ouvre pas. Réessayez.</string>
+    <string name="password_locked">Protégé — en attente du mot de passe.</string>
     <string name="ocr_empty">Rien n’a pu être lu sur ce document numérisé. Il est peut-être vide, ou dans une écriture pour laquelle Morpho n’a pas encore de modèle.</string>
     <string name="too_large">Ce document demande plus de mémoire que cet appareil n’en a. Essayez un fichier plus petit, ou divisez-le.</string>
     <string name="converted_ready">Converti — prêt à enregistrer.</string>

@@ -53,7 +53,14 @@
     <string name="about_privacy_body">لا يملك مورفو إذن الإنترنت إطلاقًا، فلا سبيل لديه لإرسال مستنداتك إلى أي مكان — ولا حتى عن طريق الخطأ. كل شيء، بما في ذلك قراءة الصفحات الممسوحة ضوئيًا، يجري على هذا الهاتف. لا يُجمع أي شيء، ولا يوجد حساب ولا خادم.</string>
     <string name="about_components_title">المكوّنات مفتوحة المصدر</string>
     <string name="about_license_title">رخصة أباتشي 2.0</string>
-    <string name="encrypted_pdf">ملف PDF هذا محمي بكلمة مرور. افتحه في تطبيق PDF وأزل الحماية ثم أعد المحاولة.</string>
+    <string name="password_title">هذا الملف محمي بكلمة مرور</string>
+    <string name="password_body">يطلب %1$s كلمة المرور قبل أن يُقرأ. تُستعمل على هذا الهاتف وحده ولا تُحفظ في أي مكان.</string>
+    <string name="password_label">كلمة المرور</string>
+    <string name="password_show">إظهار</string>
+    <string name="password_hide">إخفاء</string>
+    <string name="password_open">فتح</string>
+    <string name="password_wrong">كلمة المرور هذه لم تفتح الملف. أعد المحاولة.</string>
+    <string name="password_locked">محمي — في انتظار كلمة المرور.</string>
     <string name="ocr_empty">تعذّرت قراءة أي شيء من هذا المسح الضوئي. قد يكون فارغًا أو بخط لا يملك مورفو نموذجًا له بعد.</string>
     <string name="too_large">يحتاج هذا المستند إلى ذاكرة أكبر مما يتوفر في هذا الجهاز. جرّب ملفًا أصغر أو قسّمه إلى أجزاء.</string>
     <string name="converted_ready">تم التحويل — جاهز للحفظ.</string>

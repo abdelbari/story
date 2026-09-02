@@ -56,6 +56,18 @@ sealed interface ConvertUiState {
         val previewPdf: ByteArray = ByteArray(0),
     ) : ConvertUiState
 
+    /**
+     * A PDF that will not open without its password. The screen asks for
+     * one rather than sending the reader off to strip the protection in
+     * another app, which is the advice a converter gives when it cannot be
+     * bothered to ask.
+     */
+    data class NeedsPassword(
+        val fileName: String,
+        /** True once a password has been tried and refused. */
+        val wrongPassword: Boolean = false,
+    ) : ConvertUiState
+
     /** The reader asked to save; the UI opens the system dialog for this. */
     data class ReadyToSave(
         val suggestedName: String,
@@ -77,7 +89,7 @@ sealed interface ConvertUiState {
 }
 
 enum class FailReason {
-    UNSUPPORTED_TYPE, SCANNED_PDF, ENCRYPTED_PDF, OCR_EMPTY, TOO_LARGE, READ_ERROR, WRITE_ERROR
+    UNSUPPORTED_TYPE, SCANNED_PDF, OCR_EMPTY, TOO_LARGE, READ_ERROR, WRITE_ERROR
 }
 
 /** What Review Mode shows: the report, and which blocks the reader corrected. */
@@ -110,6 +122,14 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     private data class PickedFile(val uri: Uri, val meta: ConvertUiState.Picked)
 
     private var pickedFile: PickedFile? = null
+
+    /**
+     * The password for the picked document, if it needed one. Held in
+     * memory for as long as that document is the one on screen — a
+     * conversion may read it twice, once for the text and again for OCR —
+     * and never written anywhere.
+     */
+    private var pdfPassword: String = ""
 
     /** Whichever conversion ran last — "Try again" repeats it, not convert(). */
     private var lastOperation: (() -> Unit)? = null
@@ -257,6 +277,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         lastPreviewHtml = ""
         lastPreviewPdf = ByteArray(0)
         lastWriter = null
+        pdfPassword = ""
         editedBlocks.clear()
         _review.value = null
 
@@ -301,7 +322,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                 source.isPdf -> convertPicked(
                     epoch, uri, source, "docx", DocxWriter.MIME_TYPE,
                     read = { bytes ->
-                        val model = AndroidPdfReader(getApplication()).extract(bytes)
+                        val model = AndroidPdfReader(getApplication()).extract(bytes, pdfPassword)
                         val hasText = model.blocks.filterIsInstance<Paragraph>()
                             .any { it.text.isNotBlank() }
                         if (!hasText) throw UnconvertibleContent(FailReason.SCANNED_PDF)
@@ -368,7 +389,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             publish(epoch, ConvertUiState.Failed(e.reason))
             return
         } catch (e: AndroidPdfReader.EncryptedDocument) {
-            publish(epoch, ConvertUiState.Failed(FailReason.ENCRYPTED_PDF))
+            publish(epoch, ConvertUiState.NeedsPassword(source.fileName, e.passwordWasTried))
             return
         } catch (e: AndroidOcrReader.Cancelled) {
             publish(epoch, pickedFile?.meta ?: ConvertUiState.Idle)
@@ -434,6 +455,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                     val model = AndroidOcrReader(getApplication()).recognize(
                         bytes = bytes,
                         languages = ocrLanguages(),
+                        password = pdfPassword,
                         onPage = { page, pageCount ->
                             publish(epoch, ConvertUiState.Converting(page, pageCount))
                         },
@@ -514,6 +536,25 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                 publish(epoch, ConvertUiState.Failed(FailReason.READ_ERROR))
             }
         }
+    }
+
+    /**
+     * Opens the locked document with [password] and runs the conversion the
+     * reader had asked for. A password that does not open it comes straight
+     * back as another ask, so the answer to a typo is to type it again.
+     */
+    fun unlock(password: String) {
+        if (_state.value !is ConvertUiState.NeedsPassword) return
+        pdfPassword = password
+        val operation = lastOperation
+        if (operation != null) operation() else convert()
+    }
+
+    /** The reader gave up on the password; the document stands unconverted. */
+    fun cancelUnlock() {
+        if (_state.value !is ConvertUiState.NeedsPassword) return
+        pdfPassword = ""
+        _state.value = pickedFile?.meta ?: ConvertUiState.Idle
     }
 
     /** Re-runs whichever conversion just failed. */
