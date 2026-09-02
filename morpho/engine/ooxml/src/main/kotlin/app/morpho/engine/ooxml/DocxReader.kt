@@ -80,7 +80,12 @@ object DocxReader {
     private const val MAX_MEDIA_PART_BYTES = 16 * 1024 * 1024
     private const val MAX_TOTAL_MEDIA_BYTES = 64 * 1024 * 1024
     private val NEEDED_PARTS =
-        setOf("word/document.xml", "word/numbering.xml", "word/_rels/document.xml.rels")
+        setOf(
+            "word/document.xml",
+            "word/numbering.xml",
+            "word/styles.xml",
+            "word/_rels/document.xml.rels",
+        )
     /** A running header or footer part, or the relationships of one: word/header1.xml, word/_rels/footer2.xml.rels. */
     private val FURNITURE_PART = Regex("word/(?:_rels/)?(?:header|footer)\\d*\\.xml(?:\\.rels)?")
     private const val NOTES_PART = "word/footnotes.xml"
@@ -103,6 +108,7 @@ object DocxReader {
             val documentPart = parts["word/document.xml"]
                 ?: throw IllegalArgumentException("Not a .docx package: word/document.xml is missing.")
             val numbering = parts["word/numbering.xml"]?.let(::parseNumbering).orEmpty()
+            val styles = StyleSheet(parts["word/styles.xml"])
             val media = MediaStore(parts, "word/_rels/document.xml.rels")
             val body = firstChild(parseXml(documentPart).documentElement, "body")
                 ?: return DocumentModel(blocks = emptyList())
@@ -115,16 +121,16 @@ object DocxReader {
                         .filter { attr(it, "type") == null }
                         .mapNotNull { note ->
                             val id = attr(note, "id")?.trim()?.toIntOrNull() ?: return@mapNotNull null
-                            id to parseBlocks(note, numbering, media, depth = 0)
+                            id to parseBlocks(note, numbering, media, depth = 0, styles = styles)
                         }
                         .toMap()
                 }.getOrNull()
             }.orEmpty()
             return DocumentModel(
-                blocks = parseBlocks(body, numbering, media, depth = 0, notes = notes),
+                blocks = parseBlocks(body, numbering, media, depth = 0, notes = notes, styles = styles),
                 pageSetup = sectPr?.let(::parsePageSetup),
-                header = sectPr?.let { furniture(it, "headerReference", parts, media, numbering) }.orEmpty(),
-                footer = sectPr?.let { furniture(it, "footerReference", parts, media, numbering) }.orEmpty(),
+                header = sectPr?.let { furniture(it, "headerReference", parts, media, numbering, styles) }.orEmpty(),
+                footer = sectPr?.let { furniture(it, "footerReference", parts, media, numbering, styles) }.orEmpty(),
             )
         } catch (e: IllegalArgumentException) {
             throw e
@@ -169,6 +175,7 @@ object DocxReader {
         parts: Map<String, ByteArray>,
         media: MediaStore,
         numbering: Map<String, ListMarker>,
+        styles: StyleSheet,
     ): List<Block> {
         val references = children(sectPr, reference)
         val chosen = references.firstOrNull { attr(it, "type") == "default" } ?: references.firstOrNull() ?: return emptyList()
@@ -178,7 +185,7 @@ object DocxReader {
         val root = runCatching { parseXml(bytes).documentElement }.getOrNull() ?: return emptyList()
         val rels = "word/_rels/" + partName.removePrefix("word/") + ".rels"
         // A paragraph that is nothing but a picture is the picture, as it was written.
-        return parseBlocks(root, numbering, MediaStore(parts, rels), depth = 0, inline = true).map { block ->
+        return parseBlocks(root, numbering, MediaStore(parts, rels), depth = 0, inline = true, styles = styles).map { block ->
             val only = (block as? Paragraph)?.runs?.singleOrNull()
             val picture = only?.image
             if (only != null && only.text.isEmpty() && picture != null) picture else block
@@ -257,6 +264,7 @@ object DocxReader {
         depth: Int,
         inline: Boolean = false,
         notes: Map<Int, List<Block>> = emptyMap(),
+        styles: StyleSheet,
     ): List<Block> {
         require(depth <= MAX_NESTING_DEPTH) {
             "Block nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
@@ -265,10 +273,10 @@ object DocxReader {
         for (child in children(parent)) {
             when (child.localName) {
                 "p" -> {
-                    parseParagraph(child, numbering, media, inline, notes)?.let(blocks::add)
+                    parseParagraph(child, numbering, media, inline, notes, styles)?.let(blocks::add)
                     if (!inline) blocks += parseImages(child, media)
                 }
-                "tbl" -> parseTable(child, numbering, media, depth, notes)?.let(blocks::add)
+                "tbl" -> parseTable(child, numbering, media, depth, notes, styles)?.let(blocks::add)
                 else -> {} // sectPr, bookmarks, anything the reader does not know
             }
         }
@@ -313,8 +321,15 @@ object DocxReader {
         media: MediaStore? = null,
         inline: Boolean = false,
         notes: Map<Int, List<Block>> = emptyMap(),
+        styles: StyleSheet,
     ): Paragraph? {
-        val style = parseParagraphStyle(firstChild(p, "pPr"), numbering)
+        val pPr = firstChild(p, "pPr")
+        val styleId = firstChild(pPr, "pStyle")?.let { attr(it, "val") }
+        // What the document says, then what the style says, then what the
+        // paragraph writes on itself: the last one to speak wins.
+        val properties = styles.defaultParagraph + styles.paragraph(styleId) + own(pPr)
+        val runProperties = styles.defaultRun + styles.run(styleId)
+        val style = parseParagraphStyle(properties, styleId, styles.name(styleId), numbering)
         val runs = collectRuns(
             p,
             paragraphRtl = style.direction == TextDirection.RTL,
@@ -322,6 +337,8 @@ object DocxReader {
             media = media,
             inline = inline,
             notes = notes,
+            styles = styles,
+            inherited = runProperties,
         )
         if (runs.isEmpty()) return null
         return Paragraph(runs = runs, style = style, confidence = 1f)
@@ -339,6 +356,8 @@ object DocxReader {
         media: MediaStore? = null,
         inline: Boolean = false,
         notes: Map<Int, List<Block>> = emptyMap(),
+        styles: StyleSheet,
+        inherited: Map<String, Element> = emptyMap(),
     ): List<TextRun> {
         require(depth <= MAX_NESTING_DEPTH) {
             "Run-container nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
@@ -346,19 +365,19 @@ object DocxReader {
         val runs = mutableListOf<TextRun>()
         for (child in children(parent)) {
             when (child.localName) {
-                "r" -> parseRun(child, paragraphRtl, media.takeIf { inline }, notes)?.let(runs::add)
+                "r" -> parseRun(child, paragraphRtl, media.takeIf { inline }, notes, styles, inherited)?.let(runs::add)
                 "fldSimple" -> {
-                    val inner = collectRuns(child, paragraphRtl, depth + 1, media, inline, notes)
+                    val inner = collectRuns(child, paragraphRtl, depth + 1, media, inline, notes, styles, inherited)
                     val instruction = attr(child, "instr").orEmpty().trim().uppercase()
                     runs += if (instruction.startsWith("PAGE")) inner.map { it.copy(field = RunField.PAGE_NUMBER) } else inner
                 }
                 "hyperlink" -> {
-                    val inner = collectRuns(child, paragraphRtl, depth + 1, media, inline, notes)
+                    val inner = collectRuns(child, paragraphRtl, depth + 1, media, inline, notes, styles, inherited)
                     val target = child.getAttributeNS(R_NS, "id").ifEmpty { null }?.let { media?.targetFor(it) }
                         ?: attr(child, "anchor")?.let { "#$it" }
                     runs += if (target != null) inner.map { it.copy(link = target) } else inner
                 }
-                in RUN_CONTAINERS -> runs += collectRuns(child, paragraphRtl, depth + 1, media, inline, notes)
+                in RUN_CONTAINERS -> runs += collectRuns(child, paragraphRtl, depth + 1, media, inline, notes, styles, inherited)
                 else -> {}
             }
         }
@@ -366,37 +385,54 @@ object DocxReader {
     }
 
     private fun parseParagraphStyle(
-        pPr: Element?,
+        properties: Map<String, Element>,
+        styleId: String?,
+        styleName: String?,
         numbering: Map<String, ListMarker>,
     ): ParagraphStyle {
-        if (pPr == null) return ParagraphStyle()
-        val kind = when (firstChild(pPr, "pStyle")?.let { attr(it, "val") }) {
+        if (properties.isEmpty() && styleId == null) return ParagraphStyle()
+        // What the style is called says what a paragraph is — its id where
+        // the producer writes English ids, else the built-in name it carries
+        // whatever the language. Failing both, the level it sits at in the
+        // outline, which a heading of any producer's making has.
+        val kind = when (styleId ?: "") {
             "Title" -> ParagraphKind.TITLE
             "Heading1" -> ParagraphKind.HEADING_1
             "Heading2" -> ParagraphKind.HEADING_2
             "Heading3" -> ParagraphKind.HEADING_3
-            else -> ParagraphKind.BODY
+            else -> when (styleName) {
+                "title" -> ParagraphKind.TITLE
+                "heading 1" -> ParagraphKind.HEADING_1
+                "heading 2" -> ParagraphKind.HEADING_2
+                "heading 3", "heading 4", "heading 5", "heading 6" -> ParagraphKind.HEADING_3
+                else -> when (properties["outlineLvl"]?.let { attr(it, "val") }?.toIntOrNull()) {
+                    0 -> ParagraphKind.HEADING_1
+                    1 -> ParagraphKind.HEADING_2
+                    2, 3, 4, 5 -> ParagraphKind.HEADING_3
+                    else -> ParagraphKind.BODY
+                }
+            }
         }
-        val listMarker = firstChild(pPr, "numPr")
+        val listMarker = properties["numPr"]
             ?.let { firstChild(it, "numId") }
             ?.let { attr(it, "val") }
             ?.let(numbering::get)
-        val alignment = when (firstChild(pPr, "jc")?.let { attr(it, "val") }) {
+        val alignment = when (properties["jc"]?.let { attr(it, "val") }) {
             "center" -> Alignment.CENTER
             "both", "distribute" -> Alignment.JUSTIFY
             "start", "left" -> Alignment.START
             "end", "right" -> Alignment.END
             else -> null
         }
-        val ind = firstChild(pPr, "ind")
-        val spacing = firstChild(pPr, "spacing")
+        val ind = properties["ind"]
+        val spacing = properties["spacing"]
         // A line rule of "auto" is a multiple of the font's own height, not
         // a distance, so only an exact or minimum height reads as a pitch.
         val lineRule = spacing?.let { attr(it, "lineRule") } ?: "auto"
-        val pageBreakBefore = isOn(firstChild(pPr, "pageBreakBefore"))
+        val pageBreakBefore = isOn(properties["pageBreakBefore"])
         return ParagraphStyle(
             kind = kind,
-            direction = if (isOn(firstChild(pPr, "bidi"))) TextDirection.RTL else null,
+            direction = if (isOn(properties["bidi"])) TextDirection.RTL else null,
             listMarker = listMarker,
             alignment = alignment,
             firstLineIndentPt = ind?.let { twips(attr(it, "firstLine")) },
@@ -406,11 +442,11 @@ object DocxReader {
             spaceAfterPt = spacing?.let { twips(attr(it, "after")) },
             linePitchPt = spacing?.takeIf { lineRule == "atLeast" || lineRule == "exact" }
                 ?.let { twips(attr(it, "line")) },
-            tabStopsPt = firstChild(pPr, "tabs")?.let { tabs ->
+            tabStopsPt = properties["tabs"]?.let { tabs ->
                 children(tabs, "tab").filter { attr(it, "val") != "clear" }.mapNotNull { twips(attr(it, "pos")) }
             }?.takeIf { it.isNotEmpty() },
-            ruleAbove = firstChild(pPr, "pBdr")?.let { firstChild(it, "top") }?.let { isBorder(it) } ?: false,
-            ruleBelow = firstChild(pPr, "pBdr")?.let { firstChild(it, "bottom") }?.let { isBorder(it) } ?: false,
+            ruleAbove = properties["pBdr"]?.let { firstChild(it, "top") }?.let { isBorder(it) } ?: false,
+            ruleBelow = properties["pBdr"]?.let { firstChild(it, "bottom") }?.let { isBorder(it) } ?: false,
             pageBreakBefore = pageBreakBefore,
         )
     }
@@ -434,6 +470,104 @@ object DocxReader {
             firstPageNumber = firstChild(sectPr, "pgNumType")?.let { attr(it, "start") }?.trim()?.toIntOrNull() ?: 1,
         )
     }
+
+    /**
+     * The document's styles, as formatting a paragraph or a run inherits.
+     *
+     * Most of a real Word document's look is not written on its paragraphs
+     * at all: the document says its text is Calibri at eleven points and
+     * its headings are something else, and each paragraph names a style. A
+     * reader that looks only at what a paragraph writes on itself sees a
+     * document with no faces, no sizes and no headings — and converts it
+     * into one.
+     *
+     * Every style is resolved once, through the chain of styles it is based
+     * on, into the properties it ends up with. A property a paragraph or
+     * run writes on itself still wins: that is what direct formatting is.
+     */
+    private class StyleSheet(bytes: ByteArray?) {
+        /** Properties by their element name, which is how they are looked up. */
+        private val paragraphById = HashMap<String, Map<String, Element>>()
+        private val runById = HashMap<String, Map<String, Element>>()
+        private val basedOn = HashMap<String, String>()
+        private val nameById = HashMap<String, String>()
+        private val paragraphOwn = HashMap<String, Map<String, Element>>()
+        private val runOwn = HashMap<String, Map<String, Element>>()
+
+        /** What every paragraph and run starts from, before any style names it. */
+        var defaultParagraph: Map<String, Element> = emptyMap()
+            private set
+        var defaultRun: Map<String, Element> = emptyMap()
+            private set
+
+        init {
+            val root = bytes?.let { runCatching { parseXml(it).documentElement }.getOrNull() }
+            if (root != null) {
+                firstChild(root, "docDefaults")?.let { defaults ->
+                    defaultParagraph = propertiesOf(firstChild(defaults, "pPrDefault"), "pPr")
+                    defaultRun = propertiesOf(firstChild(defaults, "rPrDefault"), "rPr")
+                }
+                for (style in children(root, "style")) {
+                    val id = attr(style, "styleId") ?: continue
+                    paragraphOwn[id] = propertiesOf(style, "pPr")
+                    runOwn[id] = propertiesOf(style, "rPr")
+                    firstChild(style, "basedOn")?.let { attr(it, "val") }?.let { basedOn[id] = it }
+                    firstChild(style, "name")?.let { attr(it, "val") }?.let { nameById[id] = it.lowercase() }
+                }
+            }
+        }
+
+        /**
+         * The name Word knows a style by, which is the same in every language
+         * even where the style's own id is not: a French document's "Titre1"
+         * is named "heading 1" all the same.
+         */
+        fun name(styleId: String?): String? = styleId?.let { nameById[it] }
+
+        /** The properties a paragraph of [styleId] inherits, its own chain resolved. */
+        fun paragraph(styleId: String?): Map<String, Element> =
+            styleId?.let { resolve(it, paragraphOwn, paragraphById) }.orEmpty()
+
+        /** The properties a run inherits from [styleId], which may be a paragraph's style or a run's own. */
+        fun run(styleId: String?): Map<String, Element> =
+            styleId?.let { resolve(it, runOwn, runById) }.orEmpty()
+
+        private fun resolve(
+            styleId: String,
+            own: Map<String, Map<String, Element>>,
+            cache: MutableMap<String, Map<String, Element>>,
+        ): Map<String, Element> {
+            cache[styleId]?.let { return it }
+            // A file whose styles are based on each other in a circle is not
+            // worth chasing round; what has been gathered stands.
+            val chain = mutableListOf<String>()
+            var id: String? = styleId
+            while (id != null && id !in chain && chain.size < MOST_STYLES_IN_A_CHAIN) {
+                chain += id
+                id = basedOn[id]
+            }
+            val resolved = HashMap<String, Element>()
+            for (step in chain.asReversed()) resolved += own[step].orEmpty()
+            cache[styleId] = resolved
+            return resolved
+        }
+
+        private fun propertiesOf(parent: Element?, name: String): Map<String, Element> {
+            val properties = parent?.let { firstChild(it, name) } ?: return emptyMap()
+            return children(properties).mapNotNull { child ->
+                child.localName?.let { it to child }
+            }.toMap()
+        }
+    }
+
+    /** The properties an element writes on itself, by their name. */
+    private fun own(properties: Element?): Map<String, Element> {
+        if (properties == null) return emptyMap()
+        return children(properties).mapNotNull { child -> child.localName?.let { it to child } }.toMap()
+    }
+
+    /** However deep a file claims its styles are based on each other, no deeper than this. */
+    private const val MOST_STYLES_IN_A_CHAIN = 32
 
     /** One cell as the file writes it, before the merges are read out of the grid. */
     private class Cell(
@@ -476,6 +610,8 @@ object DocxReader {
         paragraphRtl: Boolean,
         media: MediaStore? = null,
         notes: Map<Int, List<Block>> = emptyMap(),
+        styles: StyleSheet,
+        inherited: Map<String, Element> = emptyMap(),
     ): TextRun? {
         if (media != null) {
             val picture = firstChild(r, "drawing")?.let { imageOf(it, media) }
@@ -493,31 +629,36 @@ object DocxReader {
         // In OOXML the absence of w:rtl means a left-to-right run even inside
         // a bidi paragraph, while the IR's null means "inherit" — so inside an
         // RTL paragraph, LTR is recorded explicitly to keep round-trips true.
-        val inherited: TextDirection? = if (paragraphRtl) TextDirection.LTR else null
-        val rPr = firstChild(r, "rPr") ?: return TextRun(text, direction = inherited)
-        val underline = firstChild(rPr, "u")?.let { attr(it, "val") ?: "single" }
-        val rtl = isOn(firstChild(rPr, "rtl"))
+        val paragraphDirection: TextDirection? = if (paragraphRtl) TextDirection.LTR else null
+        val rPr = firstChild(r, "rPr")
+        // What the paragraph hands the run, then the run's own style, then
+        // what the run writes on itself: the last one to speak wins.
+        val properties = inherited +
+            styles.run(firstChild(rPr, "rStyle")?.let { attr(it, "val") }) +
+            own(rPr)
+        val underline = properties["u"]?.let { attr(it, "val") ?: "single" }
+        val rtl = isOn(properties["rtl"])
         // The face a run is set in is the one for its script: a right-to-left
         // run reads the complex-script face, any other the ASCII one.
-        val fonts = firstChild(rPr, "rFonts")
+        val fonts = properties["rFonts"]
         val family = fonts?.let {
             if (rtl) attr(it, "cs") ?: attr(it, "ascii") else attr(it, "ascii") ?: attr(it, "hAnsi") ?: attr(it, "cs")
         }?.takeIf { it.isNotBlank() }
-        val halfPoints = firstChild(rPr, if (rtl) "szCs" else "sz")?.let { attr(it, "val") }?.toFloatOrNull()
-            ?: firstChild(rPr, "sz")?.let { attr(it, "val") }?.toFloatOrNull()
-        val vertical = firstChild(rPr, "vertAlign")?.let { attr(it, "val") }
+        val halfPoints = properties[if (rtl) "szCs" else "sz"]?.let { attr(it, "val") }?.toFloatOrNull()
+            ?: properties["sz"]?.let { attr(it, "val") }?.toFloatOrNull()
+        val vertical = properties["vertAlign"]?.let { attr(it, "val") }
         // "auto" means the colour a reader picks for the background, which
         // is the document's own default — the same thing as saying nothing.
-        val color = firstChild(rPr, "color")?.let { attr(it, "val") }
+        val color = properties["color"]?.let { attr(it, "val") }
             ?.takeIf { it.length == 6 && !it.equals("auto", ignoreCase = true) }
             ?.toIntOrNull(16)
         return TextRun(
             text = text,
-            bold = isOn(firstChild(rPr, "b")),
-            italic = isOn(firstChild(rPr, "i")),
+            bold = isOn(properties["b"]),
+            italic = isOn(properties["i"]),
             underline = underline != null && underline != "none",
-            language = firstChild(rPr, "lang")?.let { attr(it, "val") ?: attr(it, "bidi") },
-            direction = if (rtl) TextDirection.RTL else inherited,
+            language = properties["lang"]?.let { attr(it, "val") ?: attr(it, "bidi") },
+            direction = if (rtl) TextDirection.RTL else paragraphDirection,
             fontFamily = family,
             fontSizePt = halfPoints?.takeIf { it > 0f }?.let { it / 2f },
             superscript = vertical == "superscript",
@@ -533,6 +674,7 @@ object DocxReader {
         media: MediaStore,
         depth: Int,
         notes: Map<Int, List<Block>> = emptyMap(),
+        styles: StyleSheet,
     ): Table? {
         // A cell that continues a merge from the row above holds nothing of
         // its own; the model keeps only the cell that began the merge, and
@@ -543,7 +685,7 @@ object DocxReader {
                 val merge = firstChild(properties, "vMerge")
                 val continues = merge != null && (attr(merge, "val") ?: "continue") != "restart"
                 Cell(
-                    blocks = parseBlocks(tc, numbering, media, depth + 1, notes = notes),
+                    blocks = parseBlocks(tc, numbering, media, depth + 1, notes = notes, styles = styles),
                     columnSpan = firstChild(properties, "gridSpan")?.let { attr(it, "val") }?.toIntOrNull()
                         ?.coerceIn(1, MOST_SPANNED_CELLS) ?: 1,
                     startsMerge = merge != null && !continues,
