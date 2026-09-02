@@ -103,6 +103,11 @@ data class TextRun(
     val field: RunField? = null,
     /** A picture set in the line like a character; [text] is empty. */
     val image: ImageBlock? = null,
+    /**
+     * Where the run points, as a URI — "mailto:…" for an address, "https://…"
+     * for a page. Null for text that goes nowhere, which is most text.
+     */
+    val link: String? = null,
 )
 
 /** What a writer fills in for a run in place of fixed text. */

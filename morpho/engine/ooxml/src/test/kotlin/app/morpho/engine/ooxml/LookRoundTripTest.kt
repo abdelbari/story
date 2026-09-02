@@ -202,6 +202,54 @@ class LookRoundTripTest {
     }
 
     @Test
+    fun `a link is a relationship outside the package, and comes back the same`() {
+        val document = DocumentModel(
+            listOf(
+                Paragraph(
+                    listOf(
+                        TextRun("write to "),
+                        TextRun("nebbarrebih@gmail.com", link = "mailto:nebbarrebih@gmail.com"),
+                        TextRun(" today"),
+                    )
+                )
+            )
+        )
+        val docx = DocxWriter.toByteArray(document)
+        val parts = entries(docx)
+        val body = parts.getValue("word/document.xml")
+        assertTrue(body.contains("""<w:hyperlink r:id="rIdLnk1">"""), body)
+        val rels = parts.getValue("word/_rels/document.xml.rels")
+        assertTrue(
+            rels.contains("""Id="rIdLnk1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="mailto:nebbarrebih@gmail.com" TargetMode="External""""),
+            rels,
+        )
+        val read = DocxReader.read(docx).blocks.filterIsInstance<Paragraph>().single()
+        val linked = read.runs.single { it.link != null }
+        assertEquals("nebbarrebih@gmail.com", linked.text)
+        assertEquals("mailto:nebbarrebih@gmail.com", linked.link)
+        assertNull(read.runs.first().link)
+    }
+
+    @Test
+    fun `runs that point at one place are one link`() {
+        val docx = DocxWriter.toByteArray(
+            DocumentModel(
+                listOf(
+                    Paragraph(
+                        listOf(
+                            TextRun("neb", bold = true, link = "mailto:neb@x.dz"),
+                            TextRun("@x.dz", link = "mailto:neb@x.dz"),
+                        )
+                    )
+                )
+            )
+        )
+        val body = entries(docx).getValue("word/document.xml")
+        assertEquals(1, Regex("<w:hyperlink ").findAll(body).count(), body)
+        assertEquals(1, Regex("rIdLnk").findAll(entries(docx).getValue("word/_rels/document.xml.rels")).count())
+    }
+
+    @Test
     fun `a running header and footer become parts of their own`() {
         val picture = ImageBlock(PNG, "image/png", 2, 2, widthPt = 100f, heightPt = 20f)
         val document = DocumentModel(

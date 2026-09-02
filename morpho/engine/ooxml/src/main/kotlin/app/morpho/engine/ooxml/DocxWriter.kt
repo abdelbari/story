@@ -55,13 +55,14 @@ object DocxWriter {
     fun write(document: DocumentModel, output: OutputStream) {
         val numbering = NumberingPlan(document)
         val images = ImagePlan(document)
+        val links = LinkPlan(document)
         val header = document.header.isNotEmpty()
         val footer = document.footer.isNotEmpty()
         ZipOutputStream(output).use { zip ->
             zip.part("[Content_Types].xml", contentTypesXml(header, footer))
             zip.part("_rels/.rels", packageRelsXml())
-            zip.part("word/_rels/document.xml.rels", documentRelsXml(images, header, footer))
-            zip.part("word/document.xml", documentXml(document, numbering, images))
+            zip.part("word/_rels/document.xml.rels", documentRelsXml(images, links, header, footer))
+            zip.part("word/document.xml", documentXml(document, numbering, images, links))
             zip.part("word/styles.xml", stylesXml())
             zip.part("word/numbering.xml", numberingXml(numbering))
             zip.part("docProps/core.xml", corePropsXml())
@@ -69,12 +70,12 @@ object DocxWriter {
             // A running header or footer is a part of its own, with its own
             // relationships to the pictures it shows.
             if (header) {
-                zip.part("word/header1.xml", furnitureXml("hdr", document.header, document, numbering, images))
-                partRelsXml(images, ImagePlan.PART_HEADER)?.let { zip.part("word/_rels/header1.xml.rels", it) }
+                zip.part("word/header1.xml", furnitureXml("hdr", document.header, document, numbering, images, links, ImagePlan.PART_HEADER))
+                partRelsXml(images, links, ImagePlan.PART_HEADER)?.let { zip.part("word/_rels/header1.xml.rels", it) }
             }
             if (footer) {
-                zip.part("word/footer1.xml", furnitureXml("ftr", document.footer, document, numbering, images))
-                partRelsXml(images, ImagePlan.PART_FOOTER)?.let { zip.part("word/_rels/footer1.xml.rels", it) }
+                zip.part("word/footer1.xml", furnitureXml("ftr", document.footer, document, numbering, images, links, ImagePlan.PART_FOOTER))
+                partRelsXml(images, links, ImagePlan.PART_FOOTER)?.let { zip.part("word/_rels/footer1.xml.rels", it) }
             }
             for (entry in images.entries) {
                 zip.partBytes("word/media/${entry.fileName}", entry.block.bytes)
@@ -158,6 +159,45 @@ object DocxWriter {
      * stays stateless. Only PNG and JPEG are supported; anything else fails
      * loudly rather than silently dropping content.
      */
+    /**
+     * Where each part's links point. Word keeps a link's target out of the
+     * document and in the part's relationships, so every distinct target
+     * gets a relationship of its own, and a run that points somewhere
+     * names that relationship.
+     */
+    private class LinkPlan(document: DocumentModel) {
+        class Entry(val target: String, val relId: String, val part: String)
+
+        val entries = mutableListOf<Entry>()
+        private val byPartAndTarget = HashMap<Pair<String, String>, Entry>()
+
+        init {
+            assign(document.blocks, ImagePlan.PART_DOCUMENT)
+            assign(document.header, ImagePlan.PART_HEADER)
+            assign(document.footer, ImagePlan.PART_FOOTER)
+        }
+
+        fun relIdFor(target: String, part: String): String? = byPartAndTarget[part to target]?.relId
+
+        fun entriesFor(part: String): List<Entry> = entries.filter { it.part == part }
+
+        private fun assign(blocks: List<Block>, part: String) {
+            for (block in blocks) {
+                when (block) {
+                    is Paragraph -> for (run in block.runs) run.link?.let { register(it, part) }
+                    is Table -> for (row in block.rows) for (cell in row.cells) assign(cell.blocks, part)
+                    is ImageBlock -> {}
+                }
+            }
+        }
+
+        private fun register(target: String, part: String) {
+            byPartAndTarget.getOrPut(part to target) {
+                Entry(target, "rIdLnk" + (entries.size + 1), part).also { entries += it }
+            }
+        }
+    }
+
     private class ImagePlan(document: DocumentModel) {
         class Entry(
             val block: ImageBlock,
@@ -225,12 +265,13 @@ object DocxWriter {
         document: DocumentModel,
         numbering: NumberingPlan,
         images: ImagePlan,
+        links: LinkPlan,
     ): String {
         val sb = StringBuilder(16 * 1024)
         sb.append(XML_DECL)
         sb.append("""<w:document xmlns:w="$W" xmlns:r="$R_NS"><w:body>""")
         for (block in document.blocks) {
-            appendBlock(sb, block, document, numbering, images)
+            appendBlock(sb, block, document, numbering, images, links, ImagePlan.PART_DOCUMENT)
         }
         sb.append(sectPr(document))
         sb.append("</w:body></w:document>")
@@ -244,11 +285,13 @@ object DocxWriter {
         document: DocumentModel,
         numbering: NumberingPlan,
         images: ImagePlan,
+        links: LinkPlan,
+        part: String,
     ): String {
         val sb = StringBuilder(4 * 1024)
         sb.append(XML_DECL)
         sb.append("""<w:$root xmlns:w="$W" xmlns:r="$R_NS">""")
-        for (block in blocks) appendBlock(sb, block, document, numbering, images)
+        for (block in blocks) appendBlock(sb, block, document, numbering, images, links, part)
         sb.append("</w:$root>")
         return sb.toString()
     }
@@ -259,10 +302,12 @@ object DocxWriter {
         document: DocumentModel,
         numbering: NumberingPlan,
         images: ImagePlan,
+        links: LinkPlan,
+        part: String,
     ) {
         when (block) {
-            is Paragraph -> appendParagraph(sb, block, document, numbering, images)
-            is Table -> appendTable(sb, block, document, numbering, images)
+            is Paragraph -> appendParagraph(sb, block, document, numbering, images, links, part)
+            is Table -> appendTable(sb, block, document, numbering, images, links, part)
             is ImageBlock -> appendImage(sb, images.entryFor(block))
         }
     }
@@ -273,13 +318,31 @@ object DocxWriter {
         document: DocumentModel,
         numbering: NumberingPlan,
         images: ImagePlan,
+        links: LinkPlan,
+        part: String,
     ) {
         val effectiveDirection = paragraph.style.direction ?: document.defaultDirection
         sb.append("<w:p>")
         val largest = paragraph.runs.maxOfOrNull { it.fontSizePt ?: 0f } ?: 0f
         appendParagraphProperties(sb, paragraph.style, effectiveDirection, numbering.numIdFor(paragraph), largest)
-        for (run in paragraph.runs) {
-            appendRun(sb, run, effectiveDirection, images, document)
+        // Runs that point at the same place are one link, as a reader sees
+        // it: an address split across runs by a change of face is still one
+        // address to click.
+        var index = 0
+        while (index < paragraph.runs.size) {
+            val target = paragraph.runs[index].link
+            if (target == null) {
+                appendRun(sb, paragraph.runs[index], effectiveDirection, images, document)
+                index++
+                continue
+            }
+            var last = index
+            while (last + 1 < paragraph.runs.size && paragraph.runs[last + 1].link == target) last++
+            val relId = links.relIdFor(target, part)
+            if (relId != null) sb.append("""<w:hyperlink r:id="$relId">""")
+            for (i in index..last) appendRun(sb, paragraph.runs[i], effectiveDirection, images, document)
+            if (relId != null) sb.append("</w:hyperlink>")
+            index = last + 1
         }
         sb.append("</w:p>")
     }
@@ -476,6 +539,8 @@ object DocxWriter {
         document: DocumentModel,
         numbering: NumberingPlan,
         images: ImagePlan,
+        links: LinkPlan,
+        part: String,
     ) {
         if (table.rows.isEmpty()) return
         val columnCount = table.rows.maxOf { it.cells.size }.coerceAtLeast(1)
@@ -496,11 +561,11 @@ object DocxWriter {
         for (row in table.rows) {
             sb.append("<w:tr>")
             for (cell in row.cells) {
-                appendCell(sb, cell, document, numbering, images)
+                appendCell(sb, cell, document, numbering, images, links, part)
             }
             // Pad short rows so every row has the full column count.
             repeat(columnCount - row.cells.size) {
-                appendCell(sb, TableCell(emptyList()), document, numbering, images)
+                appendCell(sb, TableCell(emptyList()), document, numbering, images, links, part)
             }
             sb.append("</w:tr>")
         }
@@ -515,11 +580,13 @@ object DocxWriter {
         document: DocumentModel,
         numbering: NumberingPlan,
         images: ImagePlan,
+        links: LinkPlan,
+        part: String,
     ) {
         sb.append("<w:tc>")
         sb.append("""<w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>""")
         for (block in cell.blocks) {
-            appendBlock(sb, block, document, numbering, images)
+            appendBlock(sb, block, document, numbering, images, links, part)
         }
         // Every table cell must end with a paragraph. A trailing nested table
         // already appended its own spacer paragraph after </w:tbl>.
@@ -639,7 +706,7 @@ object DocxWriter {
         """<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>""" +
         """</Relationships>"""
 
-    private fun documentRelsXml(images: ImagePlan, header: Boolean, footer: Boolean): String {
+    private fun documentRelsXml(images: ImagePlan, links: LinkPlan, header: Boolean, footer: Boolean): String {
         val sb = StringBuilder(XML_DECL)
         sb.append("""<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""")
         sb.append("""<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>""")
@@ -651,14 +718,24 @@ object DocxWriter {
                 """<Relationship Id="${entry.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${entry.fileName}"/>"""
             )
         }
+        appendLinkRels(sb, links, ImagePlan.PART_DOCUMENT)
         sb.append("</Relationships>")
         return sb.toString()
     }
 
-    /** The relationships of a header or footer part: its pictures, if it has any. */
-    private fun partRelsXml(images: ImagePlan, part: String): String? {
+    /** A link points outside the package, so its relationship says so. */
+    private fun appendLinkRels(sb: StringBuilder, links: LinkPlan, part: String) {
+        for (entry in links.entriesFor(part)) {
+            sb.append(
+                """<Relationship Id="${entry.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${xmlEscape(entry.target)}" TargetMode="External"/>"""
+            )
+        }
+    }
+
+    /** The relationships of a header or footer part: its pictures and its links, if it has any. */
+    private fun partRelsXml(images: ImagePlan, links: LinkPlan, part: String): String? {
         val entries = images.entriesFor(part)
-        if (entries.isEmpty()) return null
+        if (entries.isEmpty() && links.entriesFor(part).isEmpty()) return null
         val sb = StringBuilder(XML_DECL)
         sb.append("""<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""")
         for (entry in entries) {
@@ -666,6 +743,7 @@ object DocxWriter {
                 """<Relationship Id="${entry.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${entry.fileName}"/>"""
             )
         }
+        appendLinkRels(sb, links, part)
         sb.append("</Relationships>")
         return sb.toString()
     }

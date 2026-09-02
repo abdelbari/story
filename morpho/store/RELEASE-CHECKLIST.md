@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 283 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 293 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -49,6 +49,9 @@ Work through, in this order — each exercises a path nothing else covers:
       not split or join. Check an untagged PDF the same way: it should also
       keep its faces and weights, drop the running header and footer, and
       break its paragraphs where the page does.
+- [ ] **The author's email on the paper's first page** must be clickable
+      in Word and open a mail window, and no ordinary word may have turned
+      into a link.
 - [ ] **A document with coloured text** — a report with red headings or
       blue links — converted both ways. Each run must keep the colour the
       page shows, and an ordinary black document must gain no colour it

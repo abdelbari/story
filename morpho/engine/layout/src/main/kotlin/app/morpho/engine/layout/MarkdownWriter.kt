@@ -80,6 +80,16 @@ object MarkdownWriter {
     private fun runsToMarkdown(runs: List<TextRun>): String {
         val sb = StringBuilder()
         for (run in runs) {
+            // A link the source carried. An address written out in full is
+            // left as it is: Markdown makes those live on their own, and
+            // "[a@b.com](mailto:a@b.com)" only says the same thing twice.
+            val link = run.link
+            if (link != null && run.text.isNotBlank() && !linksToItself(run.text.trim(), link)) {
+                sb.append(run.text.takeWhile { it.isWhitespace() })
+                sb.append("[").append(escape(run.text.trim())).append("](").append(link).append(")")
+                sb.append(run.text.takeLastWhile { it.isWhitespace() })
+                continue
+            }
             val marker = when {
                 run.bold && run.italic -> "***"
                 run.bold -> "**"
@@ -103,6 +113,10 @@ object MarkdownWriter {
         }
         return sb.toString()
     }
+
+    /** Whether the link says no more than the text it sits on already does. */
+    private fun linksToItself(text: String, link: String): Boolean =
+        link == text || link == "mailto:$text" || link == "https://$text" || link == "http://$text"
 
     private fun escape(text: String): String =
         text.replace("\\", "\\\\").replace("*", "\\*").replace("|", "\\|")

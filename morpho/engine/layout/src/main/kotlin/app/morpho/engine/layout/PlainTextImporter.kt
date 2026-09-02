@@ -72,7 +72,9 @@ object PlainTextImporter {
             if (rtlCount > blocks.size - rtlCount) TextDirection.RTL else TextDirection.LTR
         // Full UAX #9 pass: split mixed-direction runs so writers can mark
         // direction per run instead of per paragraph.
-        return Bidi.refine(DocumentModel(blocks = blocks, defaultDirection = defaultDirection))
+        // An address typed into a text file is an address; a reader who
+        // converts one to Word expects to be able to click it.
+        return Links.refine(Bidi.refine(DocumentModel(blocks = blocks, defaultDirection = defaultDirection)))
     }
 
     private fun paragraph(text: String, kind: ParagraphKind, listMarker: ListMarker?): Paragraph {

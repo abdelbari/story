@@ -75,4 +75,13 @@ class HtmlLookTest {
         assertTrue(html.contains("color:#c00000"), html)
         assertTrue(!html.contains("color:#000000"), "black is left to the page's own")
     }
+    @Test
+    fun `a link is a link on the page`() {
+        val html = HtmlWriter.write(
+            DocumentModel(
+                listOf(Paragraph(listOf(TextRun("a@b.co", link = "mailto:a@b.co"))))
+            )
+        )
+        assertTrue(html.contains("<a href=\"mailto:a@b.co\">"), html)
+    }
 }

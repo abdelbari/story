@@ -90,7 +90,8 @@ object DocxReader {
     private const val R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
     private const val EMU_PER_PX = 9525L
     private val MIME_BY_EXTENSION = mapOf("png" to "image/png", "jpeg" to "image/jpeg", "jpg" to "image/jpeg")
-    private val RUN_CONTAINERS = setOf("hyperlink", "ins", "smartTag", "sdt", "sdtContent")
+    /** Elements that hold runs without changing them; a hyperlink is handled on its own, since it says where its runs point. */
+    private val RUN_CONTAINERS = setOf("ins", "smartTag", "sdt", "sdtContent")
 
     fun read(bytes: ByteArray): DocumentModel = read(ByteArrayInputStream(bytes))
 
@@ -188,6 +189,9 @@ object DocxReader {
             parts[relsPart]?.let(::parseRelationships).orEmpty()
         private val parts = parts
 
+        /** Where a relationship points, as it was written: a part of the package, or an address outside it. */
+        fun targetFor(relId: String): String? = targetByRelId[relId]
+
         /** The package part a relationship of this part points at, by name. */
         fun partFor(relId: String): String? {
             val target = targetByRelId[relId] ?: return null
@@ -244,7 +248,7 @@ object DocxReader {
         for (child in children(parent)) {
             when (child.localName) {
                 "p" -> {
-                    parseParagraph(child, numbering, if (inline) media else null)?.let(blocks::add)
+                    parseParagraph(child, numbering, media, inline)?.let(blocks::add)
                     if (!inline) blocks += parseImages(child, media)
                 }
                 "tbl" -> parseTable(child, numbering, media, depth)?.let(blocks::add)
@@ -285,29 +289,56 @@ object DocxReader {
         return result
     }
 
-    /** With [media], the paragraph's pictures stay in its line as runs. */
-    private fun parseParagraph(p: Element, numbering: Map<String, ListMarker>, media: MediaStore? = null): Paragraph? {
+    /** With [inline], the paragraph's pictures stay in its line as runs rather than following it. */
+    private fun parseParagraph(
+        p: Element,
+        numbering: Map<String, ListMarker>,
+        media: MediaStore? = null,
+        inline: Boolean = false,
+    ): Paragraph? {
         val style = parseParagraphStyle(firstChild(p, "pPr"), numbering)
-        val runs = collectRuns(p, paragraphRtl = style.direction == TextDirection.RTL, depth = 0, media = media)
+        val runs = collectRuns(
+            p,
+            paragraphRtl = style.direction == TextDirection.RTL,
+            depth = 0,
+            media = media,
+            inline = inline,
+        )
         if (runs.isEmpty()) return null
         return Paragraph(runs = runs, style = style, confidence = 1f)
     }
 
-    /** Runs directly in [parent] plus those inside run containers; a PAGE field's runs are fields. */
-    private fun collectRuns(parent: Element, paragraphRtl: Boolean, depth: Int, media: MediaStore? = null): List<TextRun> {
+    /**
+     * Runs directly in [parent] plus those inside run containers; a PAGE
+     * field's runs are fields, and the runs of a hyperlink carry where it
+     * points, which the part's relationships hold rather than the text.
+     */
+    private fun collectRuns(
+        parent: Element,
+        paragraphRtl: Boolean,
+        depth: Int,
+        media: MediaStore? = null,
+        inline: Boolean = false,
+    ): List<TextRun> {
         require(depth <= MAX_NESTING_DEPTH) {
             "Run-container nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
         }
         val runs = mutableListOf<TextRun>()
         for (child in children(parent)) {
             when (child.localName) {
-                "r" -> parseRun(child, paragraphRtl, media)?.let(runs::add)
+                "r" -> parseRun(child, paragraphRtl, media.takeIf { inline })?.let(runs::add)
                 "fldSimple" -> {
-                    val inner = collectRuns(child, paragraphRtl, depth + 1, media)
+                    val inner = collectRuns(child, paragraphRtl, depth + 1, media, inline)
                     val instruction = attr(child, "instr").orEmpty().trim().uppercase()
                     runs += if (instruction.startsWith("PAGE")) inner.map { it.copy(field = RunField.PAGE_NUMBER) } else inner
                 }
-                in RUN_CONTAINERS -> runs += collectRuns(child, paragraphRtl, depth + 1, media)
+                "hyperlink" -> {
+                    val inner = collectRuns(child, paragraphRtl, depth + 1, media, inline)
+                    val target = child.getAttributeNS(R_NS, "id").ifEmpty { null }?.let { media?.targetFor(it) }
+                        ?: attr(child, "anchor")?.let { "#$it" }
+                    runs += if (target != null) inner.map { it.copy(link = target) } else inner
+                }
+                in RUN_CONTAINERS -> runs += collectRuns(child, paragraphRtl, depth + 1, media, inline)
                 else -> {}
             }
         }

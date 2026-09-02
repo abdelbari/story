@@ -244,6 +244,10 @@ object HtmlWriter {
             val styleAttr = if (styles.isNotEmpty()) """ style="${styles.joinToString(";")}"""" else ""
             html = "<span$dirAttr$langAttr$styleAttr>$html</span>"
         }
+        // A link the source carried: the preview is a page, so it behaves
+        // like one. The look stays the run's own — an address a document
+        // prints in black stays black.
+        run.link?.let { html = "<a href=\"${escape(it)}\">$html</a>" }
         sb.append(html)
     }
 
