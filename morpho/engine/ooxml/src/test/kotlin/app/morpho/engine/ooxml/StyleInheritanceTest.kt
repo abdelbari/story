@@ -3,6 +3,7 @@ package app.morpho.engine.ooxml
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
+import app.morpho.engine.layout.Table
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -176,6 +177,88 @@ class StyleInheritanceTest {
         val paragraphs = doc.blocks.filterIsInstance<Paragraph>()
         assertEquals(ParagraphKind.TITLE, paragraphs[0].style.kind)
         assertEquals(ParagraphKind.HEADING_1, paragraphs[1].style.kind)
+    }
+
+    @Test
+    fun `a table ruled by its style is a ruled table`() {
+        // Word's default Table Grid draws a full grid and writes not one
+        // border on the table itself; a reader that looks only at the table
+        // hands back a table with no lines at all.
+        val doc = readDocx(
+            styles = """
+                <w:style w:type="table" w:styleId="TableGrid">
+                  <w:name w:val="Table Grid"/>
+                  <w:tblPr>
+                    <w:tblBorders>
+                      <w:top w:val="single" w:sz="4"/>
+                      <w:left w:val="single" w:sz="4"/>
+                      <w:bottom w:val="single" w:sz="4"/>
+                      <w:right w:val="single" w:sz="4"/>
+                      <w:insideH w:val="single" w:sz="4"/>
+                      <w:insideV w:val="single" w:sz="4"/>
+                    </w:tblBorders>
+                  </w:tblPr>
+                  <w:rPr><w:rFonts w:ascii="Calibri"/><w:sz w:val="20"/></w:rPr>
+                </w:style>
+            """,
+            body = """<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/></w:tblPr>
+                <w:tr><w:tc><w:p><w:r><w:t>Year</w:t></w:r></w:p></w:tc>
+                <w:tc><w:p><w:r><w:t>Total</w:t></w:r></w:p></w:tc></w:tr></w:tbl>""",
+        )
+        val table = doc.blocks.filterIsInstance<Table>().single()
+        assertTrue(table.ruled, "the grid Word draws was not drawn")
+        // The cells are set in the face the table style names, too.
+        val cell = table.rows.first().cells.first().blocks.filterIsInstance<Paragraph>().first()
+        assertEquals("Calibri", cell.runs.first().fontFamily)
+        assertEquals(10f, cell.runs.first().fontSizePt)
+    }
+
+    @Test
+    fun `a table that turns its style's rules off is not ruled`() {
+        val doc = readDocx(
+            styles = """
+                <w:style w:type="table" w:styleId="TableGrid">
+                  <w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4"/></w:tblBorders></w:tblPr>
+                </w:style>
+            """,
+            body = """<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/>
+                <w:tblBorders><w:top w:val="none"/><w:bottom w:val="nil"/></w:tblBorders></w:tblPr>
+                <w:tr><w:tc><w:p><w:r><w:t>bare</w:t></w:r></w:p></w:tc></w:tr></w:tbl>""",
+        )
+        assertFalse(doc.blocks.filterIsInstance<Table>().single().ruled)
+    }
+
+    @Test
+    fun `a table ruled a cell at a time is ruled`() {
+        val doc = readDocx(
+            body = """<w:tbl>
+                <w:tr><w:tc><w:tcPr><w:tcBorders><w:bottom w:val="single" w:sz="4"/></w:tcBorders></w:tcPr>
+                <w:p><w:r><w:t>drawn by hand</w:t></w:r></w:p></w:tc></w:tr></w:tbl>""",
+        )
+        assertTrue(doc.blocks.filterIsInstance<Table>().single().ruled)
+    }
+
+    @Test
+    fun `a paragraph style inside a cell beats what the table hands down`() {
+        val doc = readDocx(
+            styles = """
+                <w:style w:type="table" w:styleId="Plain">
+                  <w:rPr><w:rFonts w:ascii="Calibri"/></w:rPr>
+                </w:style>
+                <w:style w:type="paragraph" w:styleId="Figure">
+                  <w:rPr><w:rFonts w:ascii="Consolas"/></w:rPr>
+                </w:style>
+            """,
+            body = """<w:tbl><w:tblPr><w:tblStyle w:val="Plain"/></w:tblPr>
+                <w:tr><w:tc><w:p><w:r><w:t>prose</w:t></w:r></w:p></w:tc>
+                <w:tc><w:p><w:pPr><w:pStyle w:val="Figure"/></w:pPr>
+                <w:r><w:t>42</w:t></w:r></w:p></w:tc></w:tr></w:tbl>""",
+        )
+        val row = doc.blocks.filterIsInstance<Table>().single().rows.first()
+        val faces = row.cells.map {
+            it.blocks.filterIsInstance<Paragraph>().first().runs.first().fontFamily
+        }
+        assertEquals(listOf("Calibri", "Consolas"), faces)
     }
 
     // ------------------------------------------------------------------

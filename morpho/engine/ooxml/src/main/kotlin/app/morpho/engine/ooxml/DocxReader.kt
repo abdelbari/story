@@ -265,6 +265,7 @@ object DocxReader {
         inline: Boolean = false,
         notes: Map<Int, List<Block>> = emptyMap(),
         styles: StyleSheet,
+        fromTable: Inherited = Inherited.NONE,
     ): List<Block> {
         require(depth <= MAX_NESTING_DEPTH) {
             "Block nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
@@ -273,7 +274,8 @@ object DocxReader {
         for (child in children(parent)) {
             when (child.localName) {
                 "p" -> {
-                    parseParagraph(child, numbering, media, inline, notes, styles)?.let(blocks::add)
+                    parseParagraph(child, numbering, media, inline, notes, styles, fromTable)
+                        ?.let(blocks::add)
                     if (!inline) blocks += parseImages(child, media)
                 }
                 "tbl" -> parseTable(child, numbering, media, depth, notes, styles)?.let(blocks::add)
@@ -322,13 +324,15 @@ object DocxReader {
         inline: Boolean = false,
         notes: Map<Int, List<Block>> = emptyMap(),
         styles: StyleSheet,
+        fromTable: Inherited = Inherited.NONE,
     ): Paragraph? {
         val pPr = firstChild(p, "pPr")
         val styleId = firstChild(pPr, "pStyle")?.let { attr(it, "val") }
         // What the document says, then what the style says, then what the
         // paragraph writes on itself: the last one to speak wins.
-        val properties = styles.defaultParagraph + styles.paragraph(styleId) + own(pPr)
-        val runProperties = styles.defaultRun + styles.run(styleId)
+        val properties = styles.defaultParagraph + fromTable.paragraph +
+            styles.paragraph(styleId) + own(pPr)
+        val runProperties = styles.defaultRun + fromTable.run + styles.run(styleId)
         val style = parseParagraphStyle(properties, styleId, styles.name(styleId), numbering)
         val runs = collectRuns(
             p,
@@ -493,6 +497,8 @@ object DocxReader {
         private val nameById = HashMap<String, String>()
         private val paragraphOwn = HashMap<String, Map<String, Element>>()
         private val runOwn = HashMap<String, Map<String, Element>>()
+        private val tableOwn = HashMap<String, Map<String, Element>>()
+        private val tableById = HashMap<String, Map<String, Element>>()
 
         /** What every paragraph and run starts from, before any style names it. */
         var defaultParagraph: Map<String, Element> = emptyMap()
@@ -511,6 +517,7 @@ object DocxReader {
                     val id = attr(style, "styleId") ?: continue
                     paragraphOwn[id] = propertiesOf(style, "pPr")
                     runOwn[id] = propertiesOf(style, "rPr")
+                    tableOwn[id] = propertiesOf(style, "tblPr")
                     firstChild(style, "basedOn")?.let { attr(it, "val") }?.let { basedOn[id] = it }
                     firstChild(style, "name")?.let { attr(it, "val") }?.let { nameById[id] = it.lowercase() }
                 }
@@ -531,6 +538,15 @@ object DocxReader {
         /** The properties a run inherits from [styleId], which may be a paragraph's style or a run's own. */
         fun run(styleId: String?): Map<String, Element> =
             styleId?.let { resolve(it, runOwn, runById) }.orEmpty()
+
+        /**
+         * What a table of [styleId] is drawn like. Word puts a table's rules
+         * in its style, not on the table — a table inserted with the
+         * default Table Grid writes no border of its own — so a reader
+         * that looks only at the table draws none of the lines Word shows.
+         */
+        fun table(styleId: String?): Map<String, Element> =
+            styleId?.let { resolve(it, tableOwn, tableById) }.orEmpty()
 
         private fun resolve(
             styleId: String,
@@ -557,6 +573,20 @@ object DocxReader {
             return children(properties).mapNotNull { child ->
                 child.localName?.let { it to child }
             }.toMap()
+        }
+    }
+
+    /**
+     * What a table's style gives the paragraphs and runs in its cells,
+     * which sits under the paragraph's own style and over the document's
+     * defaults, as Word resolves them.
+     */
+    private class Inherited(
+        val paragraph: Map<String, Element>,
+        val run: Map<String, Element>,
+    ) {
+        companion object {
+            val NONE = Inherited(emptyMap(), emptyMap())
         }
     }
 
@@ -679,13 +709,25 @@ object DocxReader {
         // A cell that continues a merge from the row above holds nothing of
         // its own; the model keeps only the cell that began the merge, and
         // says how far down it reaches.
+        val tblPr = firstChild(tbl, "tblPr")
+        val tableStyleId = firstChild(tblPr, "tblStyle")?.let { attr(it, "val") }
+        val fromTable = Inherited(styles.paragraph(tableStyleId), styles.run(tableStyleId))
+        var cellsAreRuled = false
         val cells = children(tbl, "tr").map { tr ->
             children(tr, "tc").map { tc ->
                 val properties = firstChild(tc, "tcPr")
                 val merge = firstChild(properties, "vMerge")
                 val continues = merge != null && (attr(merge, "val") ?: "continue") != "restart"
+                // A table nobody gave a style to may still be ruled a cell
+                // at a time, which is how a hand-drawn table is written.
+                firstChild(properties, "tcBorders")?.let { drawn ->
+                    if (children(drawn).any(::isBorder)) cellsAreRuled = true
+                }
                 Cell(
-                    blocks = parseBlocks(tc, numbering, media, depth + 1, notes = notes, styles = styles),
+                    blocks = parseBlocks(
+                        tc, numbering, media, depth + 1,
+                        notes = notes, styles = styles, fromTable = fromTable,
+                    ),
                     columnSpan = firstChild(properties, "gridSpan")?.let { attr(it, "val") }?.toIntOrNull()
                         ?.coerceIn(1, MOST_SPANNED_CELLS) ?: 1,
                     startsMerge = merge != null && !continues,
@@ -723,10 +765,11 @@ object DocxReader {
         val grid = firstChild(tbl, "tblGrid")
             ?.let { children(it, "gridCol").mapNotNull { col -> twips(attr(col, "w")) } }
             ?.takeIf { it.isNotEmpty() && it.all { width -> width > 0f } }
-        // Borders live in the table's properties; "none" and "nil" draw
-        // nothing, which is a table the page never ruled.
-        val borders = firstChild(firstChild(tbl, "tblPr"), "tblBorders")
-        val ruled = borders != null && children(borders).any(::isBorder)
+        // Borders live in the table's style until the table overrules it;
+        // "none" and "nil" draw nothing, which is a table nobody ruled.
+        val drawn = styles.table(tableStyleId) + own(tblPr)
+        val borders = drawn["tblBorders"]
+        val ruled = (borders != null && children(borders).any(::isBorder)) || cellsAreRuled
         return Table(rows = rows, confidence = 1f, columnWidthsPt = grid, ruled = ruled)
     }
 

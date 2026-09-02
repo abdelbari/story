@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 338 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 342 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -97,7 +97,8 @@ Work through, in this order — each exercises a path nothing else covers:
 - [ ] **A Word document written in styles**, which is what a real one is: a
       thesis or a report whose headings, body and quotations come from the
       style pane rather than from formatting each paragraph by hand. The PDF
-      must keep the faces, sizes and colours the styles set, and its headings
+      must keep the faces, sizes and colours the styles set, its tables must keep
+      the grid Word draws around them, and its headings
       must still read as headings — including from a Word in another language,
       whose heading style is called Titre1 or Título1.
 - [ ] **Review Mode**: convert something imperfect, correct a block's kind,
