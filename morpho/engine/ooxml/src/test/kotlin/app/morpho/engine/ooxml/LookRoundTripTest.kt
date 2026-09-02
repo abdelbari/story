@@ -216,6 +216,45 @@ class LookRoundTripTest {
     }
 
     @Test
+    fun `a running header and footer read back as they were written`() {
+        val document = DocumentModel(
+            blocks = listOf(Paragraph(listOf(TextRun("body")))),
+            pageSetup = PageSetup(595f, 842f, 56f, 72f, 56f, 84f, headerDistancePt = 30f, footerDistancePt = 40f, firstPageNumber = 48),
+            header = listOf(ImageBlock(PNG, "image/png", 2, 2, widthPt = 100f, heightPt = 20f)),
+            footer = listOf(
+                Paragraph(
+                    listOf(
+                        TextRun("", image = ImageBlock(PNG, "image/png", 2, 2, widthPt = 50f, heightPt = 10f)),
+                        TextRun("\t"),
+                        TextRun("48", field = RunField.PAGE_NUMBER),
+                    ),
+                    ParagraphStyle(direction = TextDirection.RTL, tabStopsPt = listOf(400f)),
+                )
+            ),
+        )
+        val read = DocxReader.read(DocxWriter.toByteArray(document))
+        val header = read.header.single() as ImageBlock
+        assertEquals(100f, header.widthPt)
+        assertEquals(20f, header.heightPt)
+        assertTrue(header.bytes.contentEquals(PNG), "the header picture's bytes")
+        val footer = read.footer.single() as Paragraph
+        assertEquals(3, footer.runs.size, footer.runs.toString())
+        // The picture stays in the line, the tab is a run of its own, and the field is a field.
+        assertEquals(50f, footer.runs[0].image?.widthPt)
+        assertEquals("\t", footer.runs[1].text)
+        assertEquals(RunField.PAGE_NUMBER, footer.runs[2].field)
+        assertEquals("48", footer.runs[2].text)
+        assertEquals(listOf(400f), footer.style.tabStopsPt)
+        assertEquals(TextDirection.RTL, footer.style.direction)
+        val page = read.pageSetup!!
+        assertEquals(30f, page.headerDistancePt)
+        assertEquals(40f, page.footerDistancePt)
+        assertEquals(48, page.firstPageNumber)
+        // The body is its own: one paragraph, and no furniture picture leaked into it.
+        assertEquals(listOf("body"), read.blocks.map { (it as Paragraph).text })
+    }
+
+    @Test
     fun `a document without furniture writes no header or footer part`() {
         val parts = entries(DocxWriter.toByteArray(DocumentModel(listOf(Paragraph(listOf(TextRun("plain")))))))
         assertTrue(!parts.containsKey("word/header1.xml") && !parts.containsKey("word/footer1.xml"))

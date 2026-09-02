@@ -5,10 +5,11 @@ import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.ListMarker
-import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.PageSetup
+import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.ParagraphStyle
+import app.morpho.engine.layout.RunField
 import app.morpho.engine.layout.Table
 import app.morpho.engine.layout.TableCell
 import app.morpho.engine.layout.TableRow
@@ -80,6 +81,9 @@ object DocxReader {
     private const val MAX_TOTAL_MEDIA_BYTES = 64 * 1024 * 1024
     private val NEEDED_PARTS =
         setOf("word/document.xml", "word/numbering.xml", "word/_rels/document.xml.rels")
+    /** A running header or footer part, or the relationships of one: word/header1.xml, word/_rels/footer2.xml.rels. */
+    private val FURNITURE_PART = Regex("word/(?:_rels/)?(?:header|footer)\\d*\\.xml(?:\\.rels)?")
+    private const val EMU_PER_PT = 12700L
     private const val REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
     private const val A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
     private const val WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
@@ -97,12 +101,15 @@ object DocxReader {
             val documentPart = parts["word/document.xml"]
                 ?: throw IllegalArgumentException("Not a .docx package: word/document.xml is missing.")
             val numbering = parts["word/numbering.xml"]?.let(::parseNumbering).orEmpty()
-            val media = MediaStore(parts)
+            val media = MediaStore(parts, "word/_rels/document.xml.rels")
             val body = firstChild(parseXml(documentPart).documentElement, "body")
                 ?: return DocumentModel(blocks = emptyList())
+            val sectPr = firstChild(body, "sectPr")
             return DocumentModel(
                 blocks = parseBlocks(body, numbering, media, depth = 0),
-                pageSetup = firstChild(body, "sectPr")?.let(::parsePageSetup),
+                pageSetup = sectPr?.let(::parsePageSetup),
+                header = sectPr?.let { furniture(it, "headerReference", parts, media, numbering) }.orEmpty(),
+                footer = sectPr?.let { furniture(it, "footerReference", parts, media, numbering) }.orEmpty(),
             )
         } catch (e: IllegalArgumentException) {
             throw e
@@ -117,7 +124,7 @@ object DocxReader {
         ZipInputStream(input).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory && entry.name in NEEDED_PARTS) {
+                if (!entry.isDirectory && (entry.name in NEEDED_PARTS || FURNITURE_PART.matches(entry.name))) {
                     parts[entry.name] = readBounded(zip, entry.name, MAX_PART_BYTES)
                 } else if (!entry.isDirectory && entry.name.startsWith("word/media/")) {
                     val bytes = readBounded(zip, entry.name, MAX_MEDIA_PART_BYTES)
@@ -131,6 +138,34 @@ object DocxReader {
             }
         }
         return parts
+    }
+
+    /**
+     * The running header or footer the section refers to — its default one,
+     * else the first — as blocks, with a picture in a line kept in the line
+     * as a run and a PAGE field kept as a field, so the writer can set it
+     * again the way it was.
+     */
+    private fun furniture(
+        sectPr: Element,
+        reference: String,
+        parts: Map<String, ByteArray>,
+        media: MediaStore,
+        numbering: Map<String, ListMarker>,
+    ): List<Block> {
+        val references = children(sectPr, reference)
+        val chosen = references.firstOrNull { attr(it, "type") == "default" } ?: references.firstOrNull() ?: return emptyList()
+        val relId = chosen.getAttributeNS(R_NS, "id").ifEmpty { return emptyList() }
+        val partName = media.partFor(relId) ?: return emptyList()
+        val bytes = parts[partName] ?: return emptyList()
+        val root = runCatching { parseXml(bytes).documentElement }.getOrNull() ?: return emptyList()
+        val rels = "word/_rels/" + partName.removePrefix("word/") + ".rels"
+        // A paragraph that is nothing but a picture is the picture, as it was written.
+        return parseBlocks(root, numbering, MediaStore(parts, rels), depth = 0, inline = true).map { block ->
+            val only = (block as? Paragraph)?.runs?.singleOrNull()
+            val picture = only?.image
+            if (only != null && only.text.isEmpty() && picture != null) picture else block
+        }
     }
 
     private fun readBounded(zip: ZipInputStream, name: String, maxBytes: Int): ByteArray {
@@ -148,19 +183,25 @@ object DocxReader {
     }
 
     /** Image relationships plus the media bytes they point at. */
-    private class MediaStore(parts: Map<String, ByteArray>) {
+    private class MediaStore(parts: Map<String, ByteArray>, relsPart: String) {
         private val targetByRelId: Map<String, String> =
-            parts["word/_rels/document.xml.rels"]?.let(::parseRelationships).orEmpty()
+            parts[relsPart]?.let(::parseRelationships).orEmpty()
         private val parts = parts
+
+        /** The package part a relationship of this part points at, by name. */
+        fun partFor(relId: String): String? {
+            val target = targetByRelId[relId] ?: return null
+            return when {
+                target.startsWith("/") -> target.removePrefix("/")
+                else -> "word/$target"
+            }
+        }
 
         fun imageFor(relId: String): Triple<ByteArray, String, Unit>? {
             val target = targetByRelId[relId] ?: return null
             val extension = target.substringAfterLast('.', "").lowercase()
             val mime = MIME_BY_EXTENSION[extension] ?: return null
-            val normalized = when {
-                target.startsWith("/") -> target.removePrefix("/")
-                else -> "word/$target"
-            }
+            val normalized = partFor(relId) ?: return null
             val bytes = parts[normalized] ?: return null
             return Triple(bytes, mime, Unit)
         }
@@ -188,11 +229,13 @@ object DocxReader {
     // word/document.xml
     // ------------------------------------------------------------------
 
+    /** [inline] keeps a paragraph's pictures in its line as runs — how a running header carries its artwork — instead of after it. */
     private fun parseBlocks(
         parent: Element,
         numbering: Map<String, ListMarker>,
         media: MediaStore,
         depth: Int,
+        inline: Boolean = false,
     ): List<Block> {
         require(depth <= MAX_NESTING_DEPTH) {
             "Block nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
@@ -201,8 +244,8 @@ object DocxReader {
         for (child in children(parent)) {
             when (child.localName) {
                 "p" -> {
-                    parseParagraph(child, numbering)?.let(blocks::add)
-                    blocks += parseImages(child, media)
+                    parseParagraph(child, numbering, if (inline) media else null)?.let(blocks::add)
+                    if (!inline) blocks += parseImages(child, media)
                 }
                 "tbl" -> parseTable(child, numbering, media, depth)?.let(blocks::add)
                 else -> {} // sectPr, bookmarks, anything the reader does not know
@@ -212,24 +255,26 @@ object DocxReader {
     }
 
     /** PNG/JPEG drawings in a paragraph, emitted after its text. */
-    private fun parseImages(p: Element, media: MediaStore): List<ImageBlock> {
-        val images = mutableListOf<ImageBlock>()
-        for (drawing in descendantsNS(p, W, "drawing")) {
-            val blip = descendantsNS(drawing, A_NS, "blip").firstOrNull() ?: continue
-            val relId = blip.getAttributeNS(R_NS, "embed").ifEmpty { null } ?: continue
-            val (bytes, mime) = media.imageFor(relId)?.let { it.first to it.second } ?: continue
-            val extent = descendantsNS(drawing, WP_NS, "extent").firstOrNull()
-            val cx = extent?.getAttribute("cx")?.toLongOrNull() ?: 0L
-            val cy = extent?.getAttribute("cy")?.toLongOrNull() ?: 0L
-            images += ImageBlock(
-                bytes = bytes,
-                mimeType = mime,
-                widthPx = (cx / EMU_PER_PX).toInt().coerceAtLeast(1),
-                heightPx = (cy / EMU_PER_PX).toInt().coerceAtLeast(1),
-                confidence = 1f,
-            )
-        }
-        return images
+    private fun parseImages(p: Element, media: MediaStore): List<ImageBlock> =
+        descendantsNS(p, W, "drawing").mapNotNull { imageOf(it, media) }
+
+    /** The picture a drawing embeds, at the size its extent gives it, or null when it is not one the reader keeps. */
+    private fun imageOf(drawing: Element, media: MediaStore): ImageBlock? {
+        val blip = descendantsNS(drawing, A_NS, "blip").firstOrNull() ?: return null
+        val relId = blip.getAttributeNS(R_NS, "embed").ifEmpty { null } ?: return null
+        val (bytes, mime) = media.imageFor(relId)?.let { it.first to it.second } ?: return null
+        val extent = descendantsNS(drawing, WP_NS, "extent").firstOrNull()
+        val cx = extent?.getAttribute("cx")?.toLongOrNull() ?: 0L
+        val cy = extent?.getAttribute("cy")?.toLongOrNull() ?: 0L
+        return ImageBlock(
+            bytes = bytes,
+            mimeType = mime,
+            widthPx = (cx / EMU_PER_PX).toInt().coerceAtLeast(1),
+            heightPx = (cy / EMU_PER_PX).toInt().coerceAtLeast(1),
+            confidence = 1f,
+            widthPt = (cx.toFloat() / EMU_PER_PT).takeIf { it > 0f },
+            heightPt = (cy.toFloat() / EMU_PER_PT).takeIf { it > 0f },
+        )
     }
 
     /** All descendants in [ns] with [localName], any depth, document order. */
@@ -240,23 +285,29 @@ object DocxReader {
         return result
     }
 
-    private fun parseParagraph(p: Element, numbering: Map<String, ListMarker>): Paragraph? {
+    /** With [media], the paragraph's pictures stay in its line as runs. */
+    private fun parseParagraph(p: Element, numbering: Map<String, ListMarker>, media: MediaStore? = null): Paragraph? {
         val style = parseParagraphStyle(firstChild(p, "pPr"), numbering)
-        val runs = collectRuns(p, paragraphRtl = style.direction == TextDirection.RTL, depth = 0)
+        val runs = collectRuns(p, paragraphRtl = style.direction == TextDirection.RTL, depth = 0, media = media)
         if (runs.isEmpty()) return null
         return Paragraph(runs = runs, style = style, confidence = 1f)
     }
 
-    /** Runs directly in [parent] plus those inside run containers. */
-    private fun collectRuns(parent: Element, paragraphRtl: Boolean, depth: Int): List<TextRun> {
+    /** Runs directly in [parent] plus those inside run containers; a PAGE field's runs are fields. */
+    private fun collectRuns(parent: Element, paragraphRtl: Boolean, depth: Int, media: MediaStore? = null): List<TextRun> {
         require(depth <= MAX_NESTING_DEPTH) {
             "Run-container nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
         }
         val runs = mutableListOf<TextRun>()
         for (child in children(parent)) {
             when (child.localName) {
-                "r" -> parseRun(child, paragraphRtl)?.let(runs::add)
-                in RUN_CONTAINERS -> runs += collectRuns(child, paragraphRtl, depth + 1)
+                "r" -> parseRun(child, paragraphRtl, media)?.let(runs::add)
+                "fldSimple" -> {
+                    val inner = collectRuns(child, paragraphRtl, depth + 1, media)
+                    val instruction = attr(child, "instr").orEmpty().trim().uppercase()
+                    runs += if (instruction.startsWith("PAGE")) inner.map { it.copy(field = RunField.PAGE_NUMBER) } else inner
+                }
+                in RUN_CONTAINERS -> runs += collectRuns(child, paragraphRtl, depth + 1, media)
                 else -> {}
             }
         }
@@ -325,6 +376,9 @@ object DocxReader {
             marginBottomPt = margin("bottom"),
             marginLeftPt = margin("left"),
             marginRightPt = margin("right"),
+            headerDistancePt = margins?.let { twips(attr(it, "header")) },
+            footerDistancePt = margins?.let { twips(attr(it, "footer")) },
+            firstPageNumber = firstChild(sectPr, "pgNumType")?.let { attr(it, "start") }?.trim()?.toIntOrNull() ?: 1,
         )
     }
 
@@ -336,10 +390,15 @@ object DocxReader {
     private fun twips(value: String?): Float? =
         value?.trim()?.toFloatOrNull()?.let { it / 20f }
 
-    /** A run with no w:t at all (drawings, breaks) carries nothing to keep. */
-    private fun parseRun(r: Element, paragraphRtl: Boolean): TextRun? {
+    /** A run with no w:t at all (drawings, breaks) carries nothing to keep — unless [media] is given and it draws a picture. */
+    private fun parseRun(r: Element, paragraphRtl: Boolean, media: MediaStore? = null): TextRun? {
+        if (media != null) {
+            val picture = firstChild(r, "drawing")?.let { imageOf(it, media) }
+            if (picture != null) return TextRun("", image = picture)
+        }
+        // A run of tabs alone is text too: Word sets a line of dates with one.
         val textElements = children(r).filter { it.localName == "t" || it.localName == "tab" }
-        if (textElements.none { it.localName == "t" }) return null
+        if (textElements.isEmpty()) return null
         val text = textElements.joinToString(separator = "") { if (it.localName == "tab") "\t" else it.textContent }
         // In OOXML the absence of w:rtl means a left-to-right run even inside
         // a bidi paragraph, while the IR's null means "inherit" — so inside an
