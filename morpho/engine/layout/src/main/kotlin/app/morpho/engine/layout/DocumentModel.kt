@@ -110,6 +110,13 @@ data class TextRun(
      */
     val colorRgb: Int? = null,
     /**
+     * Packed 0xRRGGBB of the colour drawn behind the text, or null where
+     * nothing is. A reader's marking of a PDF, or Word's own highlighter:
+     * it is the reader's reading of the document, and a converted file
+     * without it is the document before it was read.
+     */
+    val highlightRgb: Int? = null,
+    /**
      * A value the writer fills in rather than the text: the number of the
      * page this run lands on. [text] then holds what the source showed
      * where it was read, for a writer with no fields of its own.

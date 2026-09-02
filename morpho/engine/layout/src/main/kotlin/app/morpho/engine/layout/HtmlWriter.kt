@@ -264,6 +264,7 @@ object HtmlWriter {
             }
             run.fontSizePt?.takeIf { it > 0f }?.let { add("font-size:${pt(it)}") }
             run.colorRgb?.let { add("color:${hexColor(it)}") }
+            run.highlightRgb?.let { add("background-color:${hexColor(it)}") }
         }
         if (needsDir || needsLang || styles.isNotEmpty()) {
             val dirAttr =

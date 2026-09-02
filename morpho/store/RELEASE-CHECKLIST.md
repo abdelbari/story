@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 365 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 373 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -89,6 +89,9 @@ Work through, in this order — each exercises a path nothing else covers:
       sub-clauses, or bullets under bullets. Each level must keep its own
       marker and sit in from the one above, in the preview, in the exported
       PDF and in Word.
+- [ ] **A PDF somebody highlighted** — mark a few lines in any PDF reader,
+      then convert it. The marked words must come back marked, in the
+      colour they were marked in, and the words beside them must not.
 - [ ] **A password-protected PDF.** The app must ask for the password rather
       than refuse the file; a wrong one must say so and let it be typed
       again; Cancel must leave the document picked and unconverted. Check a

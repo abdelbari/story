@@ -17,6 +17,7 @@ import android.text.StaticLayout
 import android.text.TextDirectionHeuristics
 import android.text.TextPaint
 import android.text.style.AbsoluteSizeSpan
+import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.ImageSpan
 import android.text.style.LeadingMarginSpan
@@ -684,6 +685,9 @@ internal object PdfFileExporter {
             // The colour the source set, opaque; a run that named none is
             // left to the page's own black.
             run.colorRgb?.let { span(ForegroundColorSpan(0xFF000000.toInt() or it)) }
+            // A marking a reader made over the words is drawn behind them,
+            // as it was drawn on the page it came from.
+            run.highlightRgb?.let { span(BackgroundColorSpan(0xFF000000.toInt() or it)) }
             if (run.superscript) {
                 span(SuperscriptSpan())
                 span(RelativeSizeSpan(RAISED_SCALE))

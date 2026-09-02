@@ -14,6 +14,7 @@ object PdfRuns {
         superscript = look?.raised == 1,
         subscript = look?.raised == -1,
         colorRgb = look?.colorRgb,
+        highlightRgb = look?.highlightRgb,
         link = look?.link,
     )
 

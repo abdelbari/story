@@ -108,6 +108,15 @@ object DocxWriter {
     /** However deep a document nests its lists, no deeper than Word's own nine levels. */
     private const val DEEPEST_LIST_LEVEL = 8
 
+    /** The sixteen colours Word's highlighter knows, by the packed colour each is. */
+    private val HIGHLIGHT_NAMES = mapOf(
+        0x000000 to "black", 0x0000FF to "blue", 0x00FFFF to "cyan", 0x000080 to "darkBlue",
+        0x008080 to "darkCyan", 0x808080 to "darkGray", 0x008000 to "darkGreen",
+        0x800080 to "darkMagenta", 0x800000 to "darkRed", 0x808000 to "darkYellow",
+        0x00FF00 to "green", 0xC0C0C0 to "lightGray", 0xFF00FF to "magenta",
+        0xFF0000 to "red", 0xFFFFFF to "white", 0xFFFF00 to "yellow",
+    )
+
     /** What each level of a bulleted list is marked with, in turn. */
     private val BULLET_CHARACTERS = listOf("•", "◦", "▪")
 
@@ -588,7 +597,7 @@ object DocxWriter {
         val halfPoints = run.fontSizePt?.takeIf { it > 0f }?.let { (it * 2).roundToInt() }
         val hasProps = run.bold || run.italic || run.underline || rtl || run.language != null ||
             family != null || halfPoints != null || run.superscript || run.subscript ||
-            run.colorRgb != null
+            run.colorRgb != null || run.highlightRgb != null
 
         // A field is a run Word fills in; what it last showed goes in as the
         // text, as the cached result a field carries.
@@ -607,7 +616,18 @@ object DocxWriter {
             if (run.italic) sb.append("<w:i/><w:iCs/>")
             run.colorRgb?.let { sb.append("""<w:color w:val="${hexColor(it)}"/>""") }
             halfPoints?.let { sb.append("""<w:sz w:val="$it"/><w:szCs w:val="$it"/>""") }
+            // Word's highlighter knows sixteen colours by name and nothing
+            // else; a marking of any other colour is shading, which draws
+            // the same and keeps the colour the reader chose. The schema
+            // fixes where each goes: highlight before the underline, shading
+            // after it.
+            val marked = run.highlightRgb?.and(0xFFFFFF)
+            val named = marked?.let { HIGHLIGHT_NAMES[it] }
+            named?.let { sb.append("""<w:highlight w:val="$it"/>""") }
             if (run.underline) sb.append("""<w:u w:val="single"/>""")
+            if (marked != null && named == null) {
+                sb.append("""<w:shd w:val="clear" w:color="auto" w:fill="${hexColor(marked)}"/>""")
+            }
             if (run.superscript) sb.append("""<w:vertAlign w:val="superscript"/>""")
             else if (run.subscript) sb.append("""<w:vertAlign w:val="subscript"/>""")
             if (rtl) sb.append("<w:rtl/>")

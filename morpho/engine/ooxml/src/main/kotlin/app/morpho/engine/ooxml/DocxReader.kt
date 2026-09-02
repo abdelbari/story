@@ -610,6 +610,15 @@ object DocxReader {
         return children(properties).mapNotNull { child -> child.localName?.let { it to child } }.toMap()
     }
 
+    /** What each of Word's sixteen highlighter colours is, packed 0xRRGGBB. */
+    private val HIGHLIGHT_COLORS = mapOf(
+        "black" to 0x000000, "blue" to 0x0000FF, "cyan" to 0x00FFFF, "darkBlue" to 0x000080,
+        "darkCyan" to 0x008080, "darkGray" to 0x808080, "darkGreen" to 0x008000,
+        "darkMagenta" to 0x800080, "darkRed" to 0x800000, "darkYellow" to 0x808000,
+        "green" to 0x00FF00, "lightGray" to 0xC0C0C0, "magenta" to 0xFF00FF,
+        "red" to 0xFF0000, "white" to 0xFFFFFF, "yellow" to 0xFFFF00,
+    )
+
     /** However deep a file nests its lists, no deeper than Word's own nine levels. */
     private const val DEEPEST_LIST_LEVEL = 8
 
@@ -699,6 +708,12 @@ object DocxReader {
         val color = properties["color"]?.let { attr(it, "val") }
             ?.takeIf { it.length == 6 && !it.equals("auto", ignoreCase = true) }
             ?.toIntOrNull(16)
+        // A marking is Word's highlighter, which knows sixteen colours by
+        // name, or shading, which takes any colour and draws the same.
+        val highlight = properties["highlight"]?.let { attr(it, "val") }?.let(HIGHLIGHT_COLORS::get)
+            ?: properties["shd"]?.let { attr(it, "fill") }
+                ?.takeIf { it.length == 6 && !it.equals("auto", ignoreCase = true) }
+                ?.toIntOrNull(16)
         return TextRun(
             text = text,
             bold = isOn(properties["b"]),
@@ -711,6 +726,7 @@ object DocxReader {
             superscript = vertical == "superscript",
             subscript = vertical == "subscript",
             colorRgb = color,
+            highlightRgb = highlight,
             note = note,
         )
     }

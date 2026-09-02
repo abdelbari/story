@@ -74,6 +74,7 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
     private val colors = IdentityHashMap<TextPosition, Int>()
     /** Where the pages' link annotations point, when the document has any. */
     private var links: AndroidPageLinks? = null
+    private var highlights: AndroidPageHighlights? = null
     /** The rules the pages draw: a text engine is not given the path operators unless it asks. */
     private val ruleCatcher = AndroidRuleCatcher({ runCatching { currentPage }.getOrNull() }, { currentPageNo })
 
@@ -111,6 +112,7 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         ruleCatcher.rules.clear()
         paintedSoFar = 0
         links = runCatching { AndroidPageLinks(document) }.getOrNull()
+        highlights = runCatching { AndroidPageHighlights(document) }.getOrNull()
         resetLine()
         writeText(document, Writer.nullWriter())
         flushLine()
@@ -321,7 +323,18 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
             } ?: false,
             raised = raised,
             colorRgb = colors[position],
+            highlightRgb = highlightAt(position),
             link = linkAt(position),
+        )
+    }
+
+    /** The colour of the highlight over [position], if one covers it. */
+    private fun highlightAt(position: TextPosition): Int? {
+        val highlights = highlights ?: return null
+        return highlights.at(
+            currentPageNo - 1,
+            position.xDirAdj + position.widthDirAdj / 2,
+            position.yDirAdj - position.heightDir / 2,
         )
     }
 
