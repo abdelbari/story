@@ -544,28 +544,44 @@ object DocxWriter {
     ) {
         if (table.rows.isEmpty()) return
         val columnCount = table.rows.maxOf { it.cells.size }.coerceAtLeast(1)
+        // The widths a reader measured off the page, in twentieths of a
+        // point; a table nothing measured shares the text width equally,
+        // which is what Word does with an "auto" grid.
+        val widths = table.columnWidthsPt
+            ?.takeIf { it.size == columnCount && it.all { width -> width > 0f } }
+            ?.map { (it * 20).roundToInt().coerceAtLeast(1) }
 
         sb.append("<w:tbl>")
         sb.append("<w:tblPr>")
-        sb.append("""<w:tblW w:w="0" w:type="auto"/>""")
-        sb.append("<w:tblBorders>")
-        for (edge in listOf("top", "left", "bottom", "right", "insideH", "insideV")) {
-            sb.append("""<w:$edge w:val="single" w:sz="4" w:space="0" w:color="auto"/>""")
+        if (widths != null) {
+            sb.append("""<w:tblW w:w="${widths.sum()}" w:type="dxa"/>""")
+        } else {
+            sb.append("""<w:tblW w:w="0" w:type="auto"/>""")
         }
-        sb.append("</w:tblBorders>")
+        if (table.ruled) {
+            sb.append("<w:tblBorders>")
+            for (edge in listOf("top", "left", "bottom", "right", "insideH", "insideV")) {
+                sb.append("""<w:$edge w:val="single" w:sz="4" w:space="0" w:color="auto"/>""")
+            }
+            sb.append("</w:tblBorders>")
+        }
         sb.append("</w:tblPr>")
         sb.append("<w:tblGrid>")
-        repeat(columnCount) { sb.append("""<w:gridCol w:w="2340"/>""") }
+        if (widths != null) {
+            for (width in widths) sb.append("""<w:gridCol w:w="$width"/>""")
+        } else {
+            repeat(columnCount) { sb.append("""<w:gridCol w:w="2340"/>""") }
+        }
         sb.append("</w:tblGrid>")
 
         for (row in table.rows) {
             sb.append("<w:tr>")
-            for (cell in row.cells) {
-                appendCell(sb, cell, document, numbering, images, links, part)
+            for ((column, cell) in row.cells.withIndex()) {
+                appendCell(sb, cell, document, numbering, images, links, part, widths?.getOrNull(column))
             }
             // Pad short rows so every row has the full column count.
-            repeat(columnCount - row.cells.size) {
-                appendCell(sb, TableCell(emptyList()), document, numbering, images, links, part)
+            for (column in row.cells.size until columnCount) {
+                appendCell(sb, TableCell(emptyList()), document, numbering, images, links, part, widths?.getOrNull(column))
             }
             sb.append("</w:tr>")
         }
@@ -582,9 +598,14 @@ object DocxWriter {
         images: ImagePlan,
         links: LinkPlan,
         part: String,
+        widthTwips: Int? = null,
     ) {
         sb.append("<w:tc>")
-        sb.append("""<w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>""")
+        if (widthTwips != null) {
+            sb.append("""<w:tcPr><w:tcW w:w="$widthTwips" w:type="dxa"/></w:tcPr>""")
+        } else {
+            sb.append("""<w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>""")
+        }
         for (block in cell.blocks) {
             appendBlock(sb, block, document, numbering, images, links, part)
         }

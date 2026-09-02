@@ -60,7 +60,7 @@ object HtmlWriter {
             "p{margin:0 0 9pt;}" +
             "ul,ol{margin:0 0 9pt;padding-inline-start:24pt;}" +
             "li{margin:0 0 3pt;}" +
-            "table{border-collapse:collapse;margin:0 0 9pt;width:100%;}" +
+            "table{border-collapse:collapse;margin:0 0 9pt;table-layout:fixed;}" +
             "td,th{border:1px solid #555;padding:4pt 8pt;vertical-align:top;}" +
             "img{max-width:100%;height:auto;}" +
             "p.image{text-align:center;}" +
@@ -274,11 +274,24 @@ object HtmlWriter {
 
     private fun appendTable(sb: StringBuilder, table: Table, defaultDirection: TextDirection) {
         if (table.rows.isEmpty()) return
-        sb.append("<table>\n")
+        // The widths a reader measured, and the rules the page drew — a
+        // table found by the alignment of its columns has none, and lines
+        // the source never drew would be ink of our own invention.
+        val widths = table.columnWidthsPt?.takeIf { widths -> widths.isNotEmpty() && widths.all { it > 0f } }
+        val styles = buildList {
+            if (widths != null) add("width:${pt(widths.sum())}") else add("width:100%")
+            if (!table.ruled) add("border:0")
+        }
+        sb.append("""<table style="${styles.joinToString(";")}">""").append("\n")
+        if (widths != null) {
+            for (width in widths) sb.append("""<col style="width:${pt(width)}">""")
+            sb.append("\n")
+        }
+        val cellStyle = if (table.ruled) "" else """ style="border:0""""
         for (row in table.rows) {
             sb.append("<tr>")
             for (cell in row.cells) {
-                sb.append("<td>")
+                sb.append("<td").append(cellStyle).append(">")
                 appendBlocks(sb, cell.blocks, defaultDirection)
                 sb.append("</td>")
             }

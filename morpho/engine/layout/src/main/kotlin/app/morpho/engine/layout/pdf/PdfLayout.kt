@@ -273,7 +273,29 @@ object PdfLayout {
                 )
             },
             confidence = confidence,
+            columnWidthsPt = columnWidthsOf(region),
+            // A table found by the alignment of its columns is one nothing
+            // was drawn around: the page shows no rules, so neither does
+            // the conversion.
+            ruled = false,
         )
+
+    /**
+     * The width of each column of [region], in points: the columns are cut
+     * apart halfway across the clear space between them, so the widths add
+     * up to what the table occupies rather than to the ink inside it.
+     */
+    private fun columnWidthsOf(region: PdfTableDetector.Region): List<Float>? {
+        val columns = region.rows.firstOrNull()?.size ?: return null
+        if (columns < 1 || region.rows.any { it.size != columns }) return null
+        val starts = (0 until columns).map { column -> region.rows.minOf { it[column].xStart } }
+        val ends = (0 until columns).map { column -> region.rows.maxOf { it[column].xEnd } }
+        val edges = mutableListOf(starts.first())
+        for (column in 1 until columns) edges += (ends[column - 1] + starts[column]) / 2
+        edges += ends.last()
+        val widths = edges.zipWithNext { left, right -> right - left }
+        return widths.takeIf { widths.all { it > 1f } }
+    }
 
     private fun cluster(
         lines: List<PdfLine>,

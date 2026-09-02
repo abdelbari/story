@@ -481,7 +481,14 @@ object DocxReader {
             )
         }
         if (rows.isEmpty()) return null
-        return Table(rows = rows, confidence = 1f)
+        val grid = firstChild(tbl, "tblGrid")
+            ?.let { children(it, "gridCol").mapNotNull { col -> twips(attr(col, "w")) } }
+            ?.takeIf { it.isNotEmpty() && it.all { width -> width > 0f } }
+        // Borders live in the table's properties; "none" and "nil" draw
+        // nothing, which is a table the page never ruled.
+        val borders = firstChild(firstChild(tbl, "tblPr"), "tblBorders")
+        val ruled = borders != null && children(borders).any(::isBorder)
+        return Table(rows = rows, confidence = 1f, columnWidthsPt = grid, ruled = ruled)
     }
 
     // ------------------------------------------------------------------
@@ -539,8 +546,8 @@ object DocxReader {
         return result
     }
 
-    private fun firstChild(parent: Element, localName: String): Element? =
-        children(parent, localName).firstOrNull()
+    private fun firstChild(parent: Element?, localName: String): Element? =
+        parent?.let { children(it, localName).firstOrNull() }
 
     private fun attr(element: Element, name: String): String? {
         val namespaced = element.getAttributeNS(W, name)

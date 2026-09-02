@@ -116,6 +116,19 @@ enum class RunField { PAGE_NUMBER }
 data class Table(
     val rows: List<TableRow>,
     override val confidence: Float = 1f,
+    /**
+     * The width of each column in points, as a reader measured it off the
+     * page. Null when nothing measured them, and a writer shares the text
+     * width out equally — which is what a table of two columns, one of
+     * dates and one of paragraphs, never looks like.
+     */
+    val columnWidthsPt: List<Float>? = null,
+    /**
+     * Whether the page draws rules around the cells. A table found by the
+     * alignment of its columns rather than by lines on the page has none,
+     * and drawing them would add ink the source never had.
+     */
+    val ruled: Boolean = true,
 ) : Block
 
 data class TableRow(val cells: List<TableCell>)

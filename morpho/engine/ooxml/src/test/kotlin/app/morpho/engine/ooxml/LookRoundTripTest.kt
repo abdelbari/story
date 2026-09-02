@@ -9,6 +9,9 @@ import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.ParagraphStyle
 import app.morpho.engine.layout.TextDirection
+import app.morpho.engine.layout.Table
+import app.morpho.engine.layout.TableRow
+import app.morpho.engine.layout.TableCell
 import app.morpho.engine.layout.TextRun
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -247,6 +250,70 @@ class LookRoundTripTest {
         val body = entries(docx).getValue("word/document.xml")
         assertEquals(1, Regex("<w:hyperlink ").findAll(body).count(), body)
         assertEquals(1, Regex("rIdLnk").findAll(entries(docx).getValue("word/_rels/document.xml.rels")).count())
+    }
+
+    @Test
+    fun `a table keeps the columns a reader measured, and the rules the page drew`() {
+        val document = DocumentModel(
+            listOf(
+                Table(
+                    rows = listOf(
+                        TableRow(
+                            listOf(
+                                TableCell(listOf(Paragraph(listOf(TextRun("2022-04-21"))))),
+                                TableCell(listOf(Paragraph(listOf(TextRun("a long column of prose"))))),
+                            )
+                        )
+                    ),
+                    columnWidthsPt = listOf(72f, 288f),
+                )
+            )
+        )
+        val xml = documentXml(DocxWriter.toByteArray(document))
+        assertTrue(xml.contains("""<w:tblW w:w="7200" w:type="dxa"/>"""), xml)
+        assertTrue(xml.contains("""<w:gridCol w:w="1440"/><w:gridCol w:w="5760"/>"""), xml)
+        assertTrue(xml.contains("""<w:tcW w:w="1440" w:type="dxa"/>"""), xml)
+        assertTrue(xml.contains("<w:tblBorders>"), "a ruled table keeps its rules")
+    }
+
+    @Test
+    fun `a table the page never ruled is written without rules`() {
+        val xml = documentXml(
+            DocxWriter.toByteArray(
+                DocumentModel(
+                    listOf(
+                        Table(
+                            rows = listOf(TableRow(listOf(TableCell(listOf(Paragraph(listOf(TextRun("x")))))))),
+                            ruled = false,
+                        )
+                    )
+                )
+            )
+        )
+        assertTrue(!xml.contains("<w:tblBorders>"), xml)
+    }
+
+    @Test
+    fun `a table read back keeps its grid and whether it was ruled`() {
+        val document = DocumentModel(
+            listOf(
+                Table(
+                    rows = listOf(
+                        TableRow(
+                            listOf(
+                                TableCell(listOf(Paragraph(listOf(TextRun("a"))))),
+                                TableCell(listOf(Paragraph(listOf(TextRun("b"))))),
+                            )
+                        )
+                    ),
+                    columnWidthsPt = listOf(60f, 300f),
+                    ruled = false,
+                )
+            )
+        )
+        val read = DocxReader.read(DocxWriter.toByteArray(document)).blocks.filterIsInstance<Table>().single()
+        assertEquals(listOf(60f, 300f), read.columnWidthsPt)
+        assertTrue(!read.ruled)
     }
 
     @Test

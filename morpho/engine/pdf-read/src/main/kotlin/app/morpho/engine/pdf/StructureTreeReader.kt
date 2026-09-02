@@ -196,6 +196,12 @@ internal object StructureTreeReader {
     private const val PAGE_NUMBER_DRIFT_PT = 12f
     /** A gap wider than this share of the type size splits a run of digits into two. */
     private const val TOKEN_GAP_SHARE = 0.6f
+    /** How far outside a table's text a rule still counts as the table's. */
+    private const val TABLE_RULE_REACH_PT = 8f
+    /** A rule must cross this share of a table's width to be one of its own. */
+    private const val TABLE_RULE_SHARE = 0.6f
+    /** Rules across a table before it counts as one the page ruled. */
+    private const val TABLE_RULES_TO_BE_RULED = 2
     /** The characters a producer draws as a list marker. */
     private const val MARKER_CHARACTERS = "\u2022\u00B7\u2219\u2212\u2013\u2014-*\u25AA\u25AB\u25CF\u25CB\u25E6\u2023\u2043\u00BB\u203A"
     /** What an enumerator ends with: "3.", "أ-", "a)". */
@@ -906,6 +912,30 @@ internal object StructureTreeReader {
         }
 
         /**
+         * Whether the page draws rules around a table — the box [glyphs]
+         * occupy. Two rules across it is a ruled table; a table found
+         * without any is one the producer set by alignment alone, and
+         * drawing lines around it would add ink the page never had.
+         */
+        fun ruledLike(glyphs: List<Pair<Int, Glyph>>): Boolean {
+            val ink = glyphs.filter { !it.second.position.unicode.isNullOrBlank() }
+            if (ink.isEmpty()) return false
+            val page = ink.first().first
+            if (ink.any { it.first != page }) return false
+            val left = ink.minOf { it.second.position.xDirAdj }
+            val right = ink.maxOf { it.second.position.xDirAdj + it.second.position.widthDirAdj }
+            val top = ink.minOf { it.second.position.yDirAdj - it.second.position.heightDir }
+            val bottom = ink.maxOf { it.second.position.yDirAdj }
+            val width = right - left
+            if (width <= 0f) return false
+            val across = rulesByPageIndex[page].orEmpty().count { rule ->
+                rule.y >= top - TABLE_RULE_REACH_PT && rule.y <= bottom + TABLE_RULE_REACH_PT &&
+                    minOf(rule.right, right) - maxOf(rule.left, left) >= TABLE_RULE_SHARE * width
+            }
+            return across >= TABLE_RULES_TO_BE_RULED
+        }
+
+        /**
          * Whether a rule is drawn across the page between [top] and
          * [bottom] on [page], inside the page's text block — a running
          * footer's rule below the block is not a paragraph's.
@@ -1579,27 +1609,33 @@ internal object StructureTreeReader {
 
         private fun emitTable(table: PDStructureElement, depth: Int) {
             if (depth > MAX_DEPTH) throw TooDeepException()
-            val rows = childElements(table)
+            // Each cell's glyphs are kept: they say what the cell holds and
+            // also where it sits, which is what the table's columns are.
+            val cellGlyphs = childElements(table)
                 .filter { resolvedType(it) == "TR" }
                 .map { row ->
+                    childElements(row)
+                        .filter { resolvedType(it) in setOf("TD", "TH") }
+                        .map(::glyphsOf)
+                }
+            val rows = cellGlyphs
+                .map { row ->
                     TableRow(
-                        childElements(row)
-                            .filter { resolvedType(it) in setOf("TD", "TH") }
-                            .map { cell ->
-                                val styled = trimmed(texts.readStyled(glyphsOf(cell)).logical)
-                                val text = styled.text
-                                if (text.isNotEmpty()) sawText = true
-                                val direction = Bidi.firstStrongDirection(text)
-                                TableCell(
-                                    listOf(
-                                        Paragraph(
-                                            runs = runsOf(styled).ifEmpty { listOf(TextRun("")) },
-                                            style = ParagraphStyle(direction = direction),
-                                            confidence = CONFIDENCE,
-                                        )
+                        row.map { glyphs ->
+                            val styled = trimmed(texts.readStyled(glyphs).logical)
+                            val text = styled.text
+                            if (text.isNotEmpty()) sawText = true
+                            val direction = Bidi.firstStrongDirection(text)
+                            TableCell(
+                                listOf(
+                                    Paragraph(
+                                        runs = runsOf(styled).ifEmpty { listOf(TextRun("")) },
+                                        style = ParagraphStyle(direction = direction),
+                                        confidence = CONFIDENCE,
                                     )
                                 )
-                            }
+                            )
+                        }
                     )
                 }
                 .filter { it.cells.isNotEmpty() }
@@ -1607,7 +1643,41 @@ internal object StructureTreeReader {
                 walkChildren(table, depth)
                 return
             }
-            blocks += Table(rows = rows, confidence = CONFIDENCE)
+            blocks += Table(
+                rows = rows,
+                confidence = CONFIDENCE,
+                columnWidthsPt = columnWidthsOf(cellGlyphs),
+                ruled = texts.ruledLike(cellGlyphs.flatten().flatten()),
+            )
+        }
+
+        /**
+         * The width of each column, in points: the columns are cut apart
+         * halfway across the clear space between them, so the widths add up
+         * to what the table occupies rather than to the ink inside it. Null
+         * when the rows do not agree on how many columns there are, or when
+         * a column drew nothing to measure.
+         */
+        private fun columnWidthsOf(cellGlyphs: List<List<List<Pair<Int, Glyph>>>>): List<Float>? {
+            val columns = cellGlyphs.firstOrNull()?.size ?: return null
+            if (columns < 1 || cellGlyphs.any { it.size != columns }) return null
+            val starts = FloatArray(columns) { Float.POSITIVE_INFINITY }
+            val ends = FloatArray(columns) { Float.NEGATIVE_INFINITY }
+            for (row in cellGlyphs) {
+                for ((column, glyphs) in row.withIndex()) {
+                    for ((_, glyph) in glyphs) {
+                        if (glyph.position.unicode.isNullOrBlank()) continue
+                        starts[column] = minOf(starts[column], glyph.position.xDirAdj)
+                        ends[column] = maxOf(ends[column], glyph.position.xDirAdj + glyph.position.widthDirAdj)
+                    }
+                }
+            }
+            if (starts.any { !it.isFinite() } || ends.any { !it.isFinite() }) return null
+            val edges = mutableListOf(starts.first())
+            for (column in 1 until columns) edges += (ends[column - 1] + starts[column]) / 2
+            edges += ends.last()
+            val widths = edges.zipWithNext { left, right -> right - left }
+            return widths.takeIf { widths.all { it > 1f } }
         }
 
         /** All text under an element, in tag (logical) order. */

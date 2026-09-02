@@ -60,9 +60,10 @@ import kotlin.math.roundToInt
  * exact the way Word sets it; the running head and foot drawn on every
  * page at their distance from the edge, a page-number field counting from
  * where the source did; paragraphs split across pages line-by-line. Honest
- * v1 limits, documented rather than hidden: tables use uniform column
- * widths, render only their paragraph content, and a single row never
- * splits across pages (one taller than a page is clipped); images scale
+ * v1 limits, documented rather than hidden: tables take the widths their
+ * columns were measured at and are ruled only where the page ruled them,
+ * but render only their paragraph content, and a single row never splits
+ * across pages (one taller than a page is clipped); images scale
  * into the content box at their measured size, else at the CSS px→pt
  * ratio; list markers are plain text prefixes, so an RTL numbered item
  * shows its number on the right but with Western digits.
@@ -460,15 +461,29 @@ internal object PdfFileExporter {
     private fun table(cursor: Cursor, block: Table, defaultDirection: TextDirection) {
         val columns = block.rows.maxOfOrNull { it.cells.size } ?: return
         if (columns == 0) return
-        val columnWidth = cursor.sheet.contentWidth.toFloat() / columns
-        val textWidth = (columnWidth - 2 * CELL_PADDING).toInt().coerceAtLeast(1)
+        // The widths a reader measured off the page, scaled to the content
+        // box; a table nothing measured shares the width equally.
+        val measured = block.columnWidthsPt
+            ?.takeIf { it.size == columns && it.all { width -> width > 0f } }
+        val columnWidths = if (measured != null) {
+            val scale = cursor.sheet.contentWidth / measured.sum()
+            measured.map { it * scale }
+        } else {
+            List(columns) { cursor.sheet.contentWidth.toFloat() / columns }
+        }
+        val offsets = columnWidths.runningFold(0f) { at, width -> at + width }
+        // A right-to-left document lays its columns out from the right, so
+        // the first cell of a row is drawn in the last column — and is set
+        // to that column's width, not the first one's.
+        val placed = { index: Int -> if (defaultDirection == TextDirection.RTL) columns - 1 - index else index }
         val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = 0.75f
             color = 0xFF9E9E9E.toInt()
         }
         for (row in block.rows) {
-            val cellLayouts = row.cells.map { cell ->
+            val cellLayouts = row.cells.mapIndexed { index, cell ->
+                val textWidth = (columnWidths[placed(index)] - 2 * CELL_PADDING).toInt().coerceAtLeast(1)
                 // Numbered items restart per cell, same contiguity rule as
                 // the top-level walk.
                 var numbered = 0
@@ -497,19 +512,15 @@ internal object PdfFileExporter {
             cursor.ensureRoom(rowHeight)
             val canvas = cursor.canvas
             for ((index, layouts) in cellLayouts.withIndex()) {
-                // RTL documents lay their columns out right-to-left.
-                val column = if (defaultDirection == TextDirection.RTL) {
-                    columns - 1 - index
-                } else {
-                    index
-                }
-                val x = cursor.sheet.marginLeft + column * columnWidth
-                canvas.drawRect(x, cursor.y, x + columnWidth, cursor.y + rowHeight, border)
+                val column = placed(index)
+                val x = cursor.sheet.marginLeft + offsets[column]
+                val width = columnWidths[column]
+                if (block.ruled) canvas.drawRect(x, cursor.y, x + width, cursor.y + rowHeight, border)
                 var textY = cursor.y + CELL_PADDING
                 for (layout in layouts) {
                     canvas.save()
                     canvas.translate(x + CELL_PADDING, textY)
-                    canvas.clipRect(0f, 0f, textWidth.toFloat(), layout.height.toFloat())
+                    canvas.clipRect(0f, 0f, width - 2 * CELL_PADDING, layout.height.toFloat())
                     layout.draw(canvas)
                     canvas.restore()
                     textY += layout.height + 2f

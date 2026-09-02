@@ -1,6 +1,7 @@
 package app.morpho.engine.pdf
 
 import app.morpho.engine.layout.Paragraph
+import app.morpho.engine.layout.Table
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.PDPageContentStream
@@ -32,6 +33,51 @@ class PdfReaderTest {
                     content.showText(line)
                 }
                 content.endText()
+            }
+            val out = ByteArrayOutputStream()
+            doc.save(out)
+            return out.toByteArray()
+        }
+    }
+
+    @Test
+    fun `a table of dates and prose keeps the widths the page gave its columns`() {
+        // Two columns of very different widths: shared out equally, the
+        // dates get room they never needed and the prose wraps early.
+        val pdf = tablePdf()
+        val table = PdfReader().extract(pdf).blocks.filterIsInstance<Table>().singleOrNull()
+        assertTrue(table != null, "no table was found")
+        val widths = table!!.columnWidthsPt
+        assertTrue(widths != null && widths.size == 2, "no columns were measured: $widths")
+        assertTrue(widths!![1] > widths[0] * 2, "the columns came out alike: $widths")
+        // Nothing was drawn around it, so nothing is drawn around it.
+        assertTrue(!table.ruled, "rules were invented for a table that had none")
+    }
+
+    /** An untagged page with two columns aligned by position: short dates, long prose. */
+    private fun tablePdf(): ByteArray {
+        PDDocument().use { doc ->
+            val page = PDPage(PDRectangle.A4)
+            doc.addPage(page)
+            PDPageContentStream(doc, page).use { content ->
+                val rows = listOf(
+                    "2022-04-21" to "the day the paper was received by the journal",
+                    "2022-05-19" to "the day the reviewers accepted it for printing",
+                    "2022-06-03" to "the day it appeared in the summer issue",
+                )
+                for ((index, row) in rows.withIndex()) {
+                    val y = 700f - index * 20f
+                    content.beginText()
+                    content.setFont(PDType1Font.HELVETICA, 11f)
+                    content.newLineAtOffset(72f, y)
+                    content.showText(row.first)
+                    content.endText()
+                    content.beginText()
+                    content.setFont(PDType1Font.HELVETICA, 11f)
+                    content.newLineAtOffset(160f, y)
+                    content.showText(row.second)
+                    content.endText()
+                }
             }
             val out = ByteArrayOutputStream()
             doc.save(out)
