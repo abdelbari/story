@@ -161,7 +161,10 @@ private fun PagedPreview(pdf: ByteArray, modifier: Modifier) {
 @Composable
 private fun PreviewPage(document: PreviewDocument, index: Int, widthPx: Int) {
     val bitmap by produceState<Bitmap?>(initialValue = null, document, index, widthPx) {
-        value = withContext(Dispatchers.IO) { document.render(index, widthPx) }
+        // Drawn off the main thread; assigned here, where lint can see the
+        // producer set its value.
+        val drawn = withContext(Dispatchers.IO) { document.render(index, widthPx) }
+        value = drawn
     }
     val label = stringResource(R.string.preview_page, index + 1, document.pageCount)
     Box(
