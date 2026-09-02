@@ -83,6 +83,7 @@ object DocxReader {
         setOf("word/document.xml", "word/numbering.xml", "word/_rels/document.xml.rels")
     /** A running header or footer part, or the relationships of one: word/header1.xml, word/_rels/footer2.xml.rels. */
     private val FURNITURE_PART = Regex("word/(?:_rels/)?(?:header|footer)\\d*\\.xml(?:\\.rels)?")
+    private const val NOTES_PART = "word/footnotes.xml"
     private const val EMU_PER_PT = 12700L
     private const val REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
     private const val A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -106,8 +107,21 @@ object DocxReader {
             val body = firstChild(parseXml(documentPart).documentElement, "body")
                 ?: return DocumentModel(blocks = emptyList())
             val sectPr = firstChild(body, "sectPr")
+            // The notes part, read first: a mark in the text refers to a
+            // note by number, and the note lives out here.
+            val notes = parts[NOTES_PART]?.let { bytes ->
+                runCatching {
+                    children(parseXml(bytes).documentElement, "footnote")
+                        .filter { attr(it, "type") == null }
+                        .mapNotNull { note ->
+                            val id = attr(note, "id")?.trim()?.toIntOrNull() ?: return@mapNotNull null
+                            id to parseBlocks(note, numbering, media, depth = 0)
+                        }
+                        .toMap()
+                }.getOrNull()
+            }.orEmpty()
             return DocumentModel(
-                blocks = parseBlocks(body, numbering, media, depth = 0),
+                blocks = parseBlocks(body, numbering, media, depth = 0, notes = notes),
                 pageSetup = sectPr?.let(::parsePageSetup),
                 header = sectPr?.let { furniture(it, "headerReference", parts, media, numbering) }.orEmpty(),
                 footer = sectPr?.let { furniture(it, "footerReference", parts, media, numbering) }.orEmpty(),
@@ -125,7 +139,9 @@ object DocxReader {
         ZipInputStream(input).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory && (entry.name in NEEDED_PARTS || FURNITURE_PART.matches(entry.name))) {
+                if (!entry.isDirectory &&
+                    (entry.name in NEEDED_PARTS || entry.name == NOTES_PART || FURNITURE_PART.matches(entry.name))
+                ) {
                     parts[entry.name] = readBounded(zip, entry.name, MAX_PART_BYTES)
                 } else if (!entry.isDirectory && entry.name.startsWith("word/media/")) {
                     val bytes = readBounded(zip, entry.name, MAX_MEDIA_PART_BYTES)
@@ -240,6 +256,7 @@ object DocxReader {
         media: MediaStore,
         depth: Int,
         inline: Boolean = false,
+        notes: Map<Int, List<Block>> = emptyMap(),
     ): List<Block> {
         require(depth <= MAX_NESTING_DEPTH) {
             "Block nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
@@ -248,10 +265,10 @@ object DocxReader {
         for (child in children(parent)) {
             when (child.localName) {
                 "p" -> {
-                    parseParagraph(child, numbering, media, inline)?.let(blocks::add)
+                    parseParagraph(child, numbering, media, inline, notes)?.let(blocks::add)
                     if (!inline) blocks += parseImages(child, media)
                 }
-                "tbl" -> parseTable(child, numbering, media, depth)?.let(blocks::add)
+                "tbl" -> parseTable(child, numbering, media, depth, notes)?.let(blocks::add)
                 else -> {} // sectPr, bookmarks, anything the reader does not know
             }
         }
@@ -295,6 +312,7 @@ object DocxReader {
         numbering: Map<String, ListMarker>,
         media: MediaStore? = null,
         inline: Boolean = false,
+        notes: Map<Int, List<Block>> = emptyMap(),
     ): Paragraph? {
         val style = parseParagraphStyle(firstChild(p, "pPr"), numbering)
         val runs = collectRuns(
@@ -303,6 +321,7 @@ object DocxReader {
             depth = 0,
             media = media,
             inline = inline,
+            notes = notes,
         )
         if (runs.isEmpty()) return null
         return Paragraph(runs = runs, style = style, confidence = 1f)
@@ -319,6 +338,7 @@ object DocxReader {
         depth: Int,
         media: MediaStore? = null,
         inline: Boolean = false,
+        notes: Map<Int, List<Block>> = emptyMap(),
     ): List<TextRun> {
         require(depth <= MAX_NESTING_DEPTH) {
             "Run-container nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
@@ -326,19 +346,19 @@ object DocxReader {
         val runs = mutableListOf<TextRun>()
         for (child in children(parent)) {
             when (child.localName) {
-                "r" -> parseRun(child, paragraphRtl, media.takeIf { inline })?.let(runs::add)
+                "r" -> parseRun(child, paragraphRtl, media.takeIf { inline }, notes)?.let(runs::add)
                 "fldSimple" -> {
-                    val inner = collectRuns(child, paragraphRtl, depth + 1, media, inline)
+                    val inner = collectRuns(child, paragraphRtl, depth + 1, media, inline, notes)
                     val instruction = attr(child, "instr").orEmpty().trim().uppercase()
                     runs += if (instruction.startsWith("PAGE")) inner.map { it.copy(field = RunField.PAGE_NUMBER) } else inner
                 }
                 "hyperlink" -> {
-                    val inner = collectRuns(child, paragraphRtl, depth + 1, media, inline)
+                    val inner = collectRuns(child, paragraphRtl, depth + 1, media, inline, notes)
                     val target = child.getAttributeNS(R_NS, "id").ifEmpty { null }?.let { media?.targetFor(it) }
                         ?: attr(child, "anchor")?.let { "#$it" }
                     runs += if (target != null) inner.map { it.copy(link = target) } else inner
                 }
-                in RUN_CONTAINERS -> runs += collectRuns(child, paragraphRtl, depth + 1, media, inline)
+                in RUN_CONTAINERS -> runs += collectRuns(child, paragraphRtl, depth + 1, media, inline, notes)
                 else -> {}
             }
         }
@@ -424,11 +444,21 @@ object DocxReader {
         value?.trim()?.toFloatOrNull()?.let { it / 20f }
 
     /** A run with no w:t at all (drawings, breaks) carries nothing to keep — unless [media] is given and it draws a picture. */
-    private fun parseRun(r: Element, paragraphRtl: Boolean, media: MediaStore? = null): TextRun? {
+    private fun parseRun(
+        r: Element,
+        paragraphRtl: Boolean,
+        media: MediaStore? = null,
+        notes: Map<Int, List<Block>> = emptyMap(),
+    ): TextRun? {
         if (media != null) {
             val picture = firstChild(r, "drawing")?.let { imageOf(it, media) }
             if (picture != null) return TextRun("", image = picture)
         }
+        // The note a mark refers to lives in a part of its own; the mark
+        // itself is the run's text, when the reference says one follows.
+        val note = firstChild(r, "footnoteReference")
+            ?.let { attr(it, "id")?.trim()?.toIntOrNull() }
+            ?.let { notes[it] }
         // A run of tabs alone is text too: Word sets a line of dates with one.
         val textElements = children(r).filter { it.localName == "t" || it.localName == "tab" }
         if (textElements.isEmpty()) return null
@@ -466,6 +496,7 @@ object DocxReader {
             superscript = vertical == "superscript",
             subscript = vertical == "subscript",
             colorRgb = color,
+            note = note,
         )
     }
 
@@ -474,11 +505,12 @@ object DocxReader {
         numbering: Map<String, ListMarker>,
         media: MediaStore,
         depth: Int,
+        notes: Map<Int, List<Block>> = emptyMap(),
     ): Table? {
         val rows = children(tbl, "tr").map { tr ->
             TableRow(
                 children(tr, "tc").map { tc ->
-                    TableCell(parseBlocks(tc, numbering, media, depth + 1))
+                    TableCell(parseBlocks(tc, numbering, media, depth + 1, notes = notes))
                 }
             )
         }

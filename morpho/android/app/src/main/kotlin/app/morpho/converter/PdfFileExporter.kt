@@ -90,6 +90,12 @@ internal object PdfFileExporter {
     private const val MAX_DESCENT_SHARE = 0.4f
     /** Word's default tab interval: half an inch. */
     private const val DEFAULT_TAB_PT = 36f
+    /** The clear space between a page's text and the rule above its notes. */
+    private const val NOTE_GAP_PT = 6f
+    /** How far across the page the rule above the notes runs. */
+    private const val NOTE_RULE_SHARE = 0.33f
+    /** A note is set this much smaller than the text that refers to it. */
+    private const val NOTE_SCALE = 0.85f
 
     /** The sheet a document is laid out on, in points. */
     private class Sheet(
@@ -177,10 +183,23 @@ internal object PdfFileExporter {
         private var pageCount = 0
         var y = 0f
             private set
+        /** What the notes of this page take at its foot, kept clear of the text. */
+        private var reserved = 0f
+        /** The notes whose marks have landed on this page, drawn when it closes. */
+        private val notes = mutableListOf<Pair<StaticLayout, Float>>()
 
         val canvas: Canvas get() = checkNotNull(page).canvas
-        val remaining: Float get() = sheet.height - sheet.marginBottom - y
+        val remaining: Float get() = sheet.height - sheet.marginBottom - reserved - y
         val atTop: Boolean get() = y <= sheet.marginTop + 0.5f
+
+        /** Keeps [height] at the foot of this page for a note, if there is room to. */
+        fun reserve(layout: StaticLayout): Boolean {
+            val height = layout.height + NOTE_GAP_PT
+            if (height > remaining - 1f) return false
+            reserved += height
+            notes += layout to height
+            return true
+        }
 
         fun openPage() {
             closePage()
@@ -194,8 +213,39 @@ internal object PdfFileExporter {
         }
 
         fun closePage() {
-            page?.let(pdf::finishPage)
+            val open = page ?: return
+            drawNotes(open.canvas)
+            pdf.finishPage(open)
             page = null
+        }
+
+        /**
+         * The page's notes at its foot, under a short rule, in the order
+         * their marks appeared — which is where a page puts them.
+         */
+        private fun drawNotes(canvas: Canvas) {
+            if (notes.isEmpty()) return
+            val bottom = sheet.height - sheet.marginBottom
+            var top = bottom - notes.sumOf { it.second.toDouble() }.toFloat()
+            val rule = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                strokeWidth = 0.75f
+                color = 0xFF000000.toInt()
+            }
+            canvas.drawLine(
+                sheet.marginLeft, top,
+                sheet.marginLeft + sheet.contentWidth * NOTE_RULE_SHARE, top,
+                rule,
+            )
+            top += NOTE_GAP_PT
+            for ((layout, _) in notes) {
+                canvas.save()
+                canvas.translate(sheet.marginLeft, top)
+                layout.draw(canvas)
+                canvas.restore()
+                top += layout.height
+            }
+            notes.clear()
+            reserved = 0f
         }
 
         /** Move to a fresh page unless [height] fits or we are already at the top. */
@@ -377,6 +427,10 @@ internal object PdfFileExporter {
         val before = block.style.spaceBeforePt?.takeIf { it > 0f } ?: 0f
         if (before > 0f && !cursor.atTop) cursor.advance(minOf(before, cursor.remaining))
         val direction = block.style.direction ?: defaultDirection
+        // The notes this paragraph's marks carry belong at the foot of the
+        // page it lands on, so the room they need is kept before its text
+        // is laid out against what is left.
+        reserveNotes(cursor, block, direction)
         indent(text, block)
         tabs(text, block)
         val paint = paintFor(block.style.kind)
@@ -394,6 +448,39 @@ internal object PdfFileExporter {
         // where the source's do; otherwise the type scale's own.
         val after = block.style.spaceAfterPt?.coerceAtLeast(0f) ?: spacingAfter(block.style.kind)
         cursor.advance(minOf(after, cursor.remaining))
+    }
+
+    /**
+     * Keeps room at the foot of the page for each note the paragraph's
+     * marks carry, and hands the note to the page to draw as it closes. A
+     * note that will not fit goes to the next page, as a note does when
+     * the line that calls it turns the page.
+     */
+    private fun reserveNotes(cursor: Cursor, block: Paragraph, direction: TextDirection) {
+        for (run in block.runs) {
+            val note = run.note?.takeIf { it.isNotEmpty() } ?: continue
+            val paint = paintFor(ParagraphKind.BODY).apply { textSize *= NOTE_SCALE }
+            val text = SpannableStringBuilder()
+            val mark = run.text.trim()
+            if (mark.isNotEmpty()) text.append("$mark ")
+            for (paragraph in note.filterIsInstance<Paragraph>()) {
+                if (text.isNotEmpty() && !text.endsWith(" ")) text.append(' ')
+                text.append(paragraph.text)
+            }
+            if (text.isBlank()) continue
+            val layout = layout(
+                text,
+                paint,
+                direction,
+                Alignment.START,
+                cursor.sheet.contentWidth,
+                pitch = null,
+            )
+            if (!cursor.reserve(layout)) {
+                cursor.openPage()
+                cursor.reserve(layout)
+            }
+        }
     }
 
     /**

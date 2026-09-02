@@ -2,7 +2,9 @@ package app.morpho.pdf
 
 import android.content.Context
 import app.morpho.engine.layout.DocumentModel
+import app.morpho.engine.layout.Footnotes
 import app.morpho.engine.layout.ImageBlock
+import app.morpho.engine.layout.Links
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.layout.Table
@@ -51,18 +53,22 @@ class AndroidPdfReader(context: Context) {
                 } else {
                     null
                 }
-            if (fromTags != null) return fromTags
+            // The same passes the engine's reader makes over what it read:
+            // the addresses a page writes out become links, and the notes
+            // under its rules go to the marks that call them.
+            if (fromTags != null) return Footnotes.refine(Links.refine(fromTags))
             // Everything below ran the position heuristics, so it scores as
             // untagged — even when a tree exists but yielded nothing.
             val confidence = 0.6f
 
             val stripper = AndroidPositionTextStripper()
             val lines = runCatching { stripper.capture(doc) }.getOrDefault(emptyList())
-            if (lines.isNotEmpty()) {
+            val model = if (lines.isNotEmpty()) {
                 PdfLayout.reconstruct(lines, confidence, images, stripper.pages())
             } else {
                 plainTextFallback(doc, confidence, images)
             }
+            Footnotes.refine(Links.refine(model))
         }
 
     private fun plainTextFallback(

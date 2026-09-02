@@ -56,13 +56,17 @@ object DocxWriter {
         val numbering = NumberingPlan(document)
         val images = ImagePlan(document)
         val links = LinkPlan(document)
+        val notes = NotePlan(document)
         val header = document.header.isNotEmpty()
         val footer = document.footer.isNotEmpty()
         ZipOutputStream(output).use { zip ->
-            zip.part("[Content_Types].xml", contentTypesXml(header, footer))
+            zip.part("[Content_Types].xml", contentTypesXml(header, footer, notes.entries.isNotEmpty()))
             zip.part("_rels/.rels", packageRelsXml())
-            zip.part("word/_rels/document.xml.rels", documentRelsXml(images, links, header, footer))
-            zip.part("word/document.xml", documentXml(document, numbering, images, links))
+            zip.part("word/_rels/document.xml.rels", documentRelsXml(images, links, header, footer, notes.entries.isNotEmpty()))
+            zip.part("word/document.xml", documentXml(document, numbering, images, links, notes))
+            if (notes.entries.isNotEmpty()) {
+                zip.part("word/footnotes.xml", footnotesXml(document, numbering, images, links, notes))
+            }
             zip.part("word/styles.xml", stylesXml())
             zip.part("word/numbering.xml", numberingXml(numbering))
             zip.part("docProps/core.xml", corePropsXml())
@@ -165,6 +169,40 @@ object DocxWriter {
      * gets a relationship of its own, and a run that points somewhere
      * names that relationship.
      */
+    /**
+     * The notes the document's marks carry, numbered in the order the marks
+     * appear. Word keeps notes in a part of their own and refers to them by
+     * number, while the mark a reader sees stays the source's own — a star,
+     * a dagger, the digit the page printed.
+     */
+    private class NotePlan(document: DocumentModel) {
+        class Entry(val id: Int, val mark: String, val blocks: List<Block>)
+
+        val entries = mutableListOf<Entry>()
+        private val byRun = IdentityHashMap<TextRun, Entry>()
+
+        init {
+            assign(document.blocks)
+        }
+
+        fun entryFor(run: TextRun): Entry? = byRun[run]
+
+        private fun assign(blocks: List<Block>) {
+            for (block in blocks) {
+                when (block) {
+                    is Paragraph -> for (run in block.runs) {
+                        val note = run.note?.takeIf { it.isNotEmpty() } ?: continue
+                        val entry = Entry(entries.size + 1, run.text.trim(), note)
+                        entries += entry
+                        byRun[run] = entry
+                    }
+                    is Table -> for (row in block.rows) for (cell in row.cells) assign(cell.blocks)
+                    is ImageBlock -> {}
+                }
+            }
+        }
+    }
+
     private class LinkPlan(document: DocumentModel) {
         class Entry(val target: String, val relId: String, val part: String)
 
@@ -266,15 +304,66 @@ object DocxWriter {
         numbering: NumberingPlan,
         images: ImagePlan,
         links: LinkPlan,
+        notes: NotePlan,
     ): String {
         val sb = StringBuilder(16 * 1024)
         sb.append(XML_DECL)
         sb.append("""<w:document xmlns:w="$W" xmlns:r="$R_NS"><w:body>""")
         for (block in document.blocks) {
-            appendBlock(sb, block, document, numbering, images, links, ImagePlan.PART_DOCUMENT)
+            appendBlock(sb, block, document, numbering, images, links, ImagePlan.PART_DOCUMENT, notes)
         }
         sb.append(sectPr(document))
         sb.append("</w:body></w:document>")
+        return sb.toString()
+    }
+
+    /**
+     * The notes part. Word keeps the marks that separate notes from the
+     * text in it as notes of their own, at ids below one, and every note
+     * the document refers to after them — each opening with the mark the
+     * page printed, since the reference says a mark of its own follows.
+     */
+    private fun footnotesXml(
+        document: DocumentModel,
+        numbering: NumberingPlan,
+        images: ImagePlan,
+        links: LinkPlan,
+        notes: NotePlan,
+    ): String {
+        val sb = StringBuilder(4 * 1024)
+        sb.append(XML_DECL)
+        sb.append("""<w:footnotes xmlns:w="$W" xmlns:r="$R_NS">""")
+        for ((id, kind) in listOf(-1 to "separator", 0 to "continuationSeparator")) {
+            sb.append("""<w:footnote w:type="$kind" w:id="$id"><w:p><w:pPr>""")
+            sb.append("""<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>""")
+            sb.append("""</w:pPr><w:r><w:${kind}/></w:r></w:p></w:footnote>""")
+        }
+        for (entry in notes.entries) {
+            sb.append("""<w:footnote w:id="${entry.id}">""")
+            val opening = StringBuilder()
+            if (entry.mark.isNotEmpty()) {
+                opening.append("""<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr>""")
+                opening.append("""<w:t xml:space="preserve">${xmlEscape(entry.mark)} </w:t></w:r>""")
+            }
+            var first = true
+            for (block in entry.blocks) {
+                val start = sb.length
+                appendBlock(sb, block, document, numbering, images, links, ImagePlan.PART_DOCUMENT)
+                // The mark goes inside the note's first paragraph, after
+                // whatever properties it carries.
+                if (first && opening.isNotEmpty()) {
+                    val open = sb.indexOf("<w:p>", start)
+                    val properties = sb.indexOf("</w:pPr>", start)
+                    val at = if (properties in start until sb.length) properties + "</w:pPr>".length
+                    else if (open in start until sb.length) open + "<w:p>".length
+                    else -1
+                    if (at >= 0) sb.insert(at, opening)
+                    first = false
+                }
+            }
+            sb.append("</w:footnote>")
+        }
+        sb.append("</w:footnotes>")
         return sb.toString()
     }
 
@@ -304,10 +393,11 @@ object DocxWriter {
         images: ImagePlan,
         links: LinkPlan,
         part: String,
+        notes: NotePlan? = null,
     ) {
         when (block) {
-            is Paragraph -> appendParagraph(sb, block, document, numbering, images, links, part)
-            is Table -> appendTable(sb, block, document, numbering, images, links, part)
+            is Paragraph -> appendParagraph(sb, block, document, numbering, images, links, part, notes)
+            is Table -> appendTable(sb, block, document, numbering, images, links, part, notes)
             is ImageBlock -> appendImage(sb, images.entryFor(block))
         }
     }
@@ -320,6 +410,7 @@ object DocxWriter {
         images: ImagePlan,
         links: LinkPlan,
         part: String,
+        notes: NotePlan? = null,
     ) {
         val effectiveDirection = paragraph.style.direction ?: document.defaultDirection
         sb.append("<w:p>")
@@ -332,7 +423,7 @@ object DocxWriter {
         while (index < paragraph.runs.size) {
             val target = paragraph.runs[index].link
             if (target == null) {
-                appendRun(sb, paragraph.runs[index], effectiveDirection, images, document)
+                appendRun(sb, paragraph.runs[index], effectiveDirection, images, document, notes)
                 index++
                 continue
             }
@@ -340,7 +431,7 @@ object DocxWriter {
             while (last + 1 < paragraph.runs.size && paragraph.runs[last + 1].link == target) last++
             val relId = links.relIdFor(target, part)
             if (relId != null) sb.append("""<w:hyperlink r:id="$relId">""")
-            for (i in index..last) appendRun(sb, paragraph.runs[i], effectiveDirection, images, document)
+            for (i in index..last) appendRun(sb, paragraph.runs[i], effectiveDirection, images, document, notes)
             if (relId != null) sb.append("</w:hyperlink>")
             index = last + 1
         }
@@ -468,6 +559,7 @@ object DocxWriter {
         paragraphDirection: TextDirection,
         images: ImagePlan,
         document: DocumentModel,
+        notes: NotePlan? = null,
     ) {
         run.image?.let { image ->
             sb.append("<w:r>")
@@ -513,6 +605,13 @@ object DocxWriter {
             }
             sb.append("</w:rPr>")
         }
+        // A mark that carries a note refers to it, and keeps its own shape:
+        // Word numbers notes itself, but the page printed a star, so the
+        // star follows the reference as the mark of its own.
+        val note = notes?.entryFor(run)
+        if (note != null) {
+            sb.append("""<w:footnoteReference w:customMarkFollows="1" w:id="${note.id}"/>""")
+        }
         // A tab is an element of its own; the character itself has no
         // meaning in w:t.
         val text = if (field != null && run.text.isEmpty()) fieldPlaceholder(field, document) else run.text
@@ -544,6 +643,7 @@ object DocxWriter {
         images: ImagePlan,
         links: LinkPlan,
         part: String,
+        notes: NotePlan? = null,
     ) {
         if (table.rows.isEmpty()) return
         val columnCount = table.rows.maxOf { it.cells.size }.coerceAtLeast(1)
@@ -580,11 +680,11 @@ object DocxWriter {
         for (row in table.rows) {
             sb.append("<w:tr>")
             for ((column, cell) in row.cells.withIndex()) {
-                appendCell(sb, cell, document, numbering, images, links, part, widths?.getOrNull(column))
+                appendCell(sb, cell, document, numbering, images, links, part, widths?.getOrNull(column), notes)
             }
             // Pad short rows so every row has the full column count.
             for (column in row.cells.size until columnCount) {
-                appendCell(sb, TableCell(emptyList()), document, numbering, images, links, part, widths?.getOrNull(column))
+                appendCell(sb, TableCell(emptyList()), document, numbering, images, links, part, widths?.getOrNull(column), notes)
             }
             sb.append("</w:tr>")
         }
@@ -602,6 +702,7 @@ object DocxWriter {
         links: LinkPlan,
         part: String,
         widthTwips: Int? = null,
+        notes: NotePlan? = null,
     ) {
         sb.append("<w:tc>")
         if (widthTwips != null) {
@@ -610,7 +711,7 @@ object DocxWriter {
             sb.append("""<w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>""")
         }
         for (block in cell.blocks) {
-            appendBlock(sb, block, document, numbering, images, links, part)
+            appendBlock(sb, block, document, numbering, images, links, part, notes)
         }
         // Every table cell must end with a paragraph. A trailing nested table
         // already appended its own spacer paragraph after </w:tbl>.
@@ -703,12 +804,13 @@ object DocxWriter {
 
     private const val HEADER_REL_ID = "rIdHdr1"
     private const val FOOTER_REL_ID = "rIdFtr1"
+    private const val NOTES_REL_ID = "rIdFtn1"
 
     // ------------------------------------------------------------------
     // Static parts
     // ------------------------------------------------------------------
 
-    private fun contentTypesXml(header: Boolean, footer: Boolean): String = XML_DECL +
+    private fun contentTypesXml(header: Boolean, footer: Boolean, notes: Boolean): String = XML_DECL +
         """<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">""" +
         """<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>""" +
         """<Default Extension="xml" ContentType="application/xml"/>""" +
@@ -719,6 +821,7 @@ object DocxWriter {
         """<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>""" +
         (if (header) """<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>""" else "") +
         (if (footer) """<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>""" else "") +
+        (if (notes) """<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>""" else "") +
         """<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>""" +
         """<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>""" +
         """</Types>"""
@@ -730,13 +833,14 @@ object DocxWriter {
         """<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>""" +
         """</Relationships>"""
 
-    private fun documentRelsXml(images: ImagePlan, links: LinkPlan, header: Boolean, footer: Boolean): String {
+    private fun documentRelsXml(images: ImagePlan, links: LinkPlan, header: Boolean, footer: Boolean, notes: Boolean): String {
         val sb = StringBuilder(XML_DECL)
         sb.append("""<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""")
         sb.append("""<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>""")
         sb.append("""<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>""")
         if (header) sb.append("""<Relationship Id="$HEADER_REL_ID" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>""")
         if (footer) sb.append("""<Relationship Id="$FOOTER_REL_ID" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>""")
+        if (notes) sb.append("""<Relationship Id="$NOTES_REL_ID" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>""")
         for (entry in images.entriesFor(ImagePlan.PART_DOCUMENT)) {
             sb.append(
                 """<Relationship Id="${entry.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${entry.fileName}"/>"""

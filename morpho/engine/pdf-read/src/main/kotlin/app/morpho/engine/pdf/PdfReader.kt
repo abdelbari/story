@@ -1,5 +1,6 @@
 package app.morpho.engine.pdf
 
+import app.morpho.engine.layout.Footnotes
 import app.morpho.engine.layout.Links
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
@@ -51,19 +52,18 @@ class PdfReader {
             // Figure elements resolve to captured images via marked content.
             val fromTags =
                 if (tagged) runCatching { StructureTreeReader.read(doc, images) }.getOrNull() else null
-            if (fromTags != null) return Links.refine(fromTags)
+            if (fromTags != null) return Footnotes.refine(Links.refine(fromTags))
             // Everything below ran the position heuristics, so it scores as
             // untagged — even when a tree exists but yielded nothing.
             val confidence = 0.6f
             val stripper = PositionTextStripper()
             val lines = runCatching { stripper.capture(doc) }.getOrDefault(emptyList())
-            Links.refine(
-                if (lines.isNotEmpty()) {
-                    PdfLayout.reconstruct(lines, confidence, images, stripper.pages())
-                } else {
-                    plainTextFallback(doc, confidence, images)
-                }
-            )
+            val model = if (lines.isNotEmpty()) {
+                PdfLayout.reconstruct(lines, confidence, images, stripper.pages())
+            } else {
+                plainTextFallback(doc, confidence, images)
+            }
+            Footnotes.refine(Links.refine(model))
         }
 
     private fun plainTextFallback(

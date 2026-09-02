@@ -338,6 +338,53 @@ class LookRoundTripTest {
     }
 
     @Test
+    fun `a note becomes a footnote of its own, and keeps the mark the page printed`() {
+        val document = DocumentModel(
+            listOf(
+                Paragraph(
+                    listOf(
+                        TextRun("ربيحة نبار "),
+                        TextRun(
+                            "*",
+                            superscript = true,
+                            note = listOf(Paragraph(listOf(TextRun("المؤلف المرسل .")))),
+                        ),
+                    )
+                )
+            )
+        )
+        val docx = DocxWriter.toByteArray(document)
+        val parts = entries(docx)
+        val body = parts.getValue("word/document.xml")
+        // The reference says a mark of its own follows, and it does.
+        assertTrue(body.contains("""<w:footnoteReference w:customMarkFollows="1" w:id="1"/>"""), body)
+        val notes = parts.getValue("word/footnotes.xml")
+        assertTrue(notes.contains("""<w:footnote w:type="separator" w:id="-1">"""), notes.take(400))
+        assertTrue(notes.contains("""<w:footnote w:id="1">"""), notes)
+        // The parts are read as bytes, so the Arabic is decoded before it is compared.
+        val text = String(notes.toByteArray(Charsets.ISO_8859_1), Charsets.UTF_8)
+        assertTrue(text.contains("المؤلف المرسل ."), text)
+        assertTrue(parts.getValue("[Content_Types].xml").contains("/word/footnotes.xml"), "content type")
+        assertTrue(
+            parts.getValue("word/_rels/document.xml.rels").contains("""Target="footnotes.xml""""),
+            "relationship",
+        )
+        val read = DocxReader.read(docx).blocks.filterIsInstance<Paragraph>().single()
+        val mark = read.runs.last()
+        assertEquals("*", mark.text)
+        assertTrue(mark.superscript)
+        val note = mark.note?.filterIsInstance<Paragraph>()?.joinToString("") { it.text }
+        assertTrue(note != null && note.contains("المؤلف المرسل"), "the note came back as $note")
+    }
+
+    @Test
+    fun `a document with no notes writes no notes part`() {
+        val parts = entries(DocxWriter.toByteArray(DocumentModel(listOf(Paragraph(listOf(TextRun("plain")))))))
+        assertTrue(!parts.containsKey("word/footnotes.xml"))
+        assertTrue(!parts.getValue("[Content_Types].xml").contains("footnotes"))
+    }
+
+    @Test
     fun `a running header and footer become parts of their own`() {
         val picture = ImageBlock(PNG, "image/png", 2, 2, widthPt = 100f, heightPt = 20f)
         val document = DocumentModel(

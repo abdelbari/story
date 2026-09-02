@@ -1,5 +1,7 @@
 package app.morpho.engine.layout
 
+import java.util.IdentityHashMap
+
 import java.util.Base64
 
 /**
@@ -21,7 +23,23 @@ import java.util.Base64
  */
 object HtmlWriter {
 
-    fun write(document: DocumentModel, title: String? = null): String {
+    /**
+     * The notes of the document being written, by the run that carries
+     * each. A writer is a singleton and a note's number is a property of
+     * the whole document, not of the run, so it is kept here for the
+     * length of one write and thrown away after it.
+     */
+    private val noteNumbers = ThreadLocal<Map<TextRun, Int>>()
+
+    fun write(document: DocumentModel, title: String? = null): String =
+        try {
+            noteNumbers.set(numberNotes(document.blocks))
+            writeDocument(document, title)
+        } finally {
+            noteNumbers.remove()
+        }
+
+    private fun writeDocument(document: DocumentModel, title: String?): String {
         val defaultDirection = document.defaultDirection
         val dir = if (defaultDirection == TextDirection.RTL) "rtl" else "ltr"
         val lang = document.defaultLanguage?.let { """ lang="${escape(it)}"""" }.orEmpty()
@@ -41,6 +59,7 @@ object HtmlWriter {
             sb.append("</header>\n")
         }
         appendBlocks(sb, document.blocks, defaultDirection)
+        appendNotes(sb, document.blocks, defaultDirection)
         if (document.footer.isNotEmpty()) {
             sb.append("""<footer class="page-footer">""").append("\n")
             appendBlocks(sb, document.footer, defaultDirection)
@@ -61,6 +80,8 @@ object HtmlWriter {
             "ul,ol{margin:0 0 9pt;padding-inline-start:24pt;}" +
             "li{margin:0 0 3pt;}" +
             "table{border-collapse:collapse;margin:0 0 9pt;table-layout:fixed;}" +
+            "section.footnotes{border-top:0.75pt solid;margin-top:12pt;padding-top:4pt;font-size:0.85em;}" +
+            "a.note-mark{text-decoration:none;vertical-align:super;font-size:0.75em;}" +
             "td,th{border:1px solid #555;padding:4pt 8pt;vertical-align:top;}" +
             "img{max-width:100%;height:auto;}" +
             "p.image{text-align:center;}" +
@@ -250,7 +271,54 @@ object HtmlWriter {
         // like one. The look stays the run's own — an address a document
         // prints in black stays black.
         run.link?.let { html = "<a href=\"${escape(it)}\">$html</a>" }
+        // A mark that carries a note leads to it: HTML has no notes of its
+        // own, so they are gathered at the end, as a printed page gathers
+        // endnotes, and the mark is what takes a reader there.
+        noteNumberOf(run)?.let { number ->
+            html = "<a class=\"note-mark\" id=\"note-mark-$number\" href=\"#note-$number\">$html</a>"
+        }
         sb.append(html)
+    }
+
+    /** Every note in the document, numbered in the order its mark appears. */
+    private fun numberNotes(blocks: List<Block>): Map<TextRun, Int> {
+        val numbers = IdentityHashMap<TextRun, Int>()
+        fun walk(list: List<Block>) {
+            for (block in list) {
+                when (block) {
+                    is Paragraph -> for (run in block.runs) {
+                        if (!run.note.isNullOrEmpty()) numbers[run] = numbers.size + 1
+                    }
+                    is Table -> for (row in block.rows) for (cell in row.cells) walk(cell.blocks)
+                    is ImageBlock -> {}
+                }
+            }
+        }
+        walk(blocks)
+        return numbers
+    }
+
+    private fun noteNumberOf(run: TextRun): Int? = noteNumbers.get()?.get(run)
+
+    /**
+     * The notes, under a rule at the end. A page sets its notes at its own
+     * foot; a page that scrolls has no foot to set them at, so they are
+     * gathered here, each one led back to the mark that called it.
+     */
+    private fun appendNotes(sb: StringBuilder, blocks: List<Block>, defaultDirection: TextDirection) {
+        val numbers = noteNumbers.get().orEmpty()
+        if (numbers.isEmpty()) return
+        val byNumber = numbers.entries.sortedBy { it.value }
+        sb.append("""<section class="footnotes">""").append("\n")
+        for ((run, number) in byNumber) {
+            sb.append("""<div class="footnote" id="note-$number">""")
+            sb.append("""<a class="note-mark" href="#note-mark-$number">""")
+            sb.append(escape(run.text.trim().ifEmpty { number.toString() }))
+            sb.append("</a> ")
+            appendBlocks(sb, run.note.orEmpty(), defaultDirection)
+            sb.append("</div>\n")
+        }
+        sb.append("</section>\n")
     }
 
     /** A packed 0xRRGGBB colour as CSS writes one. */

@@ -114,6 +114,12 @@ data class TextRun(
      * for a page. Null for text that goes nowhere, which is most text.
      */
     val link: String? = null,
+    /**
+     * The note this run's mark refers to, which a writer sets at the foot
+     * of the page the mark lands on. The mark itself stays the run's text,
+     * so a writer with no notes of its own still shows what the page did.
+     */
+    val note: List<Block>? = null,
 )
 
 /** What a writer fills in for a run in place of fixed text. */
