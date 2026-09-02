@@ -5,6 +5,10 @@ import com.tom_roush.fontbox.ttf.CmapLookup
 import com.tom_roush.pdfbox.pdmodel.font.PDCIDFontType2
 import com.tom_roush.pdfbox.pdmodel.font.PDFont
 import com.tom_roush.pdfbox.pdmodel.font.PDType0Font
+import com.tom_roush.pdfbox.pdmodel.font.encoding.Encoding
+import com.tom_roush.pdfbox.pdmodel.font.encoding.GlyphList
+import com.tom_roush.pdfbox.pdmodel.font.encoding.SymbolEncoding
+import com.tom_roush.pdfbox.pdmodel.font.encoding.ZapfDingbatsEncoding
 import com.tom_roush.pdfbox.text.TextPosition
 import java.util.IdentityHashMap
 
@@ -68,7 +72,8 @@ internal class AndroidGlyphUnicode {
         } else {
             Corrector.forEmbedded(font).also { correctors[font] = it }
         }
-        return corrector?.correct(codes[0], declared) ?: declared
+        val corrected = corrector?.correct(codes[0], declared) ?: declared
+        return SymbolFonts.character(font.name, corrected) ?: corrected
     }
 
     private class Corrector(private val cid: PDCIDFontType2, private val cmap: CmapLookup) {
@@ -218,5 +223,59 @@ internal class AndroidGlyphUnicode {
                 return null
             }
         }
+    }
+}
+
+/**
+ * The character a symbol font's glyph really is.
+ *
+ * A symbol font is addressed through a "(3,0)" character map, which holds
+ * its glyphs at F000 plus the font's own byte. So a reader is told that the
+ * bullet Word draws before a list item is U+F0B7 — a private-use code point,
+ * which means nothing outside that one font: a word processor shows a blank
+ * box for it, and, being a left-to-right character, it turns the whole
+ * right-to-left item around it into a left-to-right one, so the marker of an
+ * Arabic list ends up on the wrong side of the page.
+ *
+ * Two symbol fonts have byte assignments that are standard and published —
+ * Adobe's Symbol and ZapfDingbats. For those the byte names a glyph, and the
+ * Adobe Glyph List says which character the glyph is: Symbol's B7 is
+ * "bullet", •, and its 2D is "minus", −. Any other symbol font's bytes are
+ * its own business and are left alone, since guessing would put a real
+ * character where the page shows a picture.
+ */
+internal object SymbolFonts {
+
+    /** Where a symbol font's own character map puts its bytes. */
+    private val SYMBOL_AREA = 0xF000..0xF0FF
+    private val PRIVATE_USE = 0xE000..0xF8FF
+
+    /**
+     * What the glyph [text] of the font named [fontName] really is, or null
+     * when the two say nothing better than [text] does already.
+     */
+    fun character(fontName: String?, text: String): String? {
+        if (text.codePointCount(0, text.length) != 1) return null
+        val codePoint = text.codePointAt(0)
+        if (codePoint !in SYMBOL_AREA) return null
+        // A subset font is named for the font it was cut from: "ABCDEE+Symbol".
+        val face = fontName?.substringAfterLast('+') ?: return null
+        val encoding: Encoding
+        val glyphs: GlyphList
+        when {
+            face.equals("Symbol", ignoreCase = true) -> {
+                encoding = SymbolEncoding.INSTANCE
+                glyphs = GlyphList.getAdobeGlyphList()
+            }
+            face.equals("ZapfDingbats", ignoreCase = true) -> {
+                encoding = ZapfDingbatsEncoding.INSTANCE
+                glyphs = GlyphList.getZapfDingbats()
+            }
+            else -> return null
+        }
+        val name = encoding.getName(codePoint - SYMBOL_AREA.first) ?: return null
+        val unicode = runCatching { glyphs.toUnicode(name) }.getOrNull() ?: return null
+        if (unicode.isEmpty() || unicode.codePointAt(0) in PRIVATE_USE) return null
+        return unicode
     }
 }

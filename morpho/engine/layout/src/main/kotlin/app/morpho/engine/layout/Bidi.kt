@@ -13,12 +13,19 @@ object Bidi {
 
     /**
      * Direction of the first strongly-directional code point, or null when the
-     * text has none (digits, punctuation, whitespace only).
+     * text has none (digits, punctuation, whitespace only). A private-use code
+     * point is none: it is a glyph of one font — the bullet a producer draws
+     * before a list item — and nothing about the language it sits in, though
+     * Unicode files it as left-to-right for want of anywhere else to file it.
      */
     fun firstStrongDirection(text: String): TextDirection? {
         var i = 0
         while (i < text.length) {
             val cp = text.codePointAt(i)
+            if (isPrivateUse(cp)) {
+                i += Character.charCount(cp)
+                continue
+            }
             when (Character.getDirectionality(cp)) {
                 Character.DIRECTIONALITY_LEFT_TO_RIGHT ->
                     return TextDirection.LTR
@@ -173,6 +180,10 @@ object Bidi {
         var i = 0
         while (i < text.length) {
             val cp = Character.codePointAt(text, i)
+            if (isPrivateUse(cp)) {
+                i += Character.charCount(cp)
+                continue
+            }
             when (Character.getDirectionality(cp)) {
                 Character.DIRECTIONALITY_LEFT_TO_RIGHT -> ltr++
                 Character.DIRECTIONALITY_RIGHT_TO_LEFT,
@@ -187,6 +198,12 @@ object Bidi {
             else -> TextDirection.LTR
         }
     }
+
+    /** A code point in one of Unicode's private-use areas: a font's own glyph, not a character. */
+    private fun isPrivateUse(codePoint: Int): Boolean =
+        codePoint in 0xE000..0xF8FF ||
+            codePoint in 0xF0000..0xFFFFD ||
+            codePoint in 0x100000..0x10FFFD
 
     /**
      * The writing direction of a BCP 47 language tag such as a PDF's /Lang

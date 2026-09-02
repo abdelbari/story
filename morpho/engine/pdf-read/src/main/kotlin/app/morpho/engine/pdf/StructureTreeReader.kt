@@ -190,6 +190,12 @@ internal object StructureTreeReader {
     private const val PAGE_NUMBER_DRIFT_PT = 12f
     /** A gap wider than this share of the type size splits a run of digits into two. */
     private const val TOKEN_GAP_SHARE = 0.6f
+    /** The characters a producer draws as a list marker. */
+    private const val MARKER_CHARACTERS = "\u2022\u00B7\u2219\u2212\u2013\u2014-*\u25AA\u25AB\u25CF\u25CB\u25E6\u2023\u2043\u00BB\u203A"
+    /** What an enumerator ends with: "3.", "أ-", "a)". */
+    private const val LABEL_TERMINATORS = "-.)\u2013\u061B:"
+    /** An enumerator is this many characters at most, its terminator included. */
+    private const val LONGEST_LABEL = 3
     /** A filled rectangle no taller than this is a rule, not a box. */
     private const val RULE_MAX_THICKNESS_PT = 4f
     /** A rule shorter than this is a dash or a tick, not a rule. */
@@ -1479,23 +1485,57 @@ internal object StructureTreeReader {
 
         private fun emitListItem(item: PDStructureElement, marker: ListMarker) {
             val body = childElements(item).firstOrNull { resolvedType(it) == "LBody" }
+            val glyphs = glyphsOf(body ?: item)
             val styled = trimmed(
-                body?.let { texts.readStyled(glyphsOf(it)).logical } ?: run {
+                body?.let { texts.readStyled(glyphs).logical } ?: run {
                     // No LBody: take the item's text minus its label.
                     val label = childElements(item)
                         .firstOrNull { resolvedType(it) == "Lbl" }?.let(::textOf).orEmpty()
-                    withoutPrefix(texts.readStyled(glyphsOf(item)).logical, label)
+                    withoutPrefix(texts.readStyled(glyphs).logical, label)
                 }
             )
             val text = styled.text
             if (text.isEmpty()) return
             sawText = true
             val direction = Bidi.firstStrongDirection(text)
+            val placement = texts.placementOf(glyphs, direction)
+            if (placement != null) placementByBlockIndex[blocks.size] = placement
             blocks += Paragraph(
                 runs = runsOf(styled),
-                style = ParagraphStyle(direction = direction, listMarker = marker),
+                style = ParagraphStyle(
+                    direction = direction,
+                    // A producer draws some labels into the item itself rather
+                    // than into a label of its own: Word writes the bullet
+                    // before an Arabic item as a glyph at the head of its text.
+                    // An item that carries its label keeps it — a marker from
+                    // the writer as well would show two — and the page's own
+                    // label says more than a bullet does anyway: "أ-", "3-",
+                    // and the dash of a second level are all lost by one.
+                    listMarker = marker.takeIf { !drawsItsOwnLabel(text) },
+                    alignment = placement?.alignment,
+                    firstLineIndentPt = placement?.firstLineIndentPt,
+                    startIndentPt = placement?.startIndentPt,
+                    hangingIndentPt = placement?.hangingIndentPt,
+                ),
                 confidence = CONFIDENCE,
             )
+        }
+
+        /**
+         * Whether a list item's text opens with the label the page drew for
+         * it: a marker character — a bullet, a dash, a star — or a short
+         * enumerator such as "أ-", "3." or "a)", either of them followed by
+         * a space, which is what separates a label from a sentence that
+         * merely begins with a dash.
+         */
+        private fun drawsItsOwnLabel(text: String): Boolean {
+            val space = text.indexOfFirst { it == ' ' || it == '\t' }
+            if (space <= 0) return false
+            val label = text.substring(0, space)
+            if (label.length == 1) return label[0] in MARKER_CHARACTERS
+            if (label.length > LONGEST_LABEL) return false
+            if (label.last() !in LABEL_TERMINATORS) return false
+            return label.dropLast(1).all { it.isLetterOrDigit() }
         }
 
         private fun emitTable(table: PDStructureElement, depth: Int) {

@@ -183,4 +183,18 @@ class BidiTest {
             runs,
         )
     }
+
+    @Test
+    fun `a font's own glyph says nothing about direction`() {
+        // Word paints the bullet before an Arabic list item as a Symbol
+        // glyph, which reaches a reader as a private-use code point.
+        // Unicode files those as left-to-right for want of anywhere else,
+        // and taking that at face value turns the item around: its marker
+        // ends up on the left of the page instead of the right.
+        assertEquals(TextDirection.RTL, Bidi.firstStrongDirection("\uF0B7 الاستمارة البريدية"))
+        assertEquals(TextDirection.LTR, Bidi.firstStrongDirection("\uF0B7 the postal form"))
+        assertNull(Bidi.firstStrongDirection("\uF0B7 \uF02D"))
+        assertEquals(TextDirection.RTL, Bidi.dominantDirection("\uF0B7\uF0B7\uF0B7 مرحبا"))
+    }
+
 }

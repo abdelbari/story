@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 267 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 277 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -49,6 +49,11 @@ Work through, in this order — each exercises a path nothing else covers:
       not split or join. Check an untagged PDF the same way: it should also
       keep its faces and weights, drop the running header and footer, and
       break its paragraphs where the page does.
+- [ ] **The lists of the Arabic paper** (pages 51–54). Every item's marker —
+      the round bullet, the dash of the second level, the author's own
+      "أ-" and "3-" — must sit at the right-hand end of its line, as a
+      real character and not a blank box, and each item must carry one
+      marker, not two.
 - [ ] **The head and foot of the Arabic paper**, in Word and in the app's
       preview. Every page should carry the journal's running head — its
       title, the author, the two rules — at the same distance from the top
