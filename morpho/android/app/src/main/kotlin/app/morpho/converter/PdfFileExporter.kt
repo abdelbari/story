@@ -38,6 +38,7 @@ import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.RunField
 import app.morpho.engine.layout.Table
+import app.morpho.engine.layout.TableGrid
 import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
 import java.io.ByteArrayOutputStream
@@ -553,9 +554,12 @@ internal object PdfFileExporter {
     }
 
     private fun table(cursor: Cursor, block: Table, defaultDirection: TextDirection) {
-        // A cell can cover several columns, so a row's places are not its
-        // cells: the widest row, counted in places, is the grid.
-        val columns = block.rows.maxOfOrNull { row -> row.cells.sumOf { it.columnSpan.coerceAtLeast(1) } } ?: return
+        // The places of the grid, worked out by the engine and shared with
+        // the Word writer: a cell that covers several columns leaves the
+        // places beside it empty, and one that covers several rows leaves
+        // the places under it covered.
+        val grid = TableGrid.of(block)
+        val columns = grid.columns
         if (columns == 0) return
         // The widths a reader measured off the page, scaled to the content
         // box; a table nothing measured shares the width equally.
@@ -579,20 +583,14 @@ internal object PdfFileExporter {
             strokeWidth = 0.75f
             color = 0xFF9E9E9E.toInt()
         }
-        for (row in block.rows) {
-            // Where each cell of the row starts, and how many places it takes.
-            val places = mutableListOf<Pair<Int, Int>>()
-            var place = 0
-            for (cell in row.cells) {
-                val span = cell.columnSpan.coerceIn(1, columns - place)
-                places += place to span
-                place += span
-                if (place >= columns) break
-            }
-            val cellLayouts = row.cells.take(places.size).mapIndexed { index, cell ->
-                val (at, span) = places[index]
-                val start = placed(at, span)
-                val width = (start until start + span).sumOf { columnWidths[it].toDouble() }.toFloat()
+        for (row in grid.rows) {
+            // Only the places a cell begins are drawn; a covered place is
+            // the cell above still going, and an empty one is nothing.
+            val places = row.filterIsInstance<TableGrid.Filled>()
+            val cellLayouts = places.map { place ->
+                val cell = place.cell
+                val start = placed(place.column, place.span)
+                val width = (start until start + place.span).sumOf { columnWidths[it].toDouble() }.toFloat()
                 val textWidth = (width - 2 * CELL_PADDING).toInt().coerceAtLeast(1)
                 // Numbered items restart per cell, same contiguity rule as
                 // the top-level walk.
@@ -622,10 +620,10 @@ internal object PdfFileExporter {
             cursor.ensureRoom(rowHeight)
             val canvas = cursor.canvas
             for ((index, layouts) in cellLayouts.withIndex()) {
-                val (at, span) = places[index]
-                val column = placed(at, span)
+                val place = places[index]
+                val column = placed(place.column, place.span)
                 val x = cursor.sheet.marginLeft + offsets[column]
-                val width = (column until column + span).sumOf { columnWidths[it].toDouble() }.toFloat()
+                val width = (column until column + place.span).sumOf { columnWidths[it].toDouble() }.toFloat()
                 if (block.ruled) canvas.drawRect(x, cursor.y, x + width, cursor.y + rowHeight, border)
                 var textY = cursor.y + CELL_PADDING
                 for (layout in layouts) {

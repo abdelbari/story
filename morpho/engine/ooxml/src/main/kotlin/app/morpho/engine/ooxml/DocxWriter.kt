@@ -12,6 +12,7 @@ import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.RunField
 import app.morpho.engine.layout.Table
 import app.morpho.engine.layout.TableCell
+import app.morpho.engine.layout.TableGrid
 import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
 import java.io.ByteArrayOutputStream
@@ -646,7 +647,11 @@ object DocxWriter {
         notes: NotePlan? = null,
     ) {
         if (table.rows.isEmpty()) return
-        val columnCount = gridWidth(table)
+        // The places of the grid, worked out once and shared with every
+        // other writer: a merged cell leaves places beside and under it
+        // that the format wants written out.
+        val grid = TableGrid.of(table)
+        val columnCount = grid.columns
         // The widths a reader measured off the page, in twentieths of a
         // point; a table nothing measured shares the text width equally,
         // which is what Word does with an "auto" grid.
@@ -677,79 +682,32 @@ object DocxWriter {
         }
         sb.append("</w:tblGrid>")
 
-        // A merged cell covers places in later rows that hold no cell of
-        // their own; Word wants every place filled, so the covered ones are
-        // written as continuations of the merge above them.
-        val covered = IntArray(columnCount)
-        for (row in table.rows) {
+        for (row in grid.rows) {
             sb.append("<w:tr>")
-            var column = 0
-            fun fillCovered() {
-                while (column < columnCount && covered[column] > 0) {
-                    covered[column]--
-                    appendCell(
-                        sb, TableCell(emptyList()), document, numbering, images, links, part,
-                        widths?.getOrNull(column), notes, merge = Merge.CONTINUE,
-                    )
-                    column++
+            for (place in row) {
+                val width = widths?.let { all ->
+                    (place.column until place.column + place.span).sumOf { all.getOrElse(it) { 0 } }
                 }
-            }
-            for (cell in row.cells) {
-                fillCovered()
-                if (column >= columnCount) break
-                val span = cell.columnSpan.coerceIn(1, columnCount - column)
-                val width = widths?.let { all -> (column until column + span).sumOf { all[it] } }
-                appendCell(
-                    sb, cell, document, numbering, images, links, part, width, notes,
-                    span = span,
-                    merge = if (cell.rowSpan > 1) Merge.START else Merge.NONE,
-                )
-                if (cell.rowSpan > 1) covered[column] = cell.rowSpan - 1
-                column += span
-            }
-            fillCovered()
-            // Pad short rows so every row has the full column count.
-            while (column < columnCount) {
-                appendCell(
-                    sb, TableCell(emptyList()), document, numbering, images, links, part,
-                    widths?.getOrNull(column), notes,
-                )
-                column++
+                when (place) {
+                    is TableGrid.Filled -> appendCell(
+                        sb, place.cell, document, numbering, images, links, part, width, notes,
+                        span = place.span,
+                        merge = if (place.rowSpan > 1) Merge.START else Merge.NONE,
+                    )
+                    is TableGrid.Covered -> appendCell(
+                        sb, TableCell(emptyList()), document, numbering, images, links, part, width, notes,
+                        merge = Merge.CONTINUE,
+                    )
+                    is TableGrid.Empty -> appendCell(
+                        sb, TableCell(emptyList()), document, numbering, images, links, part, width, notes,
+                    )
+                }
             }
             sb.append("</w:tr>")
         }
         sb.append("</w:tbl>")
         // WordprocessingML requires a paragraph after a table at body level.
         sb.append("<w:p/>")
-    }
-
-    /**
-     * How many columns the table's grid has: the widest row, counting each
-     * cell for the columns it covers and each place a merge from an
-     * earlier row has already taken.
-     */
-    private fun gridWidth(table: Table): Int {
-        var widest = 1
-        val covered = HashMap<Int, Int>()
-        fun skipCovered(from: Int): Int {
-            var column = from
-            while ((covered[column] ?: 0) > 0) {
-                covered[column] = covered.getValue(column) - 1
-                column++
-            }
-            return column
-        }
-        for (row in table.rows) {
-            var column = 0
-            for (cell in row.cells) {
-                column = skipCovered(column)
-                if (cell.rowSpan > 1) covered[column] = cell.rowSpan - 1
-                column += cell.columnSpan.coerceAtLeast(1)
-            }
-            column = skipCovered(column)
-            widest = maxOf(widest, column)
-        }
-        return widest
     }
 
     /** Whether a cell begins a merge down the rows, continues one, or neither. */
