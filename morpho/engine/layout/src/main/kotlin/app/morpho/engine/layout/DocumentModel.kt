@@ -92,6 +92,8 @@ data class TextRun(
     val bold: Boolean = false,
     val italic: Boolean = false,
     val underline: Boolean = false,
+    /** Struck through: what a document says was said and is no longer. */
+    val strikethrough: Boolean = false,
     /** BCP-47 tag, e.g. "ar", "fr-FR". null = inherit. */
     val language: String? = null,
     /** null = inherit the paragraph's effective direction. */

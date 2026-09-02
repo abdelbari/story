@@ -75,4 +75,16 @@ class HighlightRoundTripTest {
         }
         throw AssertionError(name + " is not in the file")
     }
+
+    @Test
+    fun `text a document struck through comes back struck through`() {
+        val struck = DocumentModel(
+            blocks = listOf(
+                Paragraph(runs = listOf(TextRun("40 dinars", strikethrough = true)))
+            )
+        )
+        val docx = DocxWriter.toByteArray(struck)
+        assertTrue(partOf(docx, "word/document.xml").contains("<w:strike/>"))
+        assertTrue(firstRun(DocxReader.read(docx)).strikethrough)
+    }
 }

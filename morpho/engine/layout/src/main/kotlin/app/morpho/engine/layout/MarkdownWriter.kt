@@ -94,12 +94,15 @@ object MarkdownWriter {
                 sb.append(run.text.takeLastWhile { it.isWhitespace() })
                 continue
             }
-            val marker = when {
+            val emphasis = when {
                 run.bold && run.italic -> "***"
                 run.bold -> "**"
                 run.italic -> "*"
                 else -> ""
             }
+            // Struck-through text is written the way every Markdown that
+            // knows the idea writes it, outside the emphasis markers.
+            val marker = if (run.strikethrough) "~~" + emphasis else emphasis
             val core = run.text.trim()
             if (marker.isEmpty() || core.isEmpty()) {
                 // Unstyled text, or a whitespace-only styled run that no
@@ -112,7 +115,7 @@ object MarkdownWriter {
             // re-parse (here or in CommonMark), so whitespace is hoisted
             // outside the span.
             sb.append(run.text.takeWhile { it.isWhitespace() })
-            sb.append(marker).append(escape(core)).append(marker)
+            sb.append(marker).append(escape(core)).append(marker.reversed())
             sb.append(run.text.takeLastWhile { it.isWhitespace() })
         }
         return sb.toString()
@@ -123,7 +126,7 @@ object MarkdownWriter {
         link == text || link == "mailto:$text" || link == "https://$text" || link == "http://$text"
 
     private fun escape(text: String): String =
-        text.replace("\\", "\\\\").replace("*", "\\*").replace("|", "\\|")
+        text.replace("\\", "\\\\").replace("*", "\\*").replace("~", "\\~").replace("|", "\\|")
 
     private fun appendTable(out: StringBuilder, table: Table) {
         if (table.rows.isEmpty()) return

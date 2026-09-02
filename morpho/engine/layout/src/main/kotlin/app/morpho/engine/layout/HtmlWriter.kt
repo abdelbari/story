@@ -249,6 +249,7 @@ object HtmlWriter {
         if (run.superscript) html = "<sup>$html</sup>"
         else if (run.subscript) html = "<sub>$html</sub>"
         if (run.underline) html = "<u>$html</u>"
+        if (run.strikethrough) html = "<s>$html</s>"
         if (run.italic) html = "<em>$html</em>"
         if (run.bold) html = "<strong>$html</strong>"
 

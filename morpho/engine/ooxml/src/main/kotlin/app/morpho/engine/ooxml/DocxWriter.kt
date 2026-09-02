@@ -595,7 +595,8 @@ object DocxWriter {
         val rtl = (run.direction ?: paragraphDirection) == TextDirection.RTL
         val family = run.fontFamily?.takeIf { it.isNotBlank() }
         val halfPoints = run.fontSizePt?.takeIf { it > 0f }?.let { (it * 2).roundToInt() }
-        val hasProps = run.bold || run.italic || run.underline || rtl || run.language != null ||
+        val hasProps = run.bold || run.italic || run.underline || run.strikethrough ||
+            rtl || run.language != null ||
             family != null || halfPoints != null || run.superscript || run.subscript ||
             run.colorRgb != null || run.highlightRgb != null
 
@@ -614,6 +615,7 @@ object DocxWriter {
             }
             if (run.bold) sb.append("<w:b/><w:bCs/>")
             if (run.italic) sb.append("<w:i/><w:iCs/>")
+            if (run.strikethrough) sb.append("<w:strike/>")
             run.colorRgb?.let { sb.append("""<w:color w:val="${hexColor(it)}"/>""") }
             halfPoints?.let { sb.append("""<w:sz w:val="$it"/><w:szCs w:val="$it"/>""") }
             // Word's highlighter knows sixteen colours by name and nothing

@@ -774,6 +774,8 @@ object DocxReader {
             bold = isOn(properties["b"]),
             italic = isOn(properties["i"]),
             underline = underline != null && underline != "none",
+            // Struck once or twice through is struck through either way.
+            strikethrough = isOn(properties["strike"]) || isOn(properties["dstrike"]),
             language = properties["lang"]?.let { attr(it, "val") ?: attr(it, "bidi") },
             direction = if (rtl) TextDirection.RTL else paragraphDirection,
             fontFamily = family,

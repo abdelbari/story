@@ -2,14 +2,16 @@ package app.morpho.engine.layout
 
 /**
  * Parses inline Markdown emphasis into styled [TextRun]s: `**bold**`,
- * `*italic*`, and `***bold italic***`. This is a deliberately small subset of
- * CommonMark, with predictable rules and honest limitations:
+ * `*italic*`, `***bold italic***` and `~~struck through~~`. This is a
+ * deliberately small subset of CommonMark, with predictable rules and honest
+ * limitations:
  *
- * - Only asterisk markers are recognized. Underscore emphasis (`_text_`) is
- *   out of scope and left verbatim.
- * - `\*`, `\\` and `\|` are literal `*`, `\` and `|` — exactly the set
- *   [MarkdownWriter] escapes, so write→import round-trips; a backslash before
- *   any other character stays a literal backslash.
+ * - Only asterisk and double-tilde markers are recognized. Underscore
+ *   emphasis (`_text_`) is out of scope and left verbatim, and a single
+ *   tilde is a tilde.
+ * - `\*`, `\~`, `\\` and `\|` are literal `*`, `~`, `\` and `|` — exactly the
+ *   set [MarkdownWriter] escapes, so write→import round-trips; a backslash
+ *   before any other character stays a literal backslash.
  * - A marker opens only when immediately followed by non-whitespace and closes
  *   only when immediately preceded by non-whitespace (a simplified flanking
  *   rule), so `a * b` and `2 * 3 * 4` stay literal.
@@ -33,22 +35,30 @@ internal object InlineEmphasisParser {
     fun parse(text: String): List<TextRun> {
         val tokens = tokenize(text)
         val spans = mutableListOf<Span>()
-        parseInto(tokens, 0, tokens.size, bold = false, italic = false, out = spans)
+        parseInto(tokens, 0, tokens.size, bold = false, italic = false, strike = false, out = spans)
         return merge(spans).map { span ->
             TextRun(
                 text = span.text,
                 bold = span.bold,
                 italic = span.italic,
+                strikethrough = span.strike,
                 direction = Bidi.firstStrongDirection(span.text),
             )
         }
     }
 
-    private data class Span(val text: String, val bold: Boolean, val italic: Boolean)
+    private data class Span(
+        val text: String,
+        val bold: Boolean,
+        val italic: Boolean,
+        val strike: Boolean = false,
+    )
 
     private sealed interface Token
     private data class Text(val value: String) : Token
-    private data class Stars(val count: Int) : Token
+
+    /** A run of one marker character: [count] asterisks, or two tildes. */
+    private data class Marker(val character: Char, val count: Int) : Token
 
     private fun tokenize(text: String): List<Token> {
         val tokens = mutableListOf<Token>()
@@ -62,15 +72,16 @@ internal object InlineEmphasisParser {
         var i = 0
         while (i < text.length) {
             when {
-                text[i] == '\\' && i + 1 < text.length && text[i + 1] in "*\\|" -> {
+                text[i] == '\\' && i + 1 < text.length && text[i + 1] in "*~\\|" -> {
                     literal.append(text[i + 1])
                     i += 2
                 }
-                text[i] == '*' -> {
+                text[i] == '*' || text[i] == '~' -> {
+                    val character = text[i]
                     var n = 0
-                    while (i + n < text.length && text[i + n] == '*') n++
+                    while (i + n < text.length && text[i + n] == character) n++
                     flush()
-                    tokens += Stars(n)
+                    tokens += Marker(character, n)
                     i += n
                 }
                 else -> {
@@ -89,32 +100,45 @@ internal object InlineEmphasisParser {
         to: Int,
         bold: Boolean,
         italic: Boolean,
+        strike: Boolean,
         out: MutableList<Span>,
     ) {
-        // Marker lengths already known to have no closer before [to]: failed
-        // closer scans are monotonic within one frame, so a single full failed
-        // scan per length keeps stray-asterisk floods linear, not quadratic.
-        val exhausted = HashSet<Int>()
+        // Markers already known to have no closer before [to]: failed closer
+        // scans are monotonic within one frame, so a single full failed scan
+        // per marker keeps stray-asterisk floods linear, not quadratic.
+        val exhausted = HashSet<Marker>()
         var i = from
         while (i < to) {
             when (val token = tokens[i]) {
                 is Text -> {
-                    out += Span(token.value, bold, italic)
+                    out += Span(token.value, bold, italic, strike)
                     i++
                 }
-                is Stars -> {
+                is Marker -> {
                     val n = token.count
+                    // Two tildes strike text through, as every Markdown that
+                    // knows the idea writes it; one tilde is a tilde.
+                    val opens = if (token.character == '~') n == 2 else n in 1..3
                     val closer =
-                        if (n in 1..3 && canOpen(tokens, i, to) && n !in exhausted) {
-                            findCloser(tokens, i + 1, to, n).also { if (it == -1) exhausted.add(n) }
+                        if (opens && canOpen(tokens, i, to) && token !in exhausted) {
+                            findCloser(tokens, i + 1, to, token)
+                                .also { if (it == -1) exhausted.add(token) }
                         } else {
                             -1
                         }
                     if (closer == -1) {
-                        out += Span("*".repeat(n), bold, italic)
+                        out += Span(token.character.toString().repeat(n), bold, italic, strike)
                         i++
                     } else {
-                        parseInto(tokens, i + 1, closer, bold || n >= 2, italic || n != 2, out)
+                        val struck = strike || token.character == '~'
+                        val stars = token.character == '*'
+                        parseInto(
+                            tokens, i + 1, closer,
+                            bold = bold || (stars && n >= 2),
+                            italic = italic || (stars && n != 2),
+                            strike = struck,
+                            out = out,
+                        )
                         i = closer + 1
                     }
                 }
@@ -122,21 +146,26 @@ internal object InlineEmphasisParser {
         }
     }
 
+    // A marker against another marker is against no whitespace, which is
+    // what these rules are really asking: `~~**gone**~~` opens twice over.
     private fun canOpen(tokens: List<Token>, at: Int, to: Int): Boolean {
         if (at + 1 >= to) return false
-        val next = tokens[at + 1]
-        return next is Text && !next.value.first().isWhitespace()
+        return when (val next = tokens[at + 1]) {
+            is Text -> !next.value.first().isWhitespace()
+            is Marker -> true
+        }
     }
 
-    private fun canClose(tokens: List<Token>, at: Int): Boolean {
-        val prev = tokens[at - 1]
-        return prev is Text && !prev.value.last().isWhitespace()
-    }
+    private fun canClose(tokens: List<Token>, at: Int): Boolean =
+        when (val previous = tokens[at - 1]) {
+            is Text -> !previous.value.last().isWhitespace()
+            is Marker -> true
+        }
 
-    private fun findCloser(tokens: List<Token>, from: Int, to: Int, n: Int): Int {
+    private fun findCloser(tokens: List<Token>, from: Int, to: Int, marker: Marker): Int {
         for (j in from until to) {
             val token = tokens[j]
-            if (token is Stars && token.count == n && canClose(tokens, j)) return j
+            if (token == marker && canClose(tokens, j)) return j
         }
         return -1
     }
@@ -147,19 +176,21 @@ internal object InlineEmphasisParser {
         val buffer = StringBuilder()
         var bold = false
         var italic = false
+        var strike = false
         var open = false
         fun flush() {
             if (open) {
-                merged += Span(buffer.toString(), bold, italic)
+                merged += Span(buffer.toString(), bold, italic, strike)
                 buffer.setLength(0)
                 open = false
             }
         }
         for (span in spans) {
-            if (!open || span.bold != bold || span.italic != italic) {
+            if (!open || span.bold != bold || span.italic != italic || span.strike != strike) {
                 flush()
                 bold = span.bold
                 italic = span.italic
+                strike = span.strike
                 open = true
             }
             buffer.append(span.text)
