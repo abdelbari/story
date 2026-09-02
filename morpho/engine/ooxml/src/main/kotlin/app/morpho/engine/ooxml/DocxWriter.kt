@@ -105,6 +105,15 @@ object DocxWriter {
     private const val BULLET_NUM_ID = 1
     private const val FIRST_NUMBERED_NUM_ID = 2
 
+    /** However deep a document nests its lists, no deeper than Word's own nine levels. */
+    private const val DEEPEST_LIST_LEVEL = 8
+
+    /** What each level of a bulleted list is marked with, in turn. */
+    private val BULLET_CHARACTERS = listOf("•", "◦", "▪")
+
+    /** How each level of a numbered list counts: 1. then a) then i., as an outline is set. */
+    private val NUMBER_FORMATS = listOf("decimal", "lowerLetter", "lowerRoman")
+
     /**
      * The num id of every list paragraph, computed in one pre-pass over the
      * document so [DocxWriter] itself stays stateless: a plan lives for a
@@ -139,9 +148,14 @@ object DocxWriter {
                     idByParagraph[block] = currentListId
                     continue
                 }
+                val listId = currentListId
                 currentListId = null
                 if (block is Paragraph && block.style.listMarker == ListMarker.BULLET) {
                     idByParagraph[block] = BULLET_NUM_ID
+                    // A bullet among numbered items belongs to the same list;
+                    // the numbering carries on past it rather than starting
+                    // again at 1 underneath.
+                    currentListId = listId
                 }
                 if (block is Table) {
                     for (row in block.rows) {
@@ -481,7 +495,8 @@ object DocxWriter {
         // numbering and everything that follows it.
         if (style.pageBreakBefore) sb.append("<w:pageBreakBefore/>")
         if (numId != null) {
-            sb.append("""<w:numPr><w:ilvl w:val="0"/><w:numId w:val="$numId"/></w:numPr>""")
+            val level = style.listLevel.coerceIn(0, DEEPEST_LIST_LEVEL)
+            sb.append("""<w:numPr><w:ilvl w:val="$level"/><w:numId w:val="$numId"/></w:numPr>""")
         }
         if (rules) {
             // A hairline in Word's eighths of a point, a point clear of the text.
@@ -959,6 +974,18 @@ object DocxWriter {
                 """<w:lvlText w:val="$lvlText"/><w:lvlJc w:val="left"/>""" +
                 """<w:pPr><w:ind w:left="${720 * (ilvl + 1)}" w:hanging="360"/></w:pPr></w:lvl>"""
 
+        // Word's own ladders, level by level, as deep as a list may nest:
+        // three bullets in turn, and numbers that go 1. a. i. the way every
+        // outline is set.
+        val bullets = (0..DEEPEST_LIST_LEVEL).joinToString(separator = "") { ilvl ->
+            level(ilvl, "bullet", BULLET_CHARACTERS[ilvl % BULLET_CHARACTERS.size])
+        }
+        val numbers = (0..DEEPEST_LIST_LEVEL).joinToString(separator = "") { ilvl ->
+            val format = NUMBER_FORMATS[ilvl % NUMBER_FORMATS.size]
+            // %n counts the nth level, so the placeholder follows the level.
+            level(ilvl, format, "%${ilvl + 1}" + if (format == "lowerLetter") ")" else ".")
+        }
+
         val nums = StringBuilder()
         nums.append("""<w:num w:numId="$BULLET_NUM_ID"><w:abstractNumId w:val="0"/></w:num>""")
         // One w:num per numbered list, each with a level-0 startOverride.
@@ -975,10 +1002,10 @@ object DocxWriter {
         return XML_DECL +
             """<w:numbering xmlns:w="$W">""" +
             """<w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/>""" +
-            level(0, "bullet", "•") + level(1, "bullet", "◦") + level(2, "bullet", "▪") +
+            bullets +
             "</w:abstractNum>" +
             """<w:abstractNum w:abstractNumId="1"><w:multiLevelType w:val="hybridMultilevel"/>""" +
-            level(0, "decimal", "%1.") + level(1, "decimal", "%2.") + level(2, "decimal", "%3.") +
+            numbers +
             "</w:abstractNum>" +
             nums +
             "</w:numbering>"

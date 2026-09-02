@@ -22,7 +22,9 @@ object MarkdownWriter {
     fun write(document: DocumentModel): String {
         val out = StringBuilder()
         var previousWasListItem = false
-        var numberedCount = 0
+        // One count per level of nesting: an item of a list inside a list
+        // counts on its own, and starts again each time its list does.
+        val counts = ListCounts()
 
         for (block in document.blocks) {
             when (block) {
@@ -32,19 +34,21 @@ object MarkdownWriter {
                         // Items of one list stay adjacent; everything else gets a blank line.
                         out.append(if (marker != null && previousWasListItem) "\n" else "\n\n")
                     }
+                    val level = block.style.listLevel.coerceIn(0, ListLabels.DEEPEST_LEVEL)
+                    if (marker != null && !previousWasListItem) counts.clear()
+                    val count = counts.next(block.style)
+                    // Four spaces a level: past the marker of the item above,
+                    // which is what makes Markdown read it as a list inside
+                    // a list rather than the next item of the same one.
+                    val indent = "    ".repeat(level)
                     when (marker) {
-                        ListMarker.BULLET -> {
-                            numberedCount = 0
-                            out.append("- ").append(runsToMarkdown(block.runs))
-                        }
-                        ListMarker.NUMBERED -> {
-                            numberedCount = if (previousWasListItem) numberedCount + 1 else 1
-                            out.append(numberedCount).append(". ").append(runsToMarkdown(block.runs))
-                        }
-                        null -> {
-                            numberedCount = 0
+                        ListMarker.BULLET ->
+                            out.append(indent).append("- ").append(runsToMarkdown(block.runs))
+                        ListMarker.NUMBERED ->
+                            out.append(indent).append(count).append(". ")
+                                .append(runsToMarkdown(block.runs))
+                        null ->
                             out.append(headingPrefix(block.style.kind)).append(runsToMarkdown(block.runs))
-                        }
                     }
                     previousWasListItem = marker != null
                 }
@@ -52,7 +56,7 @@ object MarkdownWriter {
                     if (out.isNotEmpty()) out.append("\n\n")
                     appendTable(out, block)
                     previousWasListItem = false
-                    numberedCount = 0
+                    counts.clear()
                 }
                 is ImageBlock -> {
                     if (out.isNotEmpty()) out.append("\n\n")
@@ -62,7 +66,7 @@ object MarkdownWriter {
                         .append(java.util.Base64.getEncoder().encodeToString(block.bytes))
                         .append(")")
                     previousWasListItem = false
-                    numberedCount = 0
+                    counts.clear()
                 }
             }
         }

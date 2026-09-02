@@ -78,6 +78,10 @@ object HtmlWriter {
             "h1.doc-title{font-size:26pt;font-weight:normal;}" +
             "p{margin:0 0 9pt;}" +
             "ul,ol{margin:0 0 9pt;padding-inline-start:24pt;}" +
+            // A list inside a list is marked its own way, as an outline is
+            // set: 1. then a) then i., and a bullet that changes with it.
+            "ol ol{list-style-type:lower-alpha;}ol ol ol{list-style-type:lower-roman;}" +
+            "ul ul{list-style-type:circle;}ul ul ul{list-style-type:square;}" +
             "li{margin:0 0 3pt;}" +
             "table{border-collapse:collapse;margin:0 0 9pt;table-layout:fixed;}" +
             "section.footnotes{border-top:0.75pt solid;margin-top:12pt;padding-top:4pt;font-size:0.85em;}" +
@@ -93,29 +97,34 @@ object HtmlWriter {
         blocks: List<Block>,
         defaultDirection: TextDirection,
     ) {
-        var openList: ListMarker? = null
+        // The lists standing open, outermost first: a list inside a list is
+        // a list inside a list item, which is how HTML nests them.
+        val open = ArrayDeque<ListMarker>()
+
+        fun tagOf(marker: ListMarker) = if (marker == ListMarker.BULLET) "ul" else "ol"
 
         fun closeList() {
-            when (openList) {
-                ListMarker.BULLET -> sb.append("</ul>\n")
-                ListMarker.NUMBERED -> sb.append("</ol>\n")
-                null -> {}
-            }
-            openList = null
+            while (open.isNotEmpty()) sb.append("</" + tagOf(open.removeLast()) + ">\n")
         }
 
         for (block in blocks) {
             when (block) {
                 is Paragraph -> {
                     val marker = block.style.listMarker
-                    if (marker != openList) {
+                    if (marker == null) {
                         closeList()
-                        when (marker) {
-                            ListMarker.BULLET -> sb.append("<ul>\n")
-                            ListMarker.NUMBERED -> sb.append("<ol>\n")
-                            null -> {}
+                    } else {
+                        val depth = block.style.listLevel + 1
+                        while (open.size > depth) sb.append("</" + tagOf(open.removeLast()) + ">\n")
+                        // A list that changes its marker where it stands is a
+                        // new list, not the one that was open.
+                        if (open.size == depth && open.last() != marker) {
+                            sb.append("</" + tagOf(open.removeLast()) + ">\n")
                         }
-                        openList = marker
+                        while (open.size < depth) {
+                            sb.append("<" + tagOf(marker) + ">\n")
+                            open.addLast(marker)
+                        }
                     }
                     appendParagraph(sb, block, defaultDirection, asListItem = marker != null)
                 }

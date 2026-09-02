@@ -45,6 +45,14 @@ data class ParagraphStyle(
     /** null = inherit the document's default direction. */
     val direction: TextDirection? = null,
     val listMarker: ListMarker? = null,
+    /**
+     * How deep a list item sits: 0 for the outermost, 1 for an item of a
+     * list inside it, and so on. A document's lists are nested more often
+     * than not — a report's numbered clauses with lettered sub-clauses,
+     * a thesis's aims under its objectives — and a converter that keeps
+     * only one level hands all of them back as a single flat list.
+     */
+    val listLevel: Int = 0,
     val alignment: Alignment? = null,
     /**
      * How the paragraph sits on its page, in points, as a reader measured

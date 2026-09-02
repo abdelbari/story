@@ -1463,8 +1463,8 @@ internal object AndroidStructureTreeReader {
                 "H2" -> emitParagraph(element, ParagraphKind.HEADING_2, null)
                 "H3", "H4", "H5", "H6" -> emitParagraph(element, ParagraphKind.HEADING_3, null)
 
-                "L" -> emitList(element, depth)
-                "LI" -> emitListItem(element, marker = ListMarker.BULLET)
+                "L" -> emitList(element, depth, level = 0)
+                "LI" -> emitListItem(element, marker = ListMarker.BULLET, depth = depth, level = 0)
 
                 "Table" -> emitTable(element, depth)
 
@@ -1606,7 +1606,13 @@ internal object AndroidStructureTreeReader {
             return null
         }
 
-        private fun emitList(list: PDStructureElement, depth: Int) {
+        /**
+         * [level] is how many lists this one sits inside: a document's lists
+         * are nested more often than not, and an item of a list inside an
+         * item belongs neither to the outer list nor to a list of its own
+         * but to a level of the same one.
+         */
+        private fun emitList(list: PDStructureElement, depth: Int, level: Int) {
             if (depth > MAX_DEPTH) throw TooDeepException()
             val items = childElements(list).filter { resolvedType(it) == "LI" }
             if (items.isEmpty()) {
@@ -1623,12 +1629,22 @@ internal object AndroidStructureTreeReader {
                 } else {
                     ListMarker.BULLET
                 }
-            for (item in items) emitListItem(item, marker)
+            for (item in items) emitListItem(item, marker, depth, level)
         }
 
-        private fun emitListItem(item: PDStructureElement, marker: ListMarker) {
+        private fun emitListItem(
+            item: PDStructureElement,
+            marker: ListMarker,
+            depth: Int,
+            level: Int,
+        ) {
             val body = childElements(item).firstOrNull { resolvedType(it) == "LBody" }
-            val glyphs = glyphsOf(body ?: item)
+            val container = body ?: item
+            // A list inside an item is a list of its own, not more words of
+            // the item: its glyphs would otherwise be read as the tail of the
+            // sentence the item begins.
+            val nested = childElements(container).filter { resolvedType(it) == "L" }
+            val glyphs = glyphsOf(container, except = nested)
             val styled = trimmed(
                 body?.let { texts.readStyled(glyphs).logical } ?: run {
                     // No LBody: take the item's text minus its label.
@@ -1638,7 +1654,10 @@ internal object AndroidStructureTreeReader {
                 }
             )
             val text = styled.text
-            if (text.isEmpty()) return
+            if (text.isEmpty()) {
+                for (inner in nested) emitList(inner, depth + 1, level + 1)
+                return
+            }
             sawText = true
             val direction = Bidi.firstStrongDirection(text)
             val placement = texts.placementOf(glyphs, direction)
@@ -1655,6 +1674,7 @@ internal object AndroidStructureTreeReader {
                     // label says more than a bullet does anyway: "أ-", "3-",
                     // and the dash of a second level are all lost by one.
                     listMarker = marker.takeIf { !drawsItsOwnLabel(text) },
+                    listLevel = level,
                     alignment = placement?.alignment,
                     firstLineIndentPt = placement?.firstLineIndentPt,
                     startIndentPt = placement?.startIndentPt,
@@ -1662,6 +1682,7 @@ internal object AndroidStructureTreeReader {
                 ),
                 confidence = CONFIDENCE,
             )
+            for (inner in nested) emitList(inner, depth + 1, level + 1)
         }
 
         /**
@@ -1771,13 +1792,22 @@ internal object AndroidStructureTreeReader {
             texts.readOffThePage(glyphsOf(element))
 
         /** Every glyph painted under [element], tagged with its page, in tree order. */
-        private fun glyphsOf(element: PDStructureElement): List<Pair<Int, Glyph>> {
+        /** Every glyph under [element], leaving the subtrees in [except] alone. */
+        private fun glyphsOf(
+            element: PDStructureElement,
+            except: List<PDStructureElement> = emptyList(),
+        ): List<Pair<Int, Glyph>> {
             val glyphs = mutableListOf<Pair<Int, Glyph>>()
+            // The tree hands out a fresh wrapper for an element every time it
+            // is asked, so two of them are the same element when they stand
+            // for the same dictionary, never when they are the same object.
+            val skip = except.map { it.cosObject }
             fun gather(node: PDStructureElement, depth: Int) {
                 if (depth > MAX_DEPTH) throw TooDeepException()
                 for (kid in node.kids.orEmpty()) {
                     when (kid) {
-                        is PDStructureElement -> gather(kid, depth + 1)
+                        is PDStructureElement ->
+                            if (skip.none { it === kid.cosObject }) gather(kid, depth + 1)
                         is Int -> glyphs += texts.glyphsFor(node.page, kid)
                         is COSInteger -> glyphs += texts.glyphsFor(node.page, kid.intValue())
                         is PDMarkedContentReference ->

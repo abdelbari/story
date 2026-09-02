@@ -174,7 +174,7 @@ object DocxReader {
         reference: String,
         parts: Map<String, ByteArray>,
         media: MediaStore,
-        numbering: Map<String, ListMarker>,
+        numbering: Map<String, Map<Int, ListMarker>>,
         styles: StyleSheet,
     ): List<Block> {
         val references = children(sectPr, reference)
@@ -259,7 +259,7 @@ object DocxReader {
     /** [inline] keeps a paragraph's pictures in its line as runs — how a running header carries its artwork — instead of after it. */
     private fun parseBlocks(
         parent: Element,
-        numbering: Map<String, ListMarker>,
+        numbering: Map<String, Map<Int, ListMarker>>,
         media: MediaStore,
         depth: Int,
         inline: Boolean = false,
@@ -319,7 +319,7 @@ object DocxReader {
     /** With [inline], the paragraph's pictures stay in its line as runs rather than following it. */
     private fun parseParagraph(
         p: Element,
-        numbering: Map<String, ListMarker>,
+        numbering: Map<String, Map<Int, ListMarker>>,
         media: MediaStore? = null,
         inline: Boolean = false,
         notes: Map<Int, List<Block>> = emptyMap(),
@@ -392,7 +392,7 @@ object DocxReader {
         properties: Map<String, Element>,
         styleId: String?,
         styleName: String?,
-        numbering: Map<String, ListMarker>,
+        numbering: Map<String, Map<Int, ListMarker>>,
     ): ParagraphStyle {
         if (properties.isEmpty() && styleId == null) return ParagraphStyle()
         // What the style is called says what a paragraph is — its id where
@@ -417,10 +417,23 @@ object DocxReader {
                 }
             }
         }
-        val listMarker = properties["numPr"]
+        val numbered = properties["numPr"]
+        // Word writes numId 0 to take a paragraph out of a list it would
+        // otherwise inherit from its style.
+        val levels = numbered
             ?.let { firstChild(it, "numId") }
             ?.let { attr(it, "val") }
+            ?.takeIf { it != "0" }
             ?.let(numbering::get)
+        val listLevel = numbered
+            ?.let { firstChild(it, "ilvl") }
+            ?.let { attr(it, "val") }
+            ?.toIntOrNull()
+            ?.coerceIn(0, DEEPEST_LIST_LEVEL)
+            ?: 0
+        // A level the numbering never defined still belongs to its list, and
+        // is marked the way the list's outermost level is.
+        val listMarker = levels?.let { it[listLevel] ?: it[0] }
         val alignment = when (properties["jc"]?.let { attr(it, "val") }) {
             "center" -> Alignment.CENTER
             "both", "distribute" -> Alignment.JUSTIFY
@@ -438,6 +451,7 @@ object DocxReader {
             kind = kind,
             direction = if (isOn(properties["bidi"])) TextDirection.RTL else null,
             listMarker = listMarker,
+            listLevel = if (listMarker == null) 0 else listLevel,
             alignment = alignment,
             firstLineIndentPt = ind?.let { twips(attr(it, "firstLine")) },
             startIndentPt = ind?.let { twips(attr(it, "start") ?: attr(it, "left")) },
@@ -596,6 +610,9 @@ object DocxReader {
         return children(properties).mapNotNull { child -> child.localName?.let { it to child } }.toMap()
     }
 
+    /** However deep a file nests its lists, no deeper than Word's own nine levels. */
+    private const val DEEPEST_LIST_LEVEL = 8
+
     /** However deep a file claims its styles are based on each other, no deeper than this. */
     private const val MOST_STYLES_IN_A_CHAIN = 32
 
@@ -700,7 +717,7 @@ object DocxReader {
 
     private fun parseTable(
         tbl: Element,
-        numbering: Map<String, ListMarker>,
+        numbering: Map<String, Map<Int, ListMarker>>,
         media: MediaStore,
         depth: Int,
         notes: Map<Int, List<Block>> = emptyMap(),
@@ -777,29 +794,45 @@ object DocxReader {
     // word/numbering.xml
     // ------------------------------------------------------------------
 
-    /** numId → marker, resolved via each num's abstractNum level-0 numFmt. */
-    private fun parseNumbering(bytes: ByteArray): Map<String, ListMarker> = try {
+    /**
+     * numId → the marker at each of its levels, resolved through each num's
+     * abstractNum. A list is not one marker but a ladder of them — Word's
+     * own default numbers the outer level and letters the one inside it —
+     * and every way of counting other than a bullet is a numbered list: a
+     * clause lettered (a) is as numbered as one numbered 1.
+     */
+    private fun parseNumbering(bytes: ByteArray): Map<String, Map<Int, ListMarker>> = try {
         val root = parseXml(bytes).documentElement
-        val level0Formats = mutableMapOf<String, String>()
+        val byAbstractId = mutableMapOf<String, Map<Int, ListMarker>>()
         for (abstractNum in children(root, "abstractNum")) {
             val id = attr(abstractNum, "abstractNumId") ?: continue
-            val level0 = children(abstractNum, "lvl").firstOrNull { attr(it, "ilvl") == "0" }
-            val numFmt = level0?.let { firstChild(it, "numFmt") }?.let { attr(it, "val") }
-            if (numFmt != null) level0Formats[id] = numFmt
+            byAbstractId[id] = buildMap {
+                for (lvl in children(abstractNum, "lvl")) {
+                    val level = attr(lvl, "ilvl")?.toIntOrNull()?.takeIf { it >= 0 } ?: continue
+                    val format = firstChild(lvl, "numFmt")?.let { attr(it, "val") } ?: continue
+                    markerFor(format)?.let { put(level, it) }
+                }
+            }
         }
         buildMap {
             for (num in children(root, "num")) {
                 val numId = attr(num, "numId") ?: continue
                 val abstractId = firstChild(num, "abstractNumId")?.let { attr(it, "val") }
-                when (level0Formats[abstractId]) {
-                    "bullet" -> put(numId, ListMarker.BULLET)
-                    "decimal" -> put(numId, ListMarker.NUMBERED)
-                    else -> {}
-                }
+                byAbstractId[abstractId]?.takeIf { it.isNotEmpty() }?.let { put(numId, it) }
             }
         }
     } catch (_: Exception) {
         emptyMap() // a broken numbering part loses markers, never the document
+    }
+
+    /**
+     * What a level's `w:numFmt` marks its items with. "none" is a list that
+     * prints no marker at all, which is indentation rather than a list.
+     */
+    private fun markerFor(format: String): ListMarker? = when (format) {
+        "bullet" -> ListMarker.BULLET
+        "none" -> null
+        else -> ListMarker.NUMBERED
     }
 
     // ------------------------------------------------------------------

@@ -32,7 +32,8 @@ import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
-import app.morpho.engine.layout.ListMarker
+import app.morpho.engine.layout.ListCounts
+import app.morpho.engine.layout.ListLabels
 import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
@@ -153,14 +154,14 @@ internal object PdfFileExporter {
             val furniture = Furniture(model, sheet)
             val cursor = Cursor(pdf, sheet) { canvas, ordinal -> furniture.draw(canvas, ordinal) }
             cursor.openPage()
-            var numberedCount = 0
+            val counts = ListCounts()
             for (block in model.blocks) {
-                numberedCount =
-                    if (block is Paragraph && block.style.listMarker == ListMarker.NUMBERED) {
-                        numberedCount + 1
-                    } else {
-                        0
-                    }
+                val numberedCount = if (block is Paragraph) {
+                    counts.next(block.style)
+                } else {
+                    counts.clear()
+                    0
+                }
                 when (block) {
                     is Paragraph -> paragraph(cursor, block, model.defaultDirection, numberedCount)
                     is ImageBlock -> image(cursor, block)
@@ -343,7 +344,8 @@ internal object PdfFileExporter {
             val rightToLeft = rtl(paragraph)
             val left = sheet.marginLeft
             val right = sheet.width - sheet.marginRight
-            val indent = paragraph.style.startIndentPt?.coerceAtLeast(0f) ?: 0f
+            val indent = (paragraph.style.startIndentPt?.coerceAtLeast(0f) ?: 0f) +
+                ListLabels.indentPt(paragraph.style)
             val stops = paragraph.style.tabStopsPt.orEmpty().filter { it > 0f }.sorted()
             class Measured(val offset: Float, val width: Float, val height: Float, val text: String?, val paint: TextPaint?, val picture: ImageBlock?)
             val measured = mutableListOf<Measured>()
@@ -594,12 +596,11 @@ internal object PdfFileExporter {
                 val textWidth = (width - 2 * CELL_PADDING).toInt().coerceAtLeast(1)
                 // Numbered items restart per cell, same contiguity rule as
                 // the top-level walk.
-                var numbered = 0
+                val counts = ListCounts()
                 cell.blocks.filterIsInstance<Paragraph>()
                     .filter { it.text.isNotEmpty() }
                     .map { para ->
-                        numbered =
-                            if (para.style.listMarker == ListMarker.NUMBERED) numbered + 1 else 0
+                        val numbered = counts.next(para.style)
                         val direction = para.style.direction ?: defaultDirection
                         val paint = paintFor(para.style.kind)
                         val text = spannable(para, numbered)
@@ -643,11 +644,9 @@ internal object PdfFileExporter {
     /** Paragraph runs as styled text, with an optional plain-text list marker. */
     private fun spannable(block: Paragraph, numberedCount: Int): SpannableStringBuilder {
         val text = SpannableStringBuilder()
-        when (block.style.listMarker) {
-            ListMarker.BULLET -> text.append("• ")
-            ListMarker.NUMBERED -> text.append("$numberedCount. ")
-            null -> {}
-        }
+        // A page has no numbering to draw from, so the marker its list would
+        // have been given is written into the line.
+        text.append(ListLabels.markerFor(block.style, numberedCount))
         for (run in block.runs) {
             val start = text.length
             fun span(what: Any) =
@@ -704,7 +703,8 @@ internal object PdfFileExporter {
      */
     private fun indent(text: SpannableStringBuilder, block: Paragraph) {
         if (text.isEmpty()) return
-        val start = block.style.startIndentPt?.takeIf { it > 0f } ?: 0f
+        val start = (block.style.startIndentPt?.takeIf { it > 0f } ?: 0f) +
+            ListLabels.indentPt(block.style)
         val hanging = block.style.hangingIndentPt?.takeIf { it > 0f } ?: 0f
         val firstLine = block.style.firstLineIndentPt?.takeIf { it > 0f } ?: 0f
         val first = (start + firstLine - hanging).coerceAtLeast(0f)

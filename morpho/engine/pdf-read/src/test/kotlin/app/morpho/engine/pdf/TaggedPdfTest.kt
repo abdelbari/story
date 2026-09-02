@@ -130,6 +130,41 @@ class TaggedPdfTest {
         }
     }
 
+    @Test
+    fun `a list inside a list item is a list of its own`() {
+        // A report's clauses with sub-clauses under them: the inner list is
+        // tagged inside the item it belongs to, and its words are not more
+        // words of that item.
+        val pdf = taggedPdf {
+            val list = group(StandardStructureTypes.L, document)
+            val first = group(StandardStructureTypes.LI, list)
+            leaf(StandardStructureTypes.LBL, first, "1.")
+            val firstBody = group(StandardStructureTypes.L_BODY, first)
+            leaf(StandardStructureTypes.P, firstBody, "Aims of the study")
+            val inner = group(StandardStructureTypes.L, firstBody)
+            for (label in listOf("a.", "b.")) {
+                val item = group(StandardStructureTypes.LI, inner)
+                leaf(StandardStructureTypes.LBL, item, label)
+                leaf(StandardStructureTypes.L_BODY, item, "sub-aim " + label.first())
+            }
+            val second = group(StandardStructureTypes.LI, list)
+            leaf(StandardStructureTypes.LBL, second, "2.")
+            leaf(StandardStructureTypes.L_BODY, second, "Method of the study")
+        }
+        val items = paragraphs(pdf).filter { it.style.listMarker != null }
+        val shape = items.map { it.text to it.style.listLevel }
+        assertEquals(
+            listOf(
+                "Aims of the study" to 0,
+                "sub-aim a" to 1,
+                "sub-aim b" to 1,
+                "Method of the study" to 0,
+            ),
+            shape,
+            "the list came back as: " + shape,
+        )
+    }
+
     private fun paragraphs(bytes: ByteArray) =
         PdfReader().extract(bytes).blocks.filterIsInstance<Paragraph>()
 
