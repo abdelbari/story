@@ -383,8 +383,9 @@ internal object PdfFileExporter {
         )
         drawAcrossPages(cursor, layout)
         // The space the page showed after this paragraph, where a reader
-        // measured it; otherwise the type scale's own.
-        val after = block.style.spaceAfterPt?.takeIf { it > 0f } ?: spacingAfter(block.style.kind)
+        // measured it — none, when it measured none, so the pages break
+        // where the source's do; otherwise the type scale's own.
+        val after = block.style.spaceAfterPt?.coerceAtLeast(0f) ?: spacingAfter(block.style.kind)
         cursor.advance(minOf(after, cursor.remaining))
     }
 
