@@ -128,6 +128,7 @@ fun HomeScreen(viewModel: ConvertViewModel) {
     val converted = state as? ConvertUiState.Converted
     if (converted != null && showPreview) {
         PreviewScreen(
+            pdf = converted.previewPdf,
             html = converted.previewHtml,
             fileName = converted.suggestedName,
             onSave = viewModel::requestSave,

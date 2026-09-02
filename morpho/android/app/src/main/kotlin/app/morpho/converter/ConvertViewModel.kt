@@ -52,6 +52,8 @@ sealed interface ConvertUiState {
         val needsReview: Boolean = false,
         /** The document rendered for the preview screen; what the file holds. */
         val previewHtml: String = "",
+        /** The same document laid out as pages, for the preview to draw; empty when that failed. */
+        val previewPdf: ByteArray = ByteArray(0),
     ) : ConvertUiState
 
     /** The reader asked to save; the UI opens the system dialog for this. */
@@ -147,6 +149,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     private var lastModel: DocumentModel? = null
     /** [lastModel] rendered once for the preview; refreshed with every correction. */
     private var lastPreviewHtml: String = ""
+    /** [lastModel] laid out as pages for the preview; empty when the layout failed. */
+    private var lastPreviewPdf: ByteArray = ByteArray(0)
     private var lastWriter: ((DocumentModel) -> ByteArray)? = null
     private var lastMimeType: String = DocxWriter.MIME_TYPE
     private val editedBlocks = mutableSetOf<Int>()
@@ -205,10 +209,19 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         val report = FidelityReport.of(corrected)
         lastModel = corrected
         lastPreviewHtml = HtmlWriter.write(corrected, outputName)
+        lastPreviewPdf = previewPages(corrected)
         lastReport = report
         editedBlocks += index
         _review.value = ReviewState(report, editedBlocks.toSet())
     }
+
+    /**
+     * The model laid out as pages for the preview screen — the layout the
+     * app writes when it makes a PDF. A failure here costs the preview its
+     * pages, not the conversion its result: the HTML rendering stands in.
+     */
+    private fun previewPages(model: DocumentModel): ByteArray =
+        runCatching { PdfFileExporter.render(model) }.getOrDefault(ByteArray(0))
 
     /** Writes the corrected model out again, straight to the save dialog. */
     fun saveCorrected() {
@@ -242,6 +255,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         lastReport = null
         lastModel = null
         lastPreviewHtml = ""
+        lastPreviewPdf = ByteArray(0)
         lastWriter = null
         editedBlocks.clear()
         _review.value = null
@@ -378,6 +392,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         outputName = "$base.$extension"
         lastModel = model
         lastPreviewHtml = HtmlWriter.write(model, outputName)
+        lastPreviewPdf = previewPages(model)
         lastWriter = write
         lastMimeType = mimeType
         lastReport = FidelityReport.of(model)
@@ -394,7 +409,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             publish(epoch, ConvertUiState.Failed(FailReason.WRITE_ERROR))
             return
         }
-        publish(epoch, ConvertUiState.Converted(outputName, mimeType, output, needsReview(), lastPreviewHtml))
+        publish(epoch, ConvertUiState.Converted(outputName, mimeType, output, needsReview(), lastPreviewHtml, lastPreviewPdf))
     }
 
     /**
@@ -557,7 +572,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             // Dismissing the dialog must not discard the conversion: offer
             // it again rather than making the reader convert a second time.
             _state.value = pending?.let {
-                ConvertUiState.Converted(it.suggestedName, it.mimeType, it.bytes, needsReview(), lastPreviewHtml)
+                ConvertUiState.Converted(it.suggestedName, it.mimeType, it.bytes, needsReview(), lastPreviewHtml, lastPreviewPdf)
             } ?: pickedFile?.meta ?: ConvertUiState.Idle
             return
         }

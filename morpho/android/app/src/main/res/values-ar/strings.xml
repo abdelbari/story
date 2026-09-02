@@ -60,4 +60,6 @@
     <string name="save_file">احفظ الملف</string>
     <string name="preview_title">معاينة</string>
     <string name="preview_open">عرض المستند</string>
+    <string name="preview_page">صفحة %1$d من %2$d</string>
+    <string name="preview_unavailable">تعذّر رسم الصفحات. لا يزال بإمكانك حفظ الملف.</string>
 </resources>

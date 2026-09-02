@@ -60,4 +60,6 @@
     <string name="save_file">Enregistrer le fichier</string>
     <string name="preview_title">Aperçu</string>
     <string name="preview_open">Afficher le document</string>
+    <string name="preview_page">Page %1$d sur %2$d</string>
+    <string name="preview_unavailable">Les pages n\'ont pas pu être dessinées. Le fichier peut quand même être enregistré.</string>
 </resources>

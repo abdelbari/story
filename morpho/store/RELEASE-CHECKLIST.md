@@ -33,6 +33,13 @@ Work through, in this order — each exercises a path nothing else covers:
       larger text, not Word's heading styles). Headings should still come
       out as headings. A bold line that is not a heading — a byline, say —
       may be promoted, which is what Review Mode is for.
+- [ ] **The preview shows pages.** After converting the Arabic paper, the
+      preview should look like the PDF: the same page shape and margins, the
+      title centred, the bold labels and raised marks in place, page after
+      page as you scroll. Rotate the phone; the pages should redraw at the
+      new width. The bold words ملخص and الكلمات must read so on the phone,
+      not ممخص and الكممات — the repair of the font map runs on the phone's
+      own PDF library, which is not the desktop one.
 - [ ] **The look of the Arabic paper**, converted and opened in Word beside the
       PDF. The bold label at the head of the abstract, the raised author
       mark, first-line indents, the three dates spread on tab stops, the

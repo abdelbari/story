@@ -60,4 +60,6 @@
     <string name="save_file">Guardar archivo</string>
     <string name="preview_title">Vista previa</string>
     <string name="preview_open">Mostrar el documento</string>
+    <string name="preview_page">Página %1$d de %2$d</string>
+    <string name="preview_unavailable">No se pudieron dibujar las páginas. El archivo aún puede guardarse.</string>
 </resources>
