@@ -1517,6 +1517,19 @@ internal object StructureTreeReader {
                 ),
                 confidence = CONFIDENCE,
             )
+            // A picture tagged inside the paragraph — a logo in a heading, a
+            // formula in a line — has no glyphs, so reading the paragraph
+            // off its text passes it by. It follows the words it was tagged
+            // among rather than falling to the end of the document with the
+            // pictures nothing referenced at all.
+            emitFiguresIn(element)
+        }
+
+        /** Every Figure under [element], in tag order, as pictures after the text they belong to. */
+        private fun emitFiguresIn(element: PDStructureElement) {
+            for (child in childElements(element)) {
+                if (resolvedType(child) == "Figure") emitFigure(child) else emitFiguresIn(child)
+            }
         }
 
         /**

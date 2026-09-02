@@ -194,6 +194,29 @@ class TaggedPdfTest {
     }
 
     @Test
+    fun `a figure inside a paragraph is kept, not dropped`() {
+        // A picture tagged inside the paragraph it illustrates — a logo
+        // in a heading, a formula in a line. The paragraph is read from
+        // its glyphs, and a figure has none, so it used to vanish.
+        val pdf = taggedPdf {
+            val paragraph = group(StandardStructureTypes.P, document)
+            leaf(StandardStructureTypes.SPAN, paragraph, "Before the mark")
+            figure(paragraph, widthPx = 12, heightPx = 8)
+            leaf(StandardStructureTypes.P, document, "The paragraph after it.")
+        }
+        val model = PdfReader().extract(pdf)
+        val text = model.blocks.filterIsInstance<Paragraph>().map { it.text }
+        assertTrue(text.any { it.contains("Before the mark") }, text.toString())
+        val image = model.blocks.filterIsInstance<ImageBlock>().singleOrNull()
+        assertTrue(image != null, "the figure inside the paragraph was lost")
+        assertEquals(12, image!!.widthPx)
+        // It follows the words it was tagged among, and the next
+        // paragraph follows it.
+        assertEquals(1, model.blocks.indexOf(image))
+        assertTrue((model.blocks[2] as Paragraph).text.contains("after it"))
+    }
+
+    @Test
     fun `a Figure element resolves to its image, in tag order`() {
         val pdf = taggedPdf {
             leaf(StandardStructureTypes.P, document, "Text before the figure.")
