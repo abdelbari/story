@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 298 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 300 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -49,6 +49,9 @@ Work through, in this order — each exercises a path nothing else covers:
       not split or join. Check an untagged PDF the same way: it should also
       keep its faces and weights, drop the running header and footer, and
       break its paragraphs where the page does.
+- [ ] **A section that starts on a fresh page** — the paper's list of
+      references — must start on a fresh page in Word too, and no ordinary
+      page turn may have become a forced break.
 - [ ] **A document with a table** — one with rules and one that is only
       aligned columns. The columns must keep their widths (a column of
       dates stays narrow), and the second must arrive with no lines

@@ -200,6 +200,8 @@ internal object AndroidStructureTreeReader {
     private const val PAGE_NUMBER_DRIFT_PT = 12f
     /** A gap wider than this share of the type size splits a run of digits into two. */
     private const val TOKEN_GAP_SHARE = 0.6f
+    /** A page whose text stopped this many lines short of where it could have run was broken on purpose. */
+    private const val EARLY_BREAK_LINES = 2f
     /** How far outside a table's text a rule still counts as the table's. */
     private const val TABLE_RULE_REACH_PT = 8f
     /** A rule must cross this share of a table's width to be one of its own. */
@@ -1272,6 +1274,7 @@ internal object AndroidStructureTreeReader {
                 rankHeadingsBySize()
             }
             applySpacing()
+            markPageBreaks()
             val paragraphs = blocks.filterIsInstance<Paragraph>()
             val rtl = paragraphs.count { it.style.direction == TextDirection.RTL }
             val defaultDirection =
@@ -1295,6 +1298,57 @@ internal object AndroidStructureTreeReader {
                     footer = furnishings.footer,
                 )
             )
+        }
+
+        /**
+         * Marks the paragraphs that begin a page the source broke to on
+         * purpose, so a converted document keeps the breaks that carry
+         * meaning: a section that starts on a fresh page, a list of
+         * references, a title page.
+         *
+         * Only those. A page that simply filled up is left to break itself
+         * again, because whoever opens the file may not have the face the
+         * page was set in — a substituted face sets the same words a little
+         * wider, and a break forced under it would leave a nearly empty
+         * page behind every full one. A page that stopped well short of
+         * where its text could have run cannot be explained that way: the
+         * producer broke it, and the break is part of the document.
+         */
+        private fun markPageBreaks() {
+            val lastBaselineByPage = HashMap<Int, Float>()
+            val pitches = mutableListOf<Float>()
+            for (placement in placementByBlockIndex.values) {
+                lastBaselineByPage.merge(placement.lastPage, placement.lastBaseline, ::maxOf)
+                placement.pitchPt?.let { pitches += it }
+            }
+            if (lastBaselineByPage.size < 2) return
+            // The step from one line to the next: within a paragraph where
+            // one has more than a line, and from the end of a paragraph to
+            // the start of the next where none has — a document of
+            // one-line paragraphs still has a line's worth of step.
+            val ordered = placementByBlockIndex.values
+                .sortedWith(compareBy({ it.firstPage }, { it.firstBaseline }))
+            for ((above, below) in ordered.zipWithNext()) {
+                if (above.lastPage == below.firstPage) pitches += below.firstBaseline - above.lastBaseline
+            }
+            // How far down the page text was allowed to run, taken from the
+            // page that ran furthest, and the line it would have run in.
+            val bottom = lastBaselineByPage.values.max()
+            val pitch = HeadingSizes.median(pitches.filter { it > 1f }).takeIf { it > 0f } ?: return
+            var page = placementByBlockIndex.values.minOfOrNull { it.firstPage } ?: return
+            for (index in blocks.indices) {
+                val placement = placementByBlockIndex[index] ?: continue
+                val previousEnd = lastBaselineByPage[page]
+                if (placement.firstPage > page && previousEnd != null &&
+                    previousEnd < bottom - EARLY_BREAK_LINES * pitch
+                ) {
+                    val paragraph = blocks[index] as? Paragraph
+                    if (paragraph != null) {
+                        blocks[index] = paragraph.copy(style = paragraph.style.copy(pageBreakBefore = true))
+                    }
+                }
+                page = maxOf(page, placement.lastPage)
+            }
         }
 
         /**

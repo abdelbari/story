@@ -153,6 +153,8 @@ object HtmlWriter {
             style.spaceBeforePt?.let { add("margin-top:${pt(it)}") }
             style.spaceAfterPt?.let { add("margin-bottom:${pt(it)}") }
             style.linePitchPt?.takeIf { it > 0f }?.let { add("line-height:${pt(it)}") }
+            // Where the source began a page, so does the print.
+            if (style.pageBreakBefore) add("break-before:page;page-break-before:always")
             if (style.ruleAbove) add("border-top:0.75pt solid;padding-top:1pt")
             if (style.ruleBelow) add("border-bottom:0.75pt solid;padding-bottom:1pt")
             // A tab character only advances when white space is kept; where

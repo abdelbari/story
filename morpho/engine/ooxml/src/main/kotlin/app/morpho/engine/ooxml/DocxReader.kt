@@ -373,6 +373,7 @@ object DocxReader {
         // A line rule of "auto" is a multiple of the font's own height, not
         // a distance, so only an exact or minimum height reads as a pitch.
         val lineRule = spacing?.let { attr(it, "lineRule") } ?: "auto"
+        val pageBreakBefore = isOn(firstChild(pPr, "pageBreakBefore"))
         return ParagraphStyle(
             kind = kind,
             direction = if (isOn(firstChild(pPr, "bidi"))) TextDirection.RTL else null,
@@ -390,6 +391,7 @@ object DocxReader {
             }?.takeIf { it.isNotEmpty() },
             ruleAbove = firstChild(pPr, "pBdr")?.let { firstChild(it, "top") }?.let { isBorder(it) } ?: false,
             ruleBelow = firstChild(pPr, "pBdr")?.let { firstChild(it, "bottom") }?.let { isBorder(it) } ?: false,
+            pageBreakBefore = pageBreakBefore,
         )
     }
 

@@ -317,6 +317,27 @@ class LookRoundTripTest {
     }
 
     @Test
+    fun `a paragraph that began a page begins one again`() {
+        val document = DocumentModel(
+            listOf(
+                Paragraph(listOf(TextRun("the end of page one"))),
+                Paragraph(
+                    listOf(TextRun("the start of page two")),
+                    ParagraphStyle(kind = ParagraphKind.HEADING_1, pageBreakBefore = true),
+                ),
+            )
+        )
+        val docx = DocxWriter.toByteArray(document)
+        val xml = documentXml(docx)
+        // After the style and before everything the schema puts later.
+        assertTrue(xml.contains("""<w:pStyle w:val="Heading1"/><w:pageBreakBefore/>"""), xml)
+        assertEquals(1, Regex("<w:pageBreakBefore/>").findAll(xml).count(), "only the page that began one")
+        val read = DocxReader.read(docx).blocks.filterIsInstance<Paragraph>()
+        assertTrue(!read[0].style.pageBreakBefore)
+        assertTrue(read[1].style.pageBreakBefore, "the break was lost on the way back")
+    }
+
+    @Test
     fun `a running header and footer become parts of their own`() {
         val picture = ImageBlock(PNG, "image/png", 2, 2, widthPt = 100f, heightPt = 20f)
         val document = DocumentModel(

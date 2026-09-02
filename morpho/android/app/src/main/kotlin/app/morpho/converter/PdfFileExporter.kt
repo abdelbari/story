@@ -59,7 +59,9 @@ import kotlin.math.roundToInt
  * after a paragraph and the pitch of its lines as measured, the pitch
  * exact the way Word sets it; the running head and foot drawn on every
  * page at their distance from the edge, a page-number field counting from
- * where the source did; paragraphs split across pages line-by-line. Honest
+ * where the source did; a page begun where the source began one, so the
+ * pages hold what the same pages held; paragraphs split across pages
+ * line-by-line. Honest
  * v1 limits, documented rather than hidden: tables take the widths their
  * columns were measured at and are ruled only where the page ruled them,
  * but render only their paragraph content, and a single row never splits
@@ -367,6 +369,9 @@ internal object PdfFileExporter {
             cursor.advance(minOf(6f, cursor.remaining))
             return
         }
+        // The source began a page here, so the export does too — unless a
+        // page has just been opened and is still empty.
+        if (block.style.pageBreakBefore && !cursor.atTop) cursor.openPage()
         // The space the page showed before this paragraph — not at the top
         // of a page, where Word drops it too.
         val before = block.style.spaceBeforePt?.takeIf { it > 0f } ?: 0f

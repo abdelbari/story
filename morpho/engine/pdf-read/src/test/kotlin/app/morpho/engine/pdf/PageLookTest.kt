@@ -273,6 +273,71 @@ class PageLookTest {
     }
 
     @Test
+    fun `a page the source broke early breaks again, and one that filled up does not`() {
+        // A break the producer made carries meaning — a section starting
+        // fresh — and reflow would lose it. A page that simply filled up
+        // is left to fill up again: whoever opens the file may not have
+        // the face it was set in, and a break forced under a wider face
+        // leaves a nearly empty page behind every full one.
+        val pdf = taggedPages(
+            listOf(
+                listOf("الاستمارة في البحث العلمي", "من شروط البحث العلمي الالمام"),
+                List(6) { "وتقسم إلى أربعة أنواع رقم $it" },
+                List(6) { "الأسئلة المفتوحة أو الحرة رقم $it" },
+            )
+        )
+        val paragraphs = paragraphs(pdf)
+        assertEquals(14, paragraphs.size, paragraphs.map { it.text }.toString())
+        assertTrue(!paragraphs[0].style.pageBreakBefore)
+        assertTrue(!paragraphs[1].style.pageBreakBefore)
+        // Page one stopped four lines short of where the others ran to.
+        assertTrue(paragraphs[2].style.pageBreakBefore, "the early break was lost")
+        // Page two ran to the bottom, so page three is left to reflow.
+        assertTrue(!paragraphs[8].style.pageBreakBefore, "a break was forced where the page merely filled")
+    }
+
+    /** A tagged document of one page per list, each paragraph a line of Arabic. */
+    private fun taggedPages(pages: List<List<String>>): ByteArray {
+        val bytes = ByteArrayOutputStream()
+        PDDocument().use { document ->
+            val root = PDStructureTreeRoot()
+            document.documentCatalog.structureTreeRoot = root
+            document.documentCatalog.language = "ar"
+            val docElement = PDStructureElement(StandardStructureTypes.DOCUMENT, root)
+            root.appendKid(docElement)
+            val font = PDType0Font.load(
+                document,
+                javaClass.getResourceAsStream("/fonts/NotoNaskhArabic-Regular.ttf") ?: error("test font missing"),
+                false,
+            )
+            var mcid = 0
+            for (lines in pages) {
+                val page = PDPage(PDRectangle.A4)
+                document.addPage(page)
+                PDPageContentStream(document, page).use { content ->
+                    for ((index, line) in lines.withIndex()) {
+                        val element = PDStructureElement(StandardStructureTypes.P, docElement)
+                        element.page = page
+                        docElement.appendKid(element)
+                        val properties = COSDictionary().apply { setInt(COSName.MCID, mcid) }
+                        content.beginMarkedContent(COSName.P, PDPropertyList.create(properties))
+                        content.beginText()
+                        content.setFont(font, 12f)
+                        content.newLineAtOffset(300f, PDRectangle.A4.height - (120f + index * 30f))
+                        content.showText(line.reversed())
+                        content.endText()
+                        content.endMarkedContent()
+                        element.appendKid(PDMarkedContent(COSName.P, properties))
+                        mcid++
+                    }
+                }
+            }
+            document.save(bytes)
+        }
+        return bytes.toByteArray()
+    }
+
+    @Test
     fun `the page the source was set on comes across with its margins`() {
         val pdf = tagged { document ->
             val font = arabic(document)

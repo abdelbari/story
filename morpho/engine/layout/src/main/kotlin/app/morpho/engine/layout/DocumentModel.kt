@@ -65,6 +65,12 @@ data class ParagraphStyle(
     /** A rule drawn across the page just above or just below the paragraph. */
     val ruleAbove: Boolean = false,
     val ruleBelow: Boolean = false,
+    /**
+     * Whether the source began a page with this paragraph. A converted
+     * document then breaks where its original broke, so its pages hold what
+     * the same pages held, instead of drifting a line at a time.
+     */
+    val pageBreakBefore: Boolean = false,
 )
 
 enum class ParagraphKind { TITLE, HEADING_1, HEADING_2, HEADING_3, BODY }

@@ -85,6 +85,8 @@ object PdfLayout {
     private const val MIN_LINES_FOR_PERCENTILE = 5
     /** Fewer long lines than this and the question does not arise. */
     private const val MIN_LINES_TO_JUDGE = 8
+    /** A page whose text stopped this many lines short of where it could have run was broken on purpose. */
+    private const val EARLY_BREAK_LINES = 2f
 
     fun reconstruct(
         lines: List<PdfLine>,
@@ -178,9 +180,26 @@ object PdfLayout {
                 ),
             )
         }
+        // A page the producer broke to on purpose — a section starting
+        // fresh, a list of references — is marked, so the break survives.
+        // A page that simply filled up is left to break itself again:
+        // whoever opens the file may not have the face it was set in, and a
+        // forced break under a wider face leaves a nearly empty page behind
+        // every full one.
+        val deliberate = deliberateBreaks(lines)
+        var page = Int.MIN_VALUE
         val blocks = (positioned + imagesPositioned)
             .sortedWith(compareBy({ it.page }, { it.y }))
-            .map { it.block }
+            .map { entry ->
+                val starts = page != Int.MIN_VALUE && entry.page > page && entry.page in deliberate
+                page = maxOf(page, entry.page)
+                val block = entry.block
+                if (starts && block is Paragraph) {
+                    block.copy(style = block.style.copy(pageBreakBefore = true))
+                } else {
+                    block
+                }
+            }
         check(textCount + imagesPositioned.size == blocks.size)
 
         val paragraphs = blocks.filterIsInstance<Paragraph>()
@@ -196,6 +215,30 @@ object PdfLayout {
                 pageSetup = pageSetup(sheets, blockByPage, lines),
             )
         )
+    }
+
+    /**
+     * The pages whose text stopped well short of where the document's text
+     * could have run: their break was the producer's doing, not the page
+     * filling up. The page after each of them begins a new one.
+     */
+    private fun deliberateBreaks(lines: List<PdfLine>): Set<Int> {
+        val lastByPage = lines.groupBy { it.page }.mapValues { (_, pageLines) -> pageLines.maxOf { it.baselineY } }
+        if (lastByPage.size < 2) return emptySet()
+        val bottom = lastByPage.values.max()
+        val pitch = HeadingSizes.median(
+            lines.sortedWith(compareBy({ it.page }, { it.baselineY }))
+                .zipWithNext { a, b -> if (a.page == b.page) b.baselineY - a.baselineY else 0f }
+                .filter { it > 1f }
+        )
+        if (pitch <= 0f) return emptySet()
+        val pages = lastByPage.keys.sorted()
+        return pages.drop(1)
+            .filter { page ->
+                val previous = pages[pages.indexOf(page) - 1]
+                (lastByPage[previous] ?: return@filter false) < bottom - EARLY_BREAK_LINES * pitch
+            }
+            .toSet()
     }
 
     /**

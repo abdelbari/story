@@ -380,11 +380,14 @@ object DocxWriter {
         val rules = style.ruleAbove || style.ruleBelow
 
         if (styleId == null && numId == null && jc == null && !rtl && spacing == null && indent == null &&
-            tabs == null && !rules
+            tabs == null && !rules && !style.pageBreakBefore
         ) return
 
         sb.append("<w:pPr>")
         if (styleId != null) sb.append("""<w:pStyle w:val="$styleId"/>""")
+        // The schema puts a page break here: after the style, before the
+        // numbering and everything that follows it.
+        if (style.pageBreakBefore) sb.append("<w:pageBreakBefore/>")
         if (numId != null) {
             sb.append("""<w:numPr><w:ilvl w:val="0"/><w:numId w:val="$numId"/></w:numPr>""")
         }
