@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.awt.Color
 import java.io.ByteArrayOutputStream
 import kotlin.math.abs
 
@@ -34,8 +35,15 @@ import kotlin.math.abs
  */
 class PageLookTest {
 
-    /** One text operation: [text] in logical order, painted at ([x], [y]) in [font] at [size]. */
-    private class Piece(val text: String, val x: Float, val y: Float, val font: (PDDocument) -> PDFont, val size: Float = 12f)
+    /** One text operation: [text] in logical order, painted at ([x], [y]) in [font] at [size], in [color]. */
+    private class Piece(
+        val text: String,
+        val x: Float,
+        val y: Float,
+        val font: (PDDocument) -> PDFont,
+        val size: Float = 12f,
+        val color: Color? = null,
+    )
 
     private val arabic: (PDDocument) -> PDFont = { document ->
         PDType0Font.load(
@@ -224,6 +232,47 @@ class PageLookTest {
     }
 
     @Test
+    fun `a run painted in colour keeps its colour, and black keeps none`() {
+        // A journal sets its headings in its own red. A conversion that
+        // leaves them black is not the document it came from — and one
+        // that stamps every ordinary black run with a colour it never
+        // chose is no better.
+        val red = Color(192, 0, 0)
+        val pdf = tagged { document ->
+            val font = arabic(document)
+            val heading = "الاستمارة في البحث العلمي"
+            val body = "من شروط البحث العلمي"
+            listOf(
+                listOf(Piece(heading, 500f - width(font, heading), 700f, arabic, color = red)),
+                listOf(Piece(body, 500f - width(font, body), 730f, arabic)),
+            )
+        }
+        val paragraphs = paragraphs(pdf)
+        assertEquals(0xC00000, paragraphs[0].runs.first().colorRgb, "the heading's red")
+        assertNull(paragraphs[1].runs.first().colorRgb, "black is the colour a page paints with")
+    }
+
+    @Test
+    fun `a colour changes the run, the way a weight does`() {
+        val blue = Color(0, 0, 170)
+        val pdf = tagged { document ->
+            val font = regular(document)
+            val first = "Read "
+            listOf(
+                listOf(
+                    Piece(first, 60f, 700f, regular),
+                    Piece("the report", 60f + width(font, first), 700f, regular, color = blue),
+                )
+            )
+        }
+        val runs = paragraphs(pdf).single().runs
+        assertEquals(2, runs.size, runs.toString())
+        assertNull(runs[0].colorRgb)
+        assertEquals(0x0000AA, runs[1].colorRgb)
+        assertEquals("the report", runs[1].text)
+    }
+
+    @Test
     fun `the page the source was set on comes across with its margins`() {
         val pdf = tagged { document ->
             val font = arabic(document)
@@ -301,6 +350,7 @@ class PageLookTest {
                     docElement.appendKid(paragraph)
                     for (piece in paragraphPieces) {
                         val font = fonts.getOrPut(piece.font) { piece.font(document) }
+                        content.setNonStrokingColor(piece.color ?: Color.BLACK)
                         val painted = if (isRtl(piece.text)) piece.text.reversed() else piece.text
                         val properties = COSDictionary().apply { setInt(COSName.MCID, mcid) }
                         content.beginMarkedContent(COSName.P, PDPropertyList.create(properties))

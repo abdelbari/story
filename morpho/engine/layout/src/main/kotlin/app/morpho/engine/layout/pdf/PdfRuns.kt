@@ -13,6 +13,7 @@ object PdfRuns {
         fontSizePt = look?.fontSizePt?.takeIf { it > 0f },
         superscript = look?.raised == 1,
         subscript = look?.raised == -1,
+        colorRgb = look?.colorRgb,
     )
 
     /**

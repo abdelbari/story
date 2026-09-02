@@ -393,6 +393,9 @@ object DocxWriter {
     private fun twips(points: Float): Int = (points * 20f).roundToInt().coerceAtLeast(0)
 
     /** Children of w:rPr are emitted in the order the OOXML schema requires. */
+    /** A packed 0xRRGGBB colour as WordprocessingML writes one: six upper-case hex digits, no hash. */
+    private fun hexColor(rgb: Int): String = "%06X".format(rgb and 0xFFFFFF)
+
     private fun appendRun(
         sb: StringBuilder,
         run: TextRun,
@@ -410,7 +413,8 @@ object DocxWriter {
         val family = run.fontFamily?.takeIf { it.isNotBlank() }
         val halfPoints = run.fontSizePt?.takeIf { it > 0f }?.let { (it * 2).roundToInt() }
         val hasProps = run.bold || run.italic || run.underline || rtl || run.language != null ||
-            family != null || halfPoints != null || run.superscript || run.subscript
+            family != null || halfPoints != null || run.superscript || run.subscript ||
+            run.colorRgb != null
 
         // A field is a run Word fills in; what it last showed goes in as the
         // text, as the cached result a field carries.
@@ -427,6 +431,7 @@ object DocxWriter {
             }
             if (run.bold) sb.append("<w:b/><w:bCs/>")
             if (run.italic) sb.append("<w:i/><w:iCs/>")
+            run.colorRgb?.let { sb.append("""<w:color w:val="${hexColor(it)}"/>""") }
             halfPoints?.let { sb.append("""<w:sz w:val="$it"/><w:szCs w:val="$it"/>""") }
             if (run.underline) sb.append("""<w:u w:val="single"/>""")
             if (run.superscript) sb.append("""<w:vertAlign w:val="superscript"/>""")

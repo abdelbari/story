@@ -12,6 +12,7 @@ import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayInputStream
@@ -170,6 +171,34 @@ class LookRoundTripTest {
             )
         )
         assertTrue(xml.contains("""<w:spacing w:line="276" w:lineRule="exact"/>"""), xml)
+    }
+
+    @Test
+    fun `a run's colour is written where the schema puts it, and read back`() {
+        val document = DocumentModel(
+            listOf(
+                Paragraph(
+                    listOf(
+                        TextRun("Heading", bold = true, fontSizePt = 16f, colorRgb = 0xC00000),
+                        TextRun(" and plain"),
+                    )
+                )
+            )
+        )
+        val docx = DocxWriter.toByteArray(document)
+        val xml = documentXml(docx)
+        // Colour sits after the weight and before the size: Word rejects a
+        // file whose run properties come in any other order.
+        assertTrue(xml.contains("""<w:b/><w:bCs/><w:color w:val="C00000"/><w:sz w:val="32"/>"""), xml)
+        val read = DocxReader.read(docx).blocks.filterIsInstance<Paragraph>().single()
+        assertEquals(0xC00000, read.runs[0].colorRgb)
+        assertNull(read.runs[1].colorRgb, "a run with no colour of its own keeps none")
+    }
+
+    @Test
+    fun `a document that names no colour writes none`() {
+        val docx = DocxWriter.toByteArray(DocumentModel(listOf(Paragraph(listOf(TextRun("plain"))))))
+        assertTrue(!documentXml(docx).contains("w:color"), "no colour is written for a plain run")
     }
 
     @Test

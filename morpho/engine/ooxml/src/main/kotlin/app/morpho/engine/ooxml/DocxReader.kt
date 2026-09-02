@@ -416,6 +416,11 @@ object DocxReader {
         val halfPoints = firstChild(rPr, if (rtl) "szCs" else "sz")?.let { attr(it, "val") }?.toFloatOrNull()
             ?: firstChild(rPr, "sz")?.let { attr(it, "val") }?.toFloatOrNull()
         val vertical = firstChild(rPr, "vertAlign")?.let { attr(it, "val") }
+        // "auto" means the colour a reader picks for the background, which
+        // is the document's own default — the same thing as saying nothing.
+        val color = firstChild(rPr, "color")?.let { attr(it, "val") }
+            ?.takeIf { it.length == 6 && !it.equals("auto", ignoreCase = true) }
+            ?.toIntOrNull(16)
         return TextRun(
             text = text,
             bold = isOn(firstChild(rPr, "b")),
@@ -427,6 +432,7 @@ object DocxReader {
             fontSizePt = halfPoints?.takeIf { it > 0f }?.let { it / 2f },
             superscript = vertical == "superscript",
             subscript = vertical == "subscript",
+            colorRgb = color,
         )
     }
 

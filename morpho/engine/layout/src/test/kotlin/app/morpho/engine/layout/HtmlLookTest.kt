@@ -58,4 +58,21 @@ class HtmlLookTest {
         val html = HtmlWriter.write(DocumentModel(listOf(Paragraph(listOf(TextRun("a\tb"))))))
         assertTrue(html.contains("""<p style="white-space:pre-wrap">a	b</p>"""), html)
     }
+    @Test
+    fun `a run keeps its colour on the page`() {
+        val html = HtmlWriter.write(
+            DocumentModel(
+                listOf(
+                    Paragraph(
+                        listOf(
+                            TextRun("Heading", colorRgb = 0xC00000),
+                            TextRun(" and plain"),
+                        )
+                    )
+                )
+            )
+        )
+        assertTrue(html.contains("color:#c00000"), html)
+        assertTrue(!html.contains("color:#000000"), "black is left to the page's own")
+    }
 }

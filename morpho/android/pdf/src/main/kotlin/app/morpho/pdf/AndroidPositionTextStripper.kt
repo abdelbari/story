@@ -7,6 +7,12 @@ import app.morpho.engine.layout.pdf.PdfLook
 import app.morpho.engine.layout.pdf.PdfPageSheet
 import app.morpho.engine.layout.pdf.PdfRun
 import app.morpho.engine.layout.pdf.PdfSegment
+import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingColor
+import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingColorN
+import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingColorSpace
+import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingDeviceCMYKColor
+import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingDeviceGrayColor
+import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingDeviceRGBColor
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import com.tom_roush.pdfbox.text.TextPosition
@@ -63,6 +69,21 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
     private val glyphText = AndroidGlyphUnicode()
     /** When each glyph was painted: the order PDFBox's own sort throws away. */
     private val paintOrder = IdentityHashMap<TextPosition, Int>()
+    /** The colour each glyph was painted in, where it was not the plain black a page paints with. */
+    private val colors = IdentityHashMap<TextPosition, Int>()
+
+    init {
+        // A text engine is given the operators it needs, and colour is not
+        // among them: without these the graphics state stays the black a
+        // page starts in, and every heading a producer set in its own
+        // colour reads as black.
+        addOperator(SetNonStrokingColorSpace())
+        addOperator(SetNonStrokingColor())
+        addOperator(SetNonStrokingColorN())
+        addOperator(SetNonStrokingDeviceGrayColor())
+        addOperator(SetNonStrokingDeviceRGBColor())
+        addOperator(SetNonStrokingDeviceCMYKColor())
+    }
     private var paintedSoFar = 0
 
     private val lineGlyphs = mutableListOf<TextPosition>()
@@ -117,6 +138,7 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
 
     override fun processTextPosition(text: TextPosition) {
         paintOrder[text] = paintedSoFar++
+        AndroidPaintColor.of(graphicsState)?.let { colors[text] = it }
         super.processTextPosition(text)
     }
 
@@ -271,6 +293,7 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
                 it.contains("Italic", ignoreCase = true) || it.contains("Oblique", ignoreCase = true)
             } ?: false,
             raised = raised,
+            colorRgb = colors[position],
         )
     }
 

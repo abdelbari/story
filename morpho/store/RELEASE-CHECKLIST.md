@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 277 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 283 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -49,6 +49,10 @@ Work through, in this order — each exercises a path nothing else covers:
       not split or join. Check an untagged PDF the same way: it should also
       keep its faces and weights, drop the running header and footer, and
       break its paragraphs where the page does.
+- [ ] **A document with coloured text** — a report with red headings or
+      blue links — converted both ways. Each run must keep the colour the
+      page shows, and an ordinary black document must gain no colour it
+      never had.
 - [ ] **The lists of the Arabic paper** (pages 51–54). Every item's marker —
       the round bullet, the dash of the second level, the author's own
       "أ-" and "3-" — must sit at the right-hand end of its line, as a

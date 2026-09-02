@@ -231,6 +231,7 @@ object HtmlWriter {
                 add("font-family:'${escape(it.replace("'", ""))}','Noto Naskh Arabic','Times New Roman',serif")
             }
             run.fontSizePt?.takeIf { it > 0f }?.let { add("font-size:${pt(it)}") }
+            run.colorRgb?.let { add("color:${hexColor(it)}") }
         }
         if (needsDir || needsLang || styles.isNotEmpty()) {
             val dirAttr =
@@ -245,6 +246,9 @@ object HtmlWriter {
         }
         sb.append(html)
     }
+
+    /** A packed 0xRRGGBB colour as CSS writes one. */
+    private fun hexColor(rgb: Int): String = "#%06x".format(rgb and 0xFFFFFF)
 
     /**
      * The source's page, when a reader measured it, as the sheet the print

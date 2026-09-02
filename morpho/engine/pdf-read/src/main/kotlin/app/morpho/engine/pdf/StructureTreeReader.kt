@@ -22,6 +22,12 @@ import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLook
 import app.morpho.engine.layout.pdf.PdfRuns
 import org.apache.pdfbox.contentstream.operator.DrawObject
+import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingColor
+import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingColorN
+import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingColorSpace
+import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingDeviceCMYKColor
+import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingDeviceGrayColor
+import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingDeviceRGBColor
 import org.apache.pdfbox.contentstream.operator.Operator
 import org.apache.pdfbox.contentstream.operator.OperatorProcessor
 import org.apache.pdfbox.cos.COSArray
@@ -237,6 +243,8 @@ internal object StructureTreeReader {
     private class ResolvingMarkedContentExtractor(private val page: PDPage) : PDFMarkedContentExtractor() {
         /** The rules drawn on the page outside any artifact — a running header's own do not count. */
         val rules = mutableListOf<Rule>()
+        /** The colour each glyph was painted in, where it was not the plain black a page paints with. */
+        val colors = IdentityHashMap<TextPosition, Int>()
         /**
          * What each top-level artifact drew besides text — rules and
          * pictures, as boxes — by the order the artifact was opened in,
@@ -254,6 +262,16 @@ internal object StructureTreeReader {
         private val pendingSlivers = mutableListOf<Rule>()
 
         init {
+        // A text engine is given the operators it needs, and colour is not
+        // among them: without these the graphics state stays the black a
+        // page starts in, and every heading a producer set in its own
+        // colour reads as black.
+        addOperator(SetNonStrokingColorSpace())
+        addOperator(SetNonStrokingColor())
+        addOperator(SetNonStrokingColorN())
+        addOperator(SetNonStrokingDeviceGrayColor())
+        addOperator(SetNonStrokingDeviceRGBColor())
+        addOperator(SetNonStrokingDeviceCMYKColor())
             addOperator(object : OperatorProcessor() {
                 override fun getName() = "BDC"
 
@@ -362,6 +380,11 @@ internal object StructureTreeReader {
             addOperator(pathOperator("n") { _ -> paint(strokes = false, fills = false) })
         }
 
+        override fun processTextPosition(text: TextPosition) {
+            PaintColor.of(graphicsState)?.let { colors[text] = it }
+            super.processTextPosition(text)
+        }
+
         /** A top-level artifact opens: remember what kind the producer said it was, if any. */
         private fun openArtifact(tag: COSName, properties: COSDictionary?) {
             if (tag.name != "Artifact" || openTags.isNotEmpty()) return
@@ -444,6 +467,8 @@ internal object StructureTreeReader {
         private val inkByPageIndex = HashMap<Int, InkBox>()
         /** The rules drawn on each page, outside its running header and footer. */
         private val rulesByPageIndex = HashMap<Int, List<Rule>>()
+        /** The colour each glyph was painted in, gathered from every page's extractor before it is let go. */
+        private val colorByPosition = IdentityHashMap<TextPosition, Int>()
         private val glyphsByPageAndMcid = HashMap<Long, List<Glyph>>()
         private val textByPageAndMcid = HashMap<Long, String>()
         private val sizeByPageAndMcid = HashMap<Long, Float>()
@@ -476,6 +501,7 @@ internal object StructureTreeReader {
                     }
                 }
                 rulesByPageIndex[index] = extractor.rules.toList()
+                colorByPosition.putAll(extractor.colors)
             }
             baseDirection = Bidi.directionOfLanguage(runCatching { doc.documentCatalog.language }.getOrNull())
                 ?: Bidi.dominantDirection(buildString {
@@ -780,6 +806,7 @@ internal object StructureTreeReader {
             bold = isBold(position),
             italic = isItalic(position),
             raised = raised,
+            colorRgb = colorByPosition[position],
         )
 
         /**

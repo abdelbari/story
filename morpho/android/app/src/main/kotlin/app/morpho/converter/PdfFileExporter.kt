@@ -17,6 +17,7 @@ import android.text.StaticLayout
 import android.text.TextDirectionHeuristics
 import android.text.TextPaint
 import android.text.style.AbsoluteSizeSpan
+import android.text.style.ForegroundColorSpan
 import android.text.style.ImageSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.LineHeightSpan
@@ -327,7 +328,7 @@ internal object PdfFileExporter {
         }
 
         private fun paintFor(run: TextRun): TextPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFF000000.toInt()
+            color = run.colorRgb?.let { 0xFF000000.toInt() or it } ?: 0xFF000000.toInt()
             textSize = run.fontSizePt?.takeIf { it > 0f } ?: 12f
             val style = when {
                 run.bold && run.italic -> Typeface.BOLD_ITALIC
@@ -561,6 +562,9 @@ internal object PdfFileExporter {
             // Sizes are in points because the canvas is: a PDF page is
             // measured in them, so a point of type is a point on the page.
             run.fontSizePt?.takeIf { it > 0f }?.let { span(AbsoluteSizeSpan(it.roundToInt(), false)) }
+            // The colour the source set, opaque; a run that named none is
+            // left to the page's own black.
+            run.colorRgb?.let { span(ForegroundColorSpan(0xFF000000.toInt() or it)) }
             if (run.superscript) {
                 span(SuperscriptSpan())
                 span(RelativeSizeSpan(RAISED_SCALE))

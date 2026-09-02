@@ -42,9 +42,10 @@ data class PdfSegment(
 
 /**
  * The look of one painted character: the typeface it was set in, its size,
- * its weight and slant, and whether it sits raised (+1) or lowered (-1) off
- * its line's baseline. Both PDF readers describe a glyph with this, so a
- * document's runs mean the same thing whichever path read it.
+ * its weight and slant, whether it sits raised (+1) or lowered (-1) off
+ * its line's baseline, and the colour it was painted in. Both PDF readers
+ * describe a glyph with this, so a document's runs mean the same thing
+ * whichever path read it.
  */
 data class PdfLook(
     val fontFamily: String? = null,
@@ -52,6 +53,8 @@ data class PdfLook(
     val bold: Boolean = false,
     val italic: Boolean = false,
     val raised: Int = 0,
+    /** Packed 0xRRGGBB, or null for the black a page paints with unless it says otherwise. */
+    val colorRgb: Int? = null,
 )
 
 /** A stretch of a line's text set in one look. */

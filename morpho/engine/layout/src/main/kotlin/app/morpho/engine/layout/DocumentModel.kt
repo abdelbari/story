@@ -90,6 +90,12 @@ data class TextRun(
     val superscript: Boolean = false,
     val subscript: Boolean = false,
     /**
+     * The colour the run is set in, packed 0xRRGGBB. Null is the colour a
+     * document uses unless it says otherwise — black — so a reader that
+     * measures none, and a page that paints in plain black, agree.
+     */
+    val colorRgb: Int? = null,
+    /**
      * A value the writer fills in rather than the text: the number of the
      * page this run lands on. [text] then holds what the source showed
      * where it was read, for a writer with no fields of its own.
