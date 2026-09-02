@@ -555,7 +555,7 @@ internal object PdfFileExporter {
     private fun table(cursor: Cursor, block: Table, defaultDirection: TextDirection) {
         // A cell can cover several columns, so a row's places are not its
         // cells: the widest row, counted in places, is the grid.
-        val columns = block.rows.maxOfOrNull { row -> row.sumOf { cell -> cell.columnSpan.coerceAtLeast(1) } } ?: return
+        val columns = block.rows.maxOfOrNull { row -> row.cells.sumOf { it.columnSpan.coerceAtLeast(1) } } ?: return
         if (columns == 0) return
         // The widths a reader measured off the page, scaled to the content
         // box; a table nothing measured shares the width equally.
