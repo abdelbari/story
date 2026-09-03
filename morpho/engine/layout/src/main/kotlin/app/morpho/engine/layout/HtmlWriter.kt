@@ -48,7 +48,12 @@ object HtmlWriter {
         sb.append("<!DOCTYPE html>\n")
         sb.append("""<html dir="$dir"$lang><head><meta charset="utf-8"/>""")
         sb.append("<title>").append(escape(title ?: "Document")).append("</title>")
-        sb.append("<style>").append(CSS).append(pageCss(document.pageSetup)).append("</style></head><body>\n")
+        // A document turns a page sideways for a wide table; the sheets it
+        // uses are named, so a browser printing this lays each part of it
+        // on the sheet that part was set on.
+        val shapes = sectionShapes(document)
+        sb.append("<style>").append(CSS).append(pageCss(document.pageSetup))
+            .append(sectionCss(shapes)).append("</style></head><body>\n")
 
         // The running header and footer, once each: a flowing page has no
         // page tops to repeat them on, so they stand at the head and the
@@ -58,7 +63,7 @@ object HtmlWriter {
             appendBlocks(sb, document.header, defaultDirection)
             sb.append("</header>\n")
         }
-        appendBlocks(sb, document.blocks, defaultDirection)
+        appendBlocks(sb, document.blocks, defaultDirection, shapes)
         appendNotes(sb, document.blocks, defaultDirection)
         if (document.footer.isNotEmpty()) {
             sb.append("""<footer class="page-footer">""").append("\n")
@@ -108,10 +113,14 @@ object HtmlWriter {
         sb: StringBuilder,
         blocks: List<Block>,
         defaultDirection: TextDirection,
+        /** The sheets the document is set on, by the shape each is; empty for one sheet throughout. */
+        shapes: Map<PageSetup, Int> = emptyMap(),
     ) {
         // The lists standing open, outermost first: a list inside a list is
         // a list inside a list item, which is how HTML nests them.
         val open = ArrayDeque<ListMarker>()
+        // Whether a part set on a sheet of its own stands open.
+        var section = false
 
         fun tagOf(marker: ListMarker) = if (marker == ListMarker.BULLET) "ul" else "ol"
 
@@ -120,6 +129,15 @@ object HtmlWriter {
         }
 
         for (block in blocks) {
+            // A part of the document set on a sheet of its own opens here
+            // and runs to the next one, or to the end.
+            val sheet = (block as? Paragraph)?.style?.sectionSetup?.let { shapes[it] }
+            if (sheet != null) {
+                closeList()
+                if (section) sb.append("</div>\n")
+                sb.append("""<div class="sheet$sheet">""").append("\n")
+                section = true
+            }
             when (block) {
                 is Paragraph -> {
                     val marker = block.style.listMarker
@@ -157,7 +175,35 @@ object HtmlWriter {
             }
         }
         closeList()
+        if (section) sb.append("</div>\n")
     }
+
+    /**
+     * The sheets a document is set on beyond the one it opens on, each
+     * given a number so the style sheet can name it. A document of one
+     * shape uses none of this and is written exactly as it was.
+     */
+    private fun sectionShapes(document: DocumentModel): Map<PageSetup, Int> {
+        val shapes = LinkedHashMap<PageSetup, Int>()
+        for (block in document.blocks) {
+            val setup = (block as? Paragraph)?.style?.sectionSetup ?: continue
+            shapes.getOrPut(setup) { shapes.size + 1 }
+        }
+        return shapes
+    }
+
+    /**
+     * A named sheet for each shape the document turns to, and the rule
+     * that puts the part set on it there. A named page starts a page of
+     * its own, which is what a section does.
+     */
+    private fun sectionCss(shapes: Map<PageSetup, Int>): String =
+        shapes.entries.joinToString(separator = "") { (page, number) ->
+            val margins = "${pt(page.marginTopPt)} ${pt(page.marginRightPt)} " +
+                "${pt(page.marginBottomPt)} ${pt(page.marginLeftPt)}"
+            "@page sheet$number{size:${pt(page.widthPt)} ${pt(page.heightPt)};margin:$margins;}" +
+                ".sheet$number{page:sheet$number;break-before:page;}"
+        }
 
     /**
      * The CSS name for the way a list counts, or null where the browser's

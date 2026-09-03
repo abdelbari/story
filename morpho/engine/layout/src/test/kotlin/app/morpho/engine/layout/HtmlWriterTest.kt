@@ -145,6 +145,40 @@ class HtmlWriterTest {
     }
 
     @Test
+    fun `the page a report turns sideways is a sheet of its own`() {
+        // A browser printing this must lay each part of the document on
+        // the sheet that part was set on, which is what a named page is
+        // for; on screen there are no sheets and nothing changes.
+        val landscape = PageSetup(
+            widthPt = 842f, heightPt = 595f,
+            marginTopPt = 36f, marginBottomPt = 36f, marginLeftPt = 36f, marginRightPt = 36f,
+        )
+        val model = DocumentModel(
+            blocks = listOf(
+                body("Before the wide table."),
+                Paragraph(listOf(TextRun("The page of the wide table.")), ParagraphStyle(sectionSetup = landscape)),
+            ),
+            pageSetup = PageSetup(
+                widthPt = 595f, heightPt = 842f,
+                marginTopPt = 72f, marginBottomPt = 72f, marginLeftPt = 72f, marginRightPt = 72f,
+            ),
+        )
+        val html = HtmlWriter.write(model)
+        assertTrue(html.contains("@page sheet1{size:842.0pt 595.0pt;"), html)
+        assertTrue(html.contains(".sheet1{page:sheet1;break-before:page;}"), html)
+        val doc = parse(html)
+        val turned = elements(doc, "div").single { it.getAttribute("class") == "sheet1" }
+        assertEquals("The page of the wide table.", turned.textContent.trim())
+    }
+
+    @Test
+    fun `a document of one shape names no sheets`() {
+        val html = HtmlWriter.write(DocumentModel(listOf(body("One."), body("Two."))))
+        assertTrue("@page sheet" !in html, html)
+        assertTrue("<div" !in html, html)
+    }
+
+    @Test
     fun `markup in text is neutralized`() {
         val model = DocumentModel(listOf(body("<script>alert('x')</script> & done")))
         val html = HtmlWriter.write(model)

@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 572 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 574 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -79,8 +79,7 @@ Work through, in this order — each exercises a path nothing else covers:
       with it, with the running head running the full width of the turned
       page and the numbering carrying straight on across the turn. Try it
       from a Word document with a landscape section as well as from a PDF.
-      The preview's HTML still lays the whole document on one sheet; that
-      is known.
+      Print the preview too — the turned page must print landscape.
 - [ ] **A document with a table** — one with rules and one that is only
       aligned columns. The columns must keep their widths (a column of
       dates stays narrow), and the second must arrive with no lines
