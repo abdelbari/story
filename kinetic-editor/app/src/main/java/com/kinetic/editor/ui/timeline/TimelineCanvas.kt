@@ -60,6 +60,16 @@ private object Palette {
     val ghost = Color(0x66FFFFFF)
     val transitionBadge = Color(0xFFFFC145)
     val label = Color(0xFFEDEDF2)
+    val laneLabel = Color(0x55EDEDF2)
+}
+
+/** What an empty lane is for. Drawn only while it is empty, so it never hides a clip. */
+private fun laneLabel(type: TrackType): String = when (type) {
+    TrackType.VIDEO_MAIN -> "Video"
+    TrackType.VIDEO_OVERLAY -> "Picture-in-picture"
+    TrackType.TEXT -> "Text"
+    TrackType.STICKER -> "Stickers"
+    TrackType.AUDIO -> "Audio"
 }
 
 /**
@@ -146,6 +156,19 @@ fun Timeline(
                 )
 
                 val effective = effectiveTrack(track, trimGhost, dragGhost)
+                if (effective.clips.isEmpty()) {
+                    // Fixed in screen space, not timeline space: it names the lane,
+                    // so it should not scroll away from it.
+                    val layout = cachedLabel(labelCache, textMeasurer, laneLabel(track.type))
+                    drawText(
+                        layout,
+                        Palette.laneLabel,
+                        topLeft = Offset(
+                            geometry.laneLabelInsetPx,
+                            laneTop + (laneH - layout.size.height) / 2f,
+                        ),
+                    )
+                }
                 for (placed in state.placements(effective)) {
                     val left = geometry.timeToX(placed.startMs, widthPx)
                     val right = geometry.timeToX(placed.endMs, widthPx)

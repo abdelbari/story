@@ -130,7 +130,10 @@ coalesced `SetGrade` intents, the store commits, the engine swaps a
 per-frame item recomposition, entry/exit churn, and N scroll states to sync
 during pinch-zoom. Instead:
 
-- Five lanes: main video, PiP video, text, stickers, audio.
+- Five lanes: main video, PiP video, text, stickers, audio. An empty lane
+  draws its own name, fixed in screen space rather than timeline space, so a
+  blank project says what each row is for and the label never scrolls away from
+  its lane or covers a clip.
 - `TimelineGeometry` — pure time↔pixel math + manual hit-testing; reads the
   viewport *at call time* so it's only ever evaluated in draw/gesture phases.
 - `TimelineCanvas` — ruler with adaptive tick density, filmstrip thumbnails,

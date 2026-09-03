@@ -29,6 +29,7 @@ class TimelineGeometry(
     val snapThresholdPx = 10f * dp
     val edgeAutoScrollZonePx = 56f * dp
     val thumbSlotWidthPx = 40f * dp
+    val laneLabelInsetPx = 10f * dp
 
     private val laneHeights = floatArrayOf(
         56f * dp, // VIDEO_MAIN
