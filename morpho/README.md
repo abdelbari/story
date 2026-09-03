@@ -294,15 +294,24 @@ for.
   words with ink drawn at random over them: forty seeded pages must give
   every word back, in one block or another, and a page carrying twenty
   thousand marks must be read in a moment rather than in a minute.
-- **A bibliography's entries are one paragraph, and there is nothing to be
-  done about it:** measured on the paper this was built for, its entries
+- **A bibliography's entries are one paragraph where a file has no tags,
+  and only there:** measured on the paper this was built for, its entries
   and the lines that carry them on both begin at the right margin and sit
   the same distance apart — twenty-one and a half points, entry to entry
   and line to line alike. There is no hanging indent, no extra space, no
   rule: geometrically an entry and its continuation are indistinguishable,
   and every reading that would separate them would also cut real
-  paragraphs in two. Twelve of that paper's hundred and seventy-four
-  paragraphs are joined this way, and a guess is worse than the join.
+  paragraphs in two. The untagged reading of that paper joins four pairs
+  of entries this way, out of its eighteen, and a guess is worse than the
+  join.
+
+  Where the file *is* tagged, none of that applies and none of it happens:
+  the producer says outright where each paragraph begins, and the tagged
+  reading — which is the reading that paper actually gets, and every
+  tagged file gets — gives all eighteen entries back one by one, through
+  Word and out again. This entry said otherwise until the tags were
+  read out and counted, which is a reminder that a limitation measured on
+  one path is not a limitation of the converter.
 - **A cell holds more than its paragraphs:** Markdown wrote out only the
   paragraphs of a table's cell, so a table inside one — which is how a form
   and an invoice are laid out — was dropped whole, along with any picture
