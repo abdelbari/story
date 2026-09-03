@@ -12,6 +12,7 @@ import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLayout
 import app.morpho.engine.layout.pdf.PdfOutlineEntry
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.cos.COSName
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
 import com.tom_roush.pdfbox.text.PDFTextStripper
@@ -80,6 +81,18 @@ class AndroidPdfReader(context: Context) {
         val last = document.numberOfPages
         for (number in pages) {
             if (number in 1..last) part.addPage(document.getPage(number - 1))
+        }
+        // The part keeps the whole document's tags. Every element of the
+        // tree names the page it belongs to by the page itself, and the
+        // part holds those same pages, so the tree still points where it
+        // pointed; an element naming a page left behind simply finds no
+        // words. Without this a part is a document with no tags at all,
+        // and asking for a few pages of a tagged file quietly converted
+        // them the way a scan is converted.
+        val whole = document.documentCatalog.cosObject
+        val partCatalog = part.documentCatalog.cosObject
+        for (item in listOf(COSName.STRUCT_TREE_ROOT, COSName.MARK_INFO)) {
+            whole.getDictionaryObject(item)?.let { partCatalog.setItem(item, it) }
         }
         // Asking for pages a document does not have is asking for nothing;
         // reading its first page beats handing back an empty document.
