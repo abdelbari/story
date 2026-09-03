@@ -44,6 +44,11 @@ data class DocumentModel(
      * them hands back a document that has forgotten its own name.
      */
     val properties: DocumentProperties = DocumentProperties(),
+    /**
+     * What people said about the document while reading it, kept apart
+     * from what it says. A run names the ones it is the subject of.
+     */
+    val comments: List<Comment> = emptyList(),
 )
 
 /**
@@ -221,10 +226,48 @@ data class TextRun(
      * so a writer with no notes of its own still shows what the page did.
      */
     val note: List<Block>? = null,
+    /**
+     * The notes somebody left about this run, by [Comment.id]. Empty for
+     * text nobody has said anything about, which is nearly all of it.
+     */
+    val commentIds: List<Int> = emptyList(),
 )
 
 /** What a writer fills in for a run in place of fixed text. */
 enum class RunField { PAGE_NUMBER }
+
+/**
+ * A note somebody left on the document rather than in it.
+ *
+ * A supervisor reads a thesis and writes in the margin; a colleague
+ * queries a figure; a reader marks a passage and says why. Word keeps
+ * these apart from the text as comments, anchored to the words they are
+ * about, and a PDF keeps the same three things on an annotation: who
+ * wrote it, when, and what they said.
+ *
+ * Every converter drops them, and a file converted without them is the
+ * document as it stood before anybody read it — which is exactly what
+ * the person converting a reviewed document did not ask for.
+ */
+data class Comment(
+    /** Names the note; the runs it is about carry the same number. */
+    val id: Int,
+    /** What it says. A newline in it starts another paragraph of the note. */
+    val text: String,
+    /** Who wrote it, as the file named them; null when it is unsigned. */
+    val author: String? = null,
+    /**
+     * The letters Word shows in the margin against the note. Null lets a
+     * writer take them from the author's name, which is what Word does
+     * with a name it is given without them.
+     */
+    val initials: String? = null,
+    /**
+     * When it was written, as an ISO-8601 instant — "2026-09-03T12:00:00Z".
+     * Null when the file did not record it.
+     */
+    val dateIso: String? = null,
+)
 
 data class Table(
     val rows: List<TableRow>,

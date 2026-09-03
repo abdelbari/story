@@ -31,13 +31,79 @@ object HtmlWriter {
      */
     private val noteNumbers = ThreadLocal<Map<TextRun, Int>>()
 
+    /**
+     * The notes people left about the document being written, kept for
+     * the length of one write for the same reason the footnotes are: a
+     * note's number belongs to the document, not to the run it is about.
+     */
+    private val remarks = ThreadLocal<Remarks>()
+
     fun write(document: DocumentModel, title: String? = null): String =
         try {
             noteNumbers.set(numberNotes(document.blocks))
+            remarks.set(Remarks.of(document))
             writeDocument(document, title)
         } finally {
             noteNumbers.remove()
+            remarks.remove()
         }
+
+    /**
+     * What was said about the document, numbered in the order the text
+     * meets it, and where each note stops.
+     *
+     * HTML has no comments of its own — the margin Word draws them in
+     * does not exist on a page that scrolls — so the words a note is
+     * about are marked where they stand and the notes themselves are
+     * gathered at the end, the way the footnotes are. The mark goes after
+     * the last run a note covers, so a note about a whole passage is
+     * marked once at the end of it rather than on every run of it.
+     */
+    private class Remarks private constructor(
+        private val numbers: Map<Int, Int>,
+        private val said: Map<Int, Comment>,
+        private val ends: IdentityHashMap<TextRun, List<Int>>,
+    ) {
+        val isEmpty: Boolean get() = numbers.isEmpty()
+
+        /** Every note that is shown, in the order the text meets them. */
+        fun inOrder(): List<Pair<Int, Comment>> =
+            numbers.entries.sortedBy { it.value }.mapNotNull { (id, number) -> said[id]?.let { number to it } }
+
+        /** The number this page gives the note [id], or null when nothing shows it. */
+        fun numberOf(id: Int): Int? = numbers[id]
+
+        fun commentOf(id: Int): Comment? = said[id]
+
+        /** The notes whose last run is [run], in the order the page shows them. */
+        fun endingAt(run: TextRun): List<Int> = ends[run].orEmpty()
+
+        companion object {
+            fun of(document: DocumentModel): Remarks {
+                val said = document.comments.associateBy { it.id }
+                if (said.isEmpty()) return Remarks(emptyMap(), emptyMap(), IdentityHashMap())
+                val numbers = LinkedHashMap<Int, Int>()
+                val last = LinkedHashMap<Int, TextRun>()
+                fun walk(blocks: List<Block>) {
+                    for (block in blocks) {
+                        when (block) {
+                            is Paragraph -> for (run in block.runs) for (id in run.commentIds) {
+                                if (id !in said) continue
+                                numbers.getOrPut(id) { numbers.size + 1 }
+                                last[id] = run
+                            }
+                            is Table -> for (row in block.rows) for (cell in row.cells) walk(cell.blocks)
+                            is ImageBlock -> {}
+                        }
+                    }
+                }
+                walk(document.blocks)
+                val ends = IdentityHashMap<TextRun, MutableList<Int>>()
+                for ((id, run) in last) ends.getOrPut(run) { mutableListOf() } += id
+                return Remarks(numbers, said, IdentityHashMap(ends.mapValues { it.value.toList() }))
+            }
+        }
+    }
 
     private fun writeDocument(document: DocumentModel, title: String?): String {
         val defaultDirection = document.defaultDirection
@@ -83,6 +149,7 @@ object HtmlWriter {
         }
         appendBlocks(sb, document.blocks, defaultDirection, shapes)
         appendNotes(sb, document.blocks, defaultDirection)
+        appendComments(sb, defaultDirection)
         if (feet.isNotEmpty()) {
             sb.append("""<footer class="page-footer">""").append("\n")
             appendBlocks(sb, feet, defaultDirection)
@@ -121,6 +188,13 @@ object HtmlWriter {
             "table{border-collapse:collapse;margin:0 0 9pt;table-layout:fixed;}" +
             "section.footnotes{border-top:0.75pt solid;margin-top:12pt;padding-top:4pt;font-size:0.85em;}" +
             "a.note-mark{text-decoration:none;vertical-align:super;font-size:0.75em;}" +
+            // A stretch somebody commented on: enough to see at a glance
+            // without repainting the words themselves in another colour.
+            "span.commented{background:#fff3bf;border-bottom:1px dotted #b08900;}" +
+            "sup.comment-mark a{text-decoration:none;color:#b08900;}" +
+            "section.comments{border-top:0.75pt solid;margin-top:12pt;padding-top:4pt;font-size:0.85em;}" +
+            "section.comments .comment-who{color:#666;}" +
+            "section.comments p{margin:0 0 3pt;}" +
             "td,th{border:1px solid #555;padding:4pt 8pt;vertical-align:top;}" +
             "img{max-width:100%;height:auto;}" +
             "p.image{text-align:center;}" +
@@ -433,7 +507,27 @@ object HtmlWriter {
         noteNumberOf(run)?.let { number ->
             html = "<a class=\"note-mark\" id=\"note-mark-$number\" href=\"#note-$number\">$html</a>"
         }
+        // Words somebody commented on are shown as commented on: marked
+        // where they stand, with what was said about them on hovering, and
+        // the note itself gathered at the end.
+        val about = remarks.get()
+        if (about != null && run.commentIds.isNotEmpty()) {
+            val said = run.commentIds.mapNotNull { about.commentOf(it) }
+            if (said.isNotEmpty()) {
+                val hover = said.joinToString(" \u2014 ") { note ->
+                    listOfNotNull(note.author, note.text.replace('\n', ' ')).joinToString(": ")
+                }
+                html = "<span class=\"commented\" title=\"${escape(hover)}\">$html</span>"
+            }
+        }
         sb.append(html)
+        // The mark goes after the last run a note is about, so a note about
+        // a passage is marked once at the end of it and not on every run.
+        for (id in about?.endingAt(run).orEmpty()) {
+            val number = about?.numberOf(id) ?: continue
+            sb.append("""<sup class="comment-mark" id="comment-mark-$number">""")
+            sb.append("""<a href="#comment-$number">$number</a></sup>""")
+        }
     }
 
     /**
@@ -483,6 +577,32 @@ object HtmlWriter {
             sb.append(escape(run.text.trim().ifEmpty { number.toString() }))
             sb.append("</a> ")
             appendBlocks(sb, run.note.orEmpty(), defaultDirection)
+            sb.append("</div>\n")
+        }
+        sb.append("</section>\n")
+    }
+
+    /**
+     * What people said about the document, gathered at the end.
+     *
+     * Each note is led back to the words it is about, and says who left
+     * it and when, which is what makes a reviewed document worth having:
+     * a remark with no name against it is half a remark.
+     */
+    private fun appendComments(sb: StringBuilder, defaultDirection: TextDirection) {
+        val about = remarks.get() ?: return
+        if (about.isEmpty) return
+        sb.append("""<section class="comments">""").append("\n")
+        for ((number, note) in about.inOrder()) {
+            sb.append("""<div class="comment" id="comment-$number">""")
+            sb.append("""<a class="comment-mark" href="#comment-mark-$number">$number</a> """)
+            val who = listOfNotNull(note.author, note.dateIso).joinToString(", ")
+            if (who.isNotEmpty()) sb.append("""<span class="comment-who">""").append(escape(who)).append("</span> ")
+            appendBlocks(
+                sb,
+                note.text.split('\n').map { Paragraph(listOf(TextRun(it))) },
+                defaultDirection,
+            )
             sb.append("</div>\n")
         }
         sb.append("</section>\n")

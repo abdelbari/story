@@ -3,6 +3,7 @@ package app.morpho.engine.ooxml
 import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Block
+import app.morpho.engine.layout.Comment
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.DocumentProperties
 import app.morpho.engine.layout.ImageBlock
@@ -23,6 +24,7 @@ import org.w3c.dom.Element
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.util.IdentityHashMap
 import java.util.zip.ZipInputStream
 import javax.xml.parsers.DocumentBuilderFactory
 
@@ -99,7 +101,7 @@ object DocxReader {
      * differently.
      */
     private val DOCUMENT_PART = Regex("[^/]+/document\\d*\\.xml")
-    private val SIDE_PART = Regex("[^/]+/(?:styles|numbering|footnotes|endnotes)\\.xml")
+    private val SIDE_PART = Regex("[^/]+/(?:styles|numbering|footnotes|endnotes|comments)\\.xml")
     private val FURNITURE_PART = Regex("[^/]+/(?:header|footer)\\d*\\.xml")
     private val RELATIONSHIPS_PART = Regex("[^/]+/_rels/[^/]+\\.rels")
     private val MEDIA_PART = Regex("[^/]+/media/[^/]+")
@@ -169,9 +171,14 @@ object DocxReader {
                 notesOf(parts[beside(at, "footnotes.xml")], "footnote", numbering, media, styles) +
                     notesOf(parts[beside(at, "endnotes.xml")], "endnote", numbering, media, styles)
             )
+            // What people said about the document while reading it. Read
+            // before the text, since a run has to be told which notes it is
+            // the subject of as it is made.
+            val remarks = commentsOf(parts[beside(at, "comments.xml")], numbering, media, styles)
             val blocks = parseBlocks(
                 body, numbering, media, depth = 0, notes = notes, styles = styles,
                 sections = sectionShapes(body),
+                anchors = commentAnchors(body, remarks),
             )
             return DocumentModel(
                 blocks = blocks,
@@ -202,6 +209,7 @@ object DocxReader {
                     furniture(it, "footerReference", parts, media, numbering, styles, at, side = "even")
                 }.orEmpty(),
                 properties = said(parts),
+                comments = remarks,
             )
         } catch (e: IllegalArgumentException) {
             throw e
@@ -415,6 +423,95 @@ object DocxReader {
     // word/document.xml
     // ------------------------------------------------------------------
 
+    /**
+     * Which notes each run of the text is the subject of.
+     *
+     * Word writes a comment as three marks standing beside the words it
+     * is about: one where the stretch opens, one where it closes, and a
+     * reference to the note after the close. Nothing on the runs
+     * themselves says that anybody has commented on them, so the body is
+     * walked once in the order it is written and every run met while a
+     * stretch is open is remembered against the note.
+     *
+     * The walk is over the whole body rather than paragraph by paragraph
+     * because a stretch may open in one paragraph and close in another —
+     * which is what a note about a whole passage looks like in the file.
+     */
+    private class CommentAnchors(private val covering: IdentityHashMap<Element, List<Int>>) {
+        /** The notes the run [r] is the subject of, by [Comment.id]. */
+        fun on(r: Element): List<Int> = covering[r].orEmpty()
+
+        companion object {
+            /** What a document with no comments in it says about every run. */
+            val NONE = CommentAnchors(IdentityHashMap())
+        }
+    }
+
+    /**
+     * Where each note in [remarks] reaches, read off the marks in [body].
+     *
+     * A mark naming a note the comments part does not hold is ignored:
+     * Word leaves such a mark behind after a comment is deleted, and a
+     * reader that trusted it would anchor a note that no longer exists.
+     */
+    private fun commentAnchors(body: Element, remarks: List<Comment>): CommentAnchors {
+        if (remarks.isEmpty()) return CommentAnchors.NONE
+        val known = remarks.mapTo(HashSet()) { it.id }
+        val covering = IdentityHashMap<Element, List<Int>>()
+        val open = LinkedHashSet<Int>()
+        fun walk(element: Element, depth: Int) {
+            if (depth > MAX_NESTING_DEPTH) return
+            for (child in elementChildren(element)) {
+                if (child.namespaceURI != W) continue
+                when (child.localName) {
+                    "commentRangeStart" ->
+                        attr(child, "id")?.toIntOrNull()?.takeIf { it in known }?.let { open += it }
+                    "commentRangeEnd" ->
+                        attr(child, "id")?.toIntOrNull()?.let { open -= it }
+                    "r" -> if (open.isNotEmpty()) covering[child] = open.toList()
+                    else -> walk(child, depth + 1)
+                }
+            }
+        }
+        walk(body, 0)
+        return CommentAnchors(covering)
+    }
+
+    /**
+     * What each note in the comments part says, and who said it.
+     *
+     * The note's own words are read as paragraphs of the document, so a
+     * note left in Arabic comes back the way it was written. A note of
+     * several paragraphs is kept as one piece of text with a newline
+     * between them, which is what the model holds and what every writer
+     * can show.
+     */
+    private fun commentsOf(
+        part: ByteArray?,
+        numbering: Map<String, Map<Int, ListLevel>>,
+        media: MediaStore,
+        styles: StyleSheet,
+    ): List<Comment> {
+        val bytes = part ?: return emptyList()
+        val root = runCatching { parseXml(bytes).documentElement }.getOrNull() ?: return emptyList()
+        val remarks = mutableListOf<Comment>()
+        for (element in elementChildren(root)) {
+            if (element.namespaceURI != W || element.localName != "comment") continue
+            val id = attr(element, "id")?.toIntOrNull() ?: continue
+            val text = parseBlocks(element, numbering, media, depth = 0, styles = styles)
+                .filterIsInstance<Paragraph>()
+                .joinToString("\n") { it.text }
+            remarks += Comment(
+                id = id,
+                text = text,
+                author = attr(element, "author")?.takeIf { it.isNotBlank() },
+                initials = attr(element, "initials")?.takeIf { it.isNotBlank() },
+                dateIso = attr(element, "date")?.takeIf { it.isNotBlank() },
+            )
+        }
+        return remarks
+    }
+
     /** [inline] keeps a paragraph's pictures in its line as runs — how a running header carries its artwork — instead of after it. */
     private fun parseBlocks(
         parent: Element,
@@ -427,6 +524,7 @@ object DocxReader {
         fromTable: Inherited = Inherited.NONE,
         /** The shape of each section of the body, in order; empty anywhere but the body. */
         sections: List<PageSetup?> = emptyList(),
+        anchors: CommentAnchors = CommentAnchors.NONE,
     ): List<Block> {
         require(depth <= MAX_NESTING_DEPTH) {
             "Block nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
@@ -472,7 +570,7 @@ object DocxReader {
                     // in it, and the break went with it.
                     val beforeText = pageBreakBeforeText(child)
                     if (beforeText == true) brokenTo = true
-                    parseParagraph(child, numbering, media, inline, notes, styles, fromTable)
+                    parseParagraph(child, numbering, media, inline, notes, styles, fromTable, anchors)
                         ?.let(::add)
                     // A break after this paragraph's words leaves it on the
                     // page it began and starts the next one on a fresh page.
@@ -493,10 +591,11 @@ object DocxReader {
                         parseBlocks(
                             box, numbering, media, depth + 1,
                             inline = inline, notes = notes, styles = styles, fromTable = fromTable,
+                            anchors = anchors,
                         ).forEach(::add)
                     }
                 }
-                "tbl" -> parseTable(child, numbering, media, depth, notes, styles)?.let(::add)
+                "tbl" -> parseTable(child, numbering, media, depth, notes, styles, anchors)?.let(::add)
                 // A content control wraps what it holds rather than
                 // replacing it: a cover page, a table of contents, the
                 // fields of a template. What is inside is the document.
@@ -505,11 +604,13 @@ object DocxReader {
                 "customXml" -> parseBlocks(
                     child, numbering, media, depth + 1,
                     inline = inline, notes = notes, styles = styles, fromTable = fromTable,
+                    anchors = anchors,
                 ).forEach(::add)
                 "sdt" -> firstChild(child, "sdtContent")?.let { held ->
                     parseBlocks(
                         held, numbering, media, depth + 1,
                         inline = inline, notes = notes, styles = styles, fromTable = fromTable,
+                        anchors = anchors,
                     ).forEach(::add)
                 }
                 "bookmarkStart" -> attr(child, "name")
@@ -770,6 +871,7 @@ object DocxReader {
         notes: Notes = Notes(),
         styles: StyleSheet,
         fromTable: Inherited = Inherited.NONE,
+        anchors: CommentAnchors = CommentAnchors.NONE,
     ): Paragraph? {
         val pPr = firstChild(p, "pPr")
         val styleId = firstChild(pPr, "pStyle")?.let { attr(it, "val") }
@@ -788,6 +890,7 @@ object DocxReader {
             notes = notes,
             styles = styles,
             inherited = runProperties,
+            anchors = anchors,
         )
         if (runs.isEmpty()) return null
         return Paragraph(runs = runs, style = style, confidence = 1f, bookmarks = bookmarksOf(p))
@@ -818,6 +921,7 @@ object DocxReader {
         notes: Notes = Notes(),
         styles: StyleSheet,
         inherited: Map<String, Element> = emptyMap(),
+        anchors: CommentAnchors = CommentAnchors.NONE,
     ): List<TextRun> {
         require(depth <= MAX_NESTING_DEPTH) {
             "Run-container nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
@@ -881,14 +985,18 @@ object DocxReader {
                 }
             }
             when (child.localName) {
-                "r" -> parseRun(child, paragraphRtl, media.takeIf { inline }, notes, styles, inherited)?.let(runs::add)
+                "r" ->
+                    parseRun(child, paragraphRtl, media.takeIf { inline }, notes, styles, inherited, anchors)
+                        ?.let(runs::add)
                 "fldSimple" -> {
-                    val inner = collectRuns(child, paragraphRtl, depth + 1, media, inline, notes, styles, inherited)
+                    val inner =
+                        collectRuns(child, paragraphRtl, depth + 1, media, inline, notes, styles, inherited, anchors)
                     val instruction = attr(child, "instr").orEmpty().trim().uppercase()
                     runs += if (instruction.startsWith("PAGE")) inner.map { it.copy(field = RunField.PAGE_NUMBER) } else inner
                 }
                 "hyperlink" -> {
-                    val inner = collectRuns(child, paragraphRtl, depth + 1, media, inline, notes, styles, inherited)
+                    val inner =
+                        collectRuns(child, paragraphRtl, depth + 1, media, inline, notes, styles, inherited, anchors)
                     val target = child.getAttributeNS(R_NS, "id").ifEmpty { null }?.let { media?.targetFor(it) }
                         ?: attr(child, "anchor")?.let { "#$it" }
                     runs += if (target != null) inner.map { it.copy(link = target) } else inner
@@ -908,7 +1016,7 @@ object DocxReader {
                     }
                     val inner = collectRuns(
                         child, turned?.let { it == TextDirection.RTL } ?: paragraphRtl,
-                        depth + 1, media, inline, notes, styles, inherited,
+                        depth + 1, media, inline, notes, styles, inherited, anchors,
                     )
                     runs += if (turned == null) inner else inner.map { it.copy(direction = turned) }
                 }
@@ -1407,12 +1515,13 @@ object DocxReader {
         notes: Notes = Notes(),
         styles: StyleSheet,
         inherited: Map<String, Element> = emptyMap(),
+        anchors: CommentAnchors = CommentAnchors.NONE,
     ): TextRun? {
         if (media != null) {
             // A picture in a run is the run: whichever way it is drawn, and
             // once however many ways the file draws it.
             val picture = picturesIn(r, media).firstOrNull()
-            if (picture != null) return TextRun("", image = picture)
+            if (picture != null) return TextRun("", image = picture, commentIds = anchors.on(r))
         }
         // The note a mark refers to lives in a part of its own; the mark
         // itself is the run's text, when the reference says one follows.
@@ -1487,6 +1596,10 @@ object DocxReader {
             // opens with the element that draws the number — so nothing
             // of its own words is taken from it, however they begin.
             note = note?.let { if (drawnMark == null) notes.withoutMark(it, text) else it },
+            // Nothing on a run says it has been commented on; the marks
+            // that say so stand beside it, and the walk that read them
+            // remembered which run each one reaches.
+            commentIds = anchors.on(r),
         )
     }
 
@@ -1497,6 +1610,7 @@ object DocxReader {
         depth: Int,
         notes: Notes = Notes(),
         styles: StyleSheet,
+        anchors: CommentAnchors = CommentAnchors.NONE,
     ): Table? {
         // A cell that continues a merge from the row above holds nothing of
         // its own; the model keeps only the cell that began the merge, and
@@ -1530,7 +1644,7 @@ object DocxReader {
                 Cell(
                     blocks = parseBlocks(
                         tc, numbering, media, depth + 1,
-                        notes = notes, styles = styles, fromTable = fromTable,
+                        notes = notes, styles = styles, fromTable = fromTable, anchors = anchors,
                     ),
                     columnSpan = firstChild(properties, "gridSpan")?.let { attr(it, "val") }?.toIntOrNull()
                         ?.coerceIn(1, MOST_SPANNED_CELLS) ?: 1,

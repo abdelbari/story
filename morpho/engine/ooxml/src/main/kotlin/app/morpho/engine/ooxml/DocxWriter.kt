@@ -3,6 +3,7 @@ package app.morpho.engine.ooxml
 import kotlin.math.roundToInt
 import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.Block
+import app.morpho.engine.layout.Comment
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.ListMarker
@@ -59,7 +60,7 @@ object DocxWriter {
      * — three lists that have to say the same thing, and a document Word
      * refuses to open when they do not.
      */
-    private class Parts(document: DocumentModel, val notes: Boolean) {
+    private class Parts(document: DocumentModel, val notes: Boolean, val comments: Boolean) {
         val header = document.header.isNotEmpty()
         val footer = document.footer.isNotEmpty()
         val evenHeader = document.evenHeader.isNotEmpty()
@@ -74,14 +75,18 @@ object DocxWriter {
         val images = ImagePlan(document)
         val links = LinkPlan(document)
         val notes = NotePlan(document)
-        val parts = Parts(document, notes.entries.isNotEmpty())
+        val comments = CommentPlan(document)
+        val parts = Parts(document, notes.entries.isNotEmpty(), comments.entries.isNotEmpty())
         ZipOutputStream(output).use { zip ->
             zip.part("[Content_Types].xml", contentTypesXml(parts))
             zip.part("_rels/.rels", packageRelsXml())
             zip.part("word/_rels/document.xml.rels", documentRelsXml(images, links, parts))
-            zip.part("word/document.xml", documentXml(document, numbering, images, links, notes))
+            zip.part("word/document.xml", documentXml(document, numbering, images, links, notes, comments))
             if (notes.entries.isNotEmpty()) {
                 zip.part("word/footnotes.xml", footnotesXml(document, numbering, images, links, notes))
+            }
+            if (parts.comments) {
+                zip.part("word/comments.xml", commentsXml(document, numbering, images, links, comments))
             }
             zip.part("word/styles.xml", stylesXml(document))
             zip.part("word/numbering.xml", numberingXml(numbering))
@@ -261,6 +266,67 @@ object DocxWriter {
     }
 
     /**
+     * Every note the text is the subject of, and where each one starts and
+     * stops.
+     *
+     * Word anchors a comment to a stretch of the document: a mark where
+     * the stretch opens, a mark where it closes, and a reference after the
+     * close. A stretch can run from one paragraph into the next, so the
+     * two ends are found by walking the text once and keeping the first
+     * run each note covers and the last — rather than opening and closing
+     * the note in every paragraph it touches, which would give the file
+     * the same note under the same number several times over.
+     *
+     * Only the text is walked. Word will not let anyone comment on a
+     * running head, and a note nothing refers to is left out of the file
+     * altogether: Word would keep it and show it nowhere, and reading the
+     * file back would lose it without saying so.
+     */
+    private class CommentPlan(document: DocumentModel) {
+        class Entry(val id: Int, val comment: Comment)
+
+        private val byId = LinkedHashMap<Int, Entry>()
+        private val opens = IdentityHashMap<TextRun, MutableList<Entry>>()
+        private val closes = IdentityHashMap<TextRun, MutableList<Entry>>()
+        private val lastRun = LinkedHashMap<Int, TextRun>()
+
+        val entries: List<Entry> get() = byId.values.toList()
+
+        init {
+            walk(document.blocks, document.comments.associateBy { it.id })
+            // Which run a note stops on is only settled once the walk is.
+            for ((id, run) in lastRun) {
+                val entry = byId[id] ?: continue
+                closes.getOrPut(run) { mutableListOf() } += entry
+            }
+        }
+
+        /** The notes opening on [run], in the order the file names them. */
+        fun opensAt(run: TextRun): List<Entry> = opens[run].orEmpty()
+
+        /** The notes closing on [run]. */
+        fun closesAt(run: TextRun): List<Entry> = closes[run].orEmpty()
+
+        private fun walk(blocks: List<Block>, known: Map<Int, Comment>) {
+            for (block in blocks) {
+                when (block) {
+                    is Paragraph -> for (run in block.runs) for (id in run.commentIds) {
+                        val comment = known[id] ?: continue
+                        val entry = byId.getOrPut(id) { Entry(byId.size, comment) }
+                        // The first run a note covers is the one it opens
+                        // on; every later one only moves where it closes.
+                        if (lastRun.put(id, run) == null) {
+                            opens.getOrPut(run) { mutableListOf() } += entry
+                        }
+                    }
+                    is Table -> for (row in block.rows) for (cell in row.cells) walk(cell.blocks, known)
+                    is ImageBlock -> {}
+                }
+            }
+        }
+    }
+
+    /**
      * Both ends of every link: the addresses that leave the file, which
      * need a relationship each, and the bookmarks inside it, which a link
      * reaches by name and which need an id each.
@@ -431,6 +497,7 @@ object DocxWriter {
         images: ImagePlan,
         links: LinkPlan,
         notes: NotePlan,
+        comments: CommentPlan,
     ): String {
         val sb = StringBuilder(16 * 1024)
         sb.append(XML_DECL)
@@ -446,7 +513,7 @@ object DocxWriter {
         for ((index, block) in document.blocks.withIndex()) {
             val starting = (document.blocks.getOrNull(index + 1) as? Paragraph)?.style?.sectionSetup
             appendBlock(
-                sb, block, document, numbering, images, links, ImagePlan.PART_DOCUMENT, notes,
+                sb, block, document, numbering, images, links, ImagePlan.PART_DOCUMENT, notes, comments,
                 endsSection = if (starting != null) inForce else null,
                 // A section ending on a table already gets a paragraph of
                 // its own below, to carry the section's properties.
@@ -520,6 +587,76 @@ object DocxWriter {
         return sb.toString()
     }
 
+    /**
+     * The comments part: what each note says, who left it and when.
+     *
+     * A note's own words are written as paragraphs of the document, so a
+     * note left in Arabic is laid out from the right like everything else
+     * in an Arabic document rather than turned round in the margin.
+     */
+    private fun commentsXml(
+        document: DocumentModel,
+        numbering: NumberingPlan,
+        images: ImagePlan,
+        links: LinkPlan,
+        comments: CommentPlan,
+    ): String {
+        val sb = StringBuilder(2 * 1024)
+        sb.append(XML_DECL)
+        sb.append("""<w:comments xmlns:w="$W" xmlns:r="$R_NS">""")
+        for (entry in comments.entries) {
+            val note = entry.comment
+            sb.append("""<w:comment w:id="${entry.id}"""")
+            // Word wants an author on every comment. A file that did not
+            // record one is left saying nothing rather than given a name
+            // it never had.
+            sb.append(""" w:author="${xmlEscape(note.author.orEmpty())}"""")
+            initialsOf(note)?.let { sb.append(""" w:initials="${xmlEscape(it)}"""") }
+            note.dateIso?.let { sb.append(""" w:date="${xmlEscape(it)}"""") }
+            sb.append(">")
+            for ((index, line) in note.text.split('\n').withIndex()) {
+                val start = sb.length
+                appendBlock(
+                    sb, Paragraph(listOf(TextRun(line))),
+                    document, numbering, images, links, ImagePlan.PART_DOCUMENT,
+                )
+                // The note's own mark goes at the head of its first
+                // paragraph, after whatever properties that paragraph
+                // carries; it is what Word draws in the margin against the
+                // stretch of text the note is about.
+                if (index == 0) {
+                    val open = sb.indexOf("<w:p>", start)
+                    val properties = sb.indexOf("</w:pPr>", start)
+                    val at = if (properties in start until sb.length) properties + "</w:pPr>".length
+                    else if (open in start until sb.length) open + "<w:p>".length
+                    else -1
+                    if (at >= 0) sb.insert(at, "<w:r><w:annotationRef/></w:r>")
+                }
+            }
+            sb.append("</w:comment>")
+        }
+        sb.append("</w:comments>")
+        return sb.toString()
+    }
+
+    /**
+     * The letters Word shows in the margin against a note: the ones the
+     * file gave, or the first letter of each of the author's first two
+     * names. A note by nobody has none, and Word draws the balloon
+     * without them.
+     */
+    private fun initialsOf(comment: Comment): String? {
+        comment.initials?.takeIf { it.isNotBlank() }?.let { return it.trim() }
+        val author = comment.author?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return author.split(' ', '\t')
+            .filter { it.isNotBlank() }
+            .take(INITIALS)
+            .map { it.first() }
+            .joinToString("")
+            .uppercase()
+            .takeIf { it.isNotEmpty() }
+    }
+
     /** A header (w:hdr) or footer (w:ftr) part: the blocks every page repeats. */
     private fun furnitureXml(
         root: String,
@@ -552,6 +689,7 @@ object DocxWriter {
         links: LinkPlan,
         part: String,
         notes: NotePlan? = null,
+        comments: CommentPlan? = null,
         /** The section this block ends, when the block after it starts another. */
         endsSection: PageSetup? = null,
         /** Whether a table here must be followed by a paragraph. */
@@ -559,8 +697,9 @@ object DocxWriter {
     ) {
         when (block) {
             is Paragraph ->
-                appendParagraph(sb, block, document, numbering, images, links, part, notes, endsSection)
-            is Table -> appendTable(sb, block, document, numbering, images, links, part, notes, spacerAfterTable)
+                appendParagraph(sb, block, document, numbering, images, links, part, notes, comments, endsSection)
+            is Table ->
+                appendTable(sb, block, document, numbering, images, links, part, notes, comments, spacerAfterTable)
             is ImageBlock -> appendImage(sb, images.entryFor(block), document, part)
         }
     }
@@ -583,6 +722,7 @@ object DocxWriter {
         links: LinkPlan,
         part: String,
         notes: NotePlan? = null,
+        comments: CommentPlan? = null,
         endsSection: PageSetup? = null,
     ) {
         val effectiveDirection = paragraph.style.direction ?: document.defaultDirection
@@ -597,6 +737,22 @@ object DocxWriter {
         // words so that a contents page or a cross-reference lands on it.
         // Only a heading's style sets bold; every other run stands alone.
         val styleIsBold = paragraph.style.kind in BOLD_STYLES
+        // A run somebody has commented on is written between the two marks
+        // that say where the note's subject starts and stops, with the
+        // reference to the note after the second of them. Word draws the
+        // stretch between them shaded and the note in the margin against
+        // it; without the marks a note has nothing to be about.
+        fun write(at: Int) {
+            val run = paragraph.runs[at]
+            for (entry in comments?.opensAt(run).orEmpty()) {
+                sb.append("""<w:commentRangeStart w:id="${entry.id}"/>""")
+            }
+            appendRun(sb, run, effectiveDirection, images, document, notes, styleIsBold, part)
+            for (entry in comments?.closesAt(run).orEmpty()) {
+                sb.append("""<w:commentRangeEnd w:id="${entry.id}"/>""")
+                sb.append("""<w:r><w:commentReference w:id="${entry.id}"/></w:r>""")
+            }
+        }
         val bookmarks = links.bookmarksOn(paragraph)
         for ((name, id) in bookmarks) {
             sb.append("""<w:bookmarkStart w:id="$id" w:name="${xmlEscape(name)}"/>""")
@@ -608,7 +764,7 @@ object DocxWriter {
         while (index < paragraph.runs.size) {
             val target = paragraph.runs[index].link
             if (target == null) {
-                appendRun(sb, paragraph.runs[index], effectiveDirection, images, document, notes, styleIsBold, part)
+                write(index)
                 index++
                 continue
             }
@@ -624,9 +780,7 @@ object DocxWriter {
                 anchor != null -> sb.append("""<w:hyperlink w:anchor="${xmlEscape(anchor)}">""")
                 relId != null -> sb.append("""<w:hyperlink r:id="$relId">""")
             }
-            for (i in index..last) {
-                appendRun(sb, paragraph.runs[i], effectiveDirection, images, document, notes, styleIsBold, part)
-            }
+            for (i in index..last) write(i)
             if (anchor != null || relId != null) sb.append("</w:hyperlink>")
             index = last + 1
         }
@@ -893,6 +1047,7 @@ object DocxWriter {
         links: LinkPlan,
         part: String,
         notes: NotePlan? = null,
+        comments: CommentPlan? = null,
         /** Whether a paragraph must follow the table: another table does, or the end of what holds it. */
         spacer: Boolean = true,
     ) {
@@ -951,16 +1106,16 @@ object DocxWriter {
                 }
                 when (place) {
                     is TableGrid.Filled -> appendCell(
-                        sb, place.cell, document, numbering, images, links, part, width, notes,
+                        sb, place.cell, document, numbering, images, links, part, width, notes, comments,
                         span = place.span,
                         merge = if (place.rowSpan > 1) Merge.START else Merge.NONE,
                     )
                     is TableGrid.Covered -> appendCell(
-                        sb, TableCell(emptyList()), document, numbering, images, links, part, width, notes,
+                        sb, TableCell(emptyList()), document, numbering, images, links, part, width, notes, comments,
                         merge = Merge.CONTINUE,
                     )
                     is TableGrid.Empty -> appendCell(
-                        sb, TableCell(emptyList()), document, numbering, images, links, part, width, notes,
+                        sb, TableCell(emptyList()), document, numbering, images, links, part, width, notes, comments,
                     )
                 }
             }
@@ -991,6 +1146,7 @@ object DocxWriter {
         part: String,
         widthTwips: Int? = null,
         notes: NotePlan? = null,
+        comments: CommentPlan? = null,
         span: Int = 1,
         merge: Merge = Merge.NONE,
     ) {
@@ -1017,7 +1173,7 @@ object DocxWriter {
         sb.append("</w:tcPr>")
         for ((index, block) in cell.blocks.withIndex()) {
             appendBlock(
-                sb, block, document, numbering, images, links, part, notes,
+                sb, block, document, numbering, images, links, part, notes, comments,
                 spacerAfterTable = needsSpacer(cell.blocks, index),
             )
         }
@@ -1203,6 +1359,13 @@ object DocxWriter {
     private const val EVEN_FOOTER_REL_ID = "rIdFtr2"
     private const val SETTINGS_REL_ID = "rIdSet1"
     private const val NOTES_REL_ID = "rIdFtn1"
+    private const val COMMENTS_REL_ID = "rIdCmt1"
+    private const val COMMENTS_REL_TYPE =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
+    private const val COMMENTS_TYPE =
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"
+    /** How many of an author's names Word takes a letter from for the margin. */
+    private const val INITIALS = 2
 
     // ------------------------------------------------------------------
     // Static parts
@@ -1223,6 +1386,7 @@ object DocxWriter {
         (if (parts.evenFooter) """<Override PartName="/word/footer2.xml" ContentType="$FOOTER_TYPE"/>""" else "") +
         (if (parts.mirrored) """<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>""" else "") +
         (if (parts.notes) """<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>""" else "") +
+        (if (parts.comments) """<Override PartName="/word/comments.xml" ContentType="$COMMENTS_TYPE"/>""" else "") +
         """<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>""" +
         """<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>""" +
         """</Types>"""
@@ -1253,6 +1417,7 @@ object DocxWriter {
         if (parts.evenFooter) sb.append("""<Relationship Id="$EVEN_FOOTER_REL_ID" Type="$FOOTER_REL_TYPE" Target="footer2.xml"/>""")
         if (parts.mirrored) sb.append("""<Relationship Id="$SETTINGS_REL_ID" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>""")
         if (parts.notes) sb.append("""<Relationship Id="$NOTES_REL_ID" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>""")
+        if (parts.comments) sb.append("""<Relationship Id="$COMMENTS_REL_ID" Type="$COMMENTS_REL_TYPE" Target="comments.xml"/>""")
         for (entry in images.entriesFor(ImagePlan.PART_DOCUMENT)) {
             sb.append(
                 """<Relationship Id="${entry.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${entry.fileName}"/>"""

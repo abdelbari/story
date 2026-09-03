@@ -1,6 +1,7 @@
 package app.morpho.engine.ooxml
 
 import app.morpho.engine.layout.Alignment
+import app.morpho.engine.layout.Comment
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.DocumentProperties
 import app.morpho.engine.layout.ImageBlock
@@ -221,6 +222,49 @@ class PackageIntegrityTest {
                     if (id !in styles) faults += "a $name names $id, which styles.xml does not define"
                 }
             }
+            faults += commentFaults(document, parts["word/comments.xml"]?.let(::parse))
+        }
+        return faults
+    }
+
+    /**
+     * Everything wrong with the way a package holds its comments.
+     *
+     * A note is three marks in the text and an entry out of it, tied
+     * together by a number. Word is unforgiving about all four: a mark
+     * naming a note the file does not hold, a stretch opened and never
+     * closed, a note numbered twice, a note in the file that no mark
+     * points at.
+     */
+    private fun commentFaults(document: Element, comments: Element?): List<String> {
+        val faults = mutableListOf<String>()
+        val defined = comments?.let { root ->
+            descendants(root).filter { it.namespaceURI == w && it.localName == "comment" }
+                .mapNotNull { it.getAttributeNS(w, "id").ifEmpty { null } }
+        }.orEmpty()
+        for (id in defined.groupBy { it }.filterValues { it.size > 1 }.keys) {
+            faults += "comments.xml holds more than one note numbered $id"
+        }
+        for (id in defined) {
+            if (id.toIntOrNull()?.let { it < 0 } != false) faults += "a note is numbered $id, which Word will not have"
+        }
+        val known = defined.toSet()
+        val marks = mutableMapOf<String, MutableList<String>>()
+        for (element in descendants(document)) {
+            if (element.namespaceURI != w) continue
+            if (element.localName !in setOf("commentRangeStart", "commentRangeEnd", "commentReference")) continue
+            val id = element.getAttributeNS(w, "id")
+            marks.getOrPut(element.localName) { mutableListOf() } += id
+            if (id !in known) faults += "a ${element.localName} names note $id, which the package does not hold"
+        }
+        for (kind in listOf("commentRangeStart", "commentRangeEnd", "commentReference")) {
+            val said = marks[kind].orEmpty()
+            for (id in said.groupBy { it }.filterValues { it.size > 1 }.keys) {
+                faults += "note $id has more than one $kind"
+            }
+            for (id in known) {
+                if (id !in said) faults += "note $id has no $kind"
+            }
         }
         return faults
     }
@@ -251,7 +295,7 @@ class PackageIntegrityTest {
                         TextRun("A claim"),
                         TextRun("1", note = listOf(line("The note itself."))),
                         TextRun(" and a "),
-                        TextRun("link", link = "https://example.com/x"),
+                        TextRun("link", link = "https://example.com/x", commentIds = listOf(2)),
                         TextRun(" and a picture "),
                         TextRun("", image = ImageBlock(png, "image/png", 1, 1)),
                     )
@@ -277,6 +321,12 @@ class PackageIntegrityTest {
             ),
             evenHeader = listOf(line("The other side")),
             properties = DocumentProperties(title = "A Study", author = "R. Nebbar"),
+            comments = listOf(
+                Comment(id = 2, text = "Is this still up?", author = "R. Nebbar", dateIso = "2026-09-03T09:15:00Z"),
+                // A note nothing is about: the writer must leave it out
+                // rather than write a note the file cannot show.
+                Comment(id = 5, text = "Nothing points at this."),
+            ),
         )
     }
 
