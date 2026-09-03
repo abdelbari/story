@@ -45,6 +45,7 @@ import app.morpho.engine.layout.TableCell
 import app.morpho.engine.layout.TableGrid
 import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
+import app.morpho.engine.layout.TabStops
 import app.morpho.engine.layout.pdf.StackedLines
 import java.io.ByteArrayOutputStream
 import java.util.IdentityHashMap
@@ -107,7 +108,6 @@ internal object PdfFileExporter {
     /** Of an exact line, at most this share sits below the baseline. */
     private const val MAX_DESCENT_SHARE = 0.4f
     /** Word's default tab interval: half an inch. */
-    private const val DEFAULT_TAB_PT = 36f
     /** The clear space between a page's text and the rule above its notes. */
     private const val NOTE_GAP_PT = 6f
     /** How far across the page the rule above the notes runs. */
@@ -444,7 +444,7 @@ internal object PdfFileExporter {
             val right = sheet.width - sheet.marginRight
             val indent = (paragraph.style.startIndentPt?.coerceAtLeast(0f) ?: 0f) +
                 ListLabels.indentPt(paragraph.style)
-            val stops = paragraph.style.tabStopsPt.orEmpty().filter { it > 0f }.sorted()
+            val stops = paragraph.style.tabStopsPt.orEmpty()
             class Measured(val offset: Float, val width: Float, val height: Float, val text: String?, val paint: TextPaint?, val picture: ImageBlock?)
             val measured = mutableListOf<Measured>()
             var offset = indent
@@ -466,7 +466,7 @@ internal object PdfFileExporter {
                     continue
                 }
                 if (run.text == "\t") {
-                    offset = stops.firstOrNull { it > offset + 0.5f } ?: (offset + DEFAULT_TAB_PT)
+                    offset = TabStops.next(offset, stops)
                     continue
                 }
                 val text = if (run.field == RunField.PAGE_NUMBER) number.toString() else run.text
@@ -540,7 +540,7 @@ internal object PdfFileExporter {
         // is laid out against what is left.
         reserveNotes(cursor, block, direction)
         indent(text, block)
-        tabs(text, block)
+        tabs(text, block, cursor.sheet.contentWidth)
         val paint = paintFor(block.style.kind)
         val layout = layout(
             text,
@@ -845,7 +845,7 @@ internal object PdfFileExporter {
                         val direction = para.style.direction ?: defaultDirection
                         val paint = paintFor(para.style.kind)
                         val text = spannable(para, numbered)
-                        tabs(text, para)
+                        tabs(text, para, textWidth)
                         Piece.Text(
                             layout(
                                 text,
@@ -1189,11 +1189,19 @@ internal object PdfFileExporter {
         )
     }
 
-    /** The tab stops the source measured, so a tab in the text lands where it did on the page. */
-    private fun tabs(text: SpannableStringBuilder, block: Paragraph) {
+    /**
+     * The tab stops the line is set with: the ones the source measured,
+     * and past them the default columns, so a tab in the text lands where
+     * Word puts it.
+     *
+     * Every stop the line can reach goes in, rather than only the declared
+     * ones, because what a text layout does past the last stop it is given
+     * is its own affair — a built-in increment of twenty, which is neither
+     * points nor anything Word does.
+     */
+    private fun tabs(text: SpannableStringBuilder, block: Paragraph, widthPt: Int) {
         if (text.isEmpty() || !text.contains('\t')) return
-        for (stop in block.style.tabStopsPt.orEmpty()) {
-            if (stop <= 0f) continue
+        for (stop in TabStops.through(widthPt.toFloat(), block.style.tabStopsPt.orEmpty())) {
             text.setSpan(TabStopSpan.Standard(stop.roundToInt()), 0, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
     }
