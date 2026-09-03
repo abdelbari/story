@@ -120,6 +120,12 @@ object PdfLayout {
     /** A page whose text stopped this many lines short of where it could have run was broken on purpose. */
     private const val EARLY_BREAK_LINES = 2f
 
+    /**
+     * The share of a sheet its text must cover for the page to be one the
+     * sheet stopped rather than one the writing did.
+     */
+    private const val FILLED_SHARE = 0.5f
+
     /** How far a column may shift between two pages and still be the same column. */
     private const val COLUMN_SHIFT_PT = 6f
     /** How far a paragraph looks for a rule of its own, in its own line pitch. */
@@ -330,13 +336,13 @@ object PdfLayout {
      * The pages whose text ran to the foot of the sheet: the page is what
      * stopped them, not the writing.
      *
-     * A page is judged against its own sheet rather than against the
-     * deepest text in the document, since a document may put text only at
-     * the top of every page and each of them is then as deep as the
-     * deepest — while none of them is full. What is left below the last
-     * line is compared with what is left above the first: a page is set
-     * with margins of much the same size at top and foot, so a page whose
-     * foot is far emptier than its head stopped before the sheet made it.
+     * Two things are asked of a page. What it leaves below its last line
+     * must be about what the document's own foot margin is — the least
+     * any of its pages leaves — since a page that leaves much more than
+     * that stopped before the sheet made it. And its text must cover the
+     * sheet the way a page of text does: a document may carry six lines
+     * at the top of every page, and each of those is as deep as the
+     * deepest while none of them is full.
      *
      * Without a sheet to measure against, or without a page of more than
      * one line to say what a line's step is, nothing is named filled: with
@@ -352,14 +358,24 @@ object PdfLayout {
                 .filter { it > 1f }
         )
         if (pitch <= 0f) return emptySet()
-        return byPage.filterKeys { heightByPage[it] != null }
-            .filterValues { pageLines ->
-                val height = heightByPage.getValue(pageLines.first().page)
-                val above = pageLines.minOf { it.baselineY }
-                val below = height - pageLines.maxOf { it.baselineY }
-                below <= above + EARLY_BREAK_LINES * pitch
-            }
-            .keys
+        val known = byPage.filterKeys { heightByPage[it] != null }
+        // The document's own foot margin: the least any of its pages
+        // leaves below its last line. A page that leaves much more than
+        // that stopped before the sheet made it.
+        val foot = known.minOfOrNull { (page, pageLines) ->
+            heightByPage.getValue(page) - pageLines.maxOf { it.baselineY }
+        } ?: return emptySet()
+        return known.filterValues { pageLines ->
+            val height = heightByPage.getValue(pageLines.first().page)
+            val above = pageLines.minOf { it.baselineY }
+            val below = height - pageLines.maxOf { it.baselineY }
+            below <= foot + EARLY_BREAK_LINES * pitch &&
+                // And its text must cover the sheet the way a page of text
+                // does. A document may carry six lines at the top of every
+                // page, and each of those is then as deep as the deepest
+                // while none of them is a page the sheet stopped.
+                above + below <= FILLED_SHARE * height
+        }.keys
     }
 
     /**
