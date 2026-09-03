@@ -23,8 +23,8 @@ import android.text.style.ImageSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.LineHeightSpan
 import android.text.style.RelativeSizeSpan
-import android.text.style.StyleSpan
 import android.text.style.StrikethroughSpan
+import android.text.style.StyleSpan
 import android.text.style.SubscriptSpan
 import android.text.style.SuperscriptSpan
 import android.text.style.TabStopSpan
@@ -694,9 +694,10 @@ internal object PdfFileExporter {
             // Sizes are in points because the canvas is: a PDF page is
             // measured in them, so a point of type is a point on the page.
             run.fontSizePt?.takeIf { it > 0f }?.let { span(AbsoluteSizeSpan(it.roundToInt(), false)) }
+            // A word struck through in the source is struck through here.
+            if (run.strikethrough) span(StrikethroughSpan())
             // The colour the source set, opaque; a run that named none is
             // left to the page's own black.
-            if (run.strikethrough) span(StrikethroughSpan())
             run.colorRgb?.let { span(ForegroundColorSpan(0xFF000000.toInt() or it)) }
             // A marking a reader made over the words is drawn behind them,
             // as it was drawn on the page it came from.
