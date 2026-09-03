@@ -29,15 +29,47 @@ object ListLabels {
     /** The bullet drawn at [level]: •, then ◦, then ▪, and round again. */
     fun bullet(level: Int): String = BULLETS[level.coerceAtLeast(0) % BULLETS.size]
 
-    /** The [count]th item of a numbered list at [level], marker and all: "3.", "b)", "iv.". */
-    fun number(level: Int, count: Int): String {
+    /**
+     * The [count]th item of a numbered list at [level], marker and all:
+     * "3.", "b)", "iv.". [format] is how the document itself counts, in
+     * the words a Word file uses — an Arabic list that counts أ ب ت says
+     * "arabicAlpha" and is written that way rather than 1 2 3.
+     */
+    fun number(level: Int, count: Int, format: String? = null): String {
         val at = count.coerceAtLeast(1)
-        return when (level.coerceAtLeast(0) % 3) {
-            0 -> "$at."
-            1 -> letter(at) + ")"
-            else -> roman(at) + "."
+        return when (format) {
+            "decimal" -> "$at."
+            "decimalZero" -> (if (at < 10) "0$at" else "$at") + "."
+            "lowerLetter" -> letter(at) + ")"
+            "upperLetter" -> letter(at).uppercase() + ")"
+            "lowerRoman" -> roman(at) + "."
+            "upperRoman" -> roman(at).uppercase() + "."
+            "arabicAlpha" -> arabic(at, ALPHABET) + "-"
+            "arabicAbjad" -> arabic(at, ABJAD) + "-"
+            // A way of counting nobody here knows how to draw is counted
+            // the way the level would have been counted anyway.
+            else -> when (level.coerceAtLeast(0) % 3) {
+                0 -> "$at."
+                1 -> letter(at) + ")"
+                else -> roman(at) + "."
+            }
         }
     }
+
+    /**
+     * The [count]th letter of [letters], repeated once more each time the
+     * list outlasts them, as a Latin list goes a, b, …, z, aa.
+     */
+    private fun arabic(count: Int, letters: String): String {
+        val at = count.coerceAtLeast(1) - 1
+        return letters[at % letters.length].toString().repeat(at / letters.length + 1)
+    }
+
+    /** The Arabic alphabet in its own order, which is how a list letters its items. */
+    private const val ALPHABET = "أبتثجحخدذرزسشصضطظعغفقكلمنهوي"
+
+    /** The older abjad order, which some documents count in instead. */
+    private const val ABJAD = "أبجدهوزحطيكلمنسعفصقرشتثخذضظغ"
 
     /**
      * The [count]th letter of the alphabet as a list counts them: a, b, …,
@@ -69,7 +101,7 @@ object ListLabels {
     /** The whole marker to write before an item of [style], the space after it included. */
     fun markerFor(style: ParagraphStyle, count: Int): String = when (style.listMarker) {
         ListMarker.BULLET -> bullet(style.listLevel) + " "
-        ListMarker.NUMBERED -> number(style.listLevel, count) + " "
+        ListMarker.NUMBERED -> number(style.listLevel, count, style.listFormat) + " "
         null -> ""
     }
 }

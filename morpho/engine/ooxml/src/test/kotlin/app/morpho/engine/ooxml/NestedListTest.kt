@@ -1,6 +1,7 @@
 package app.morpho.engine.ooxml
 
 import app.morpho.engine.layout.DocumentModel
+import app.morpho.engine.layout.ListLabels
 import app.morpho.engine.layout.ListMarker
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphStyle
@@ -194,5 +195,74 @@ class NestedListTest {
             }
         }
         return parts
+    }
+
+    @Test
+    fun `a list lettered in Arabic is lettered in Arabic`() {
+        val doc = readDocx(
+            numbering = """
+                <w:abstractNum w:abstractNumId="3">
+                  <w:lvl w:ilvl="0"><w:numFmt w:val="arabicAlpha"/></w:lvl>
+                </w:abstractNum>
+                <w:num w:numId="5"><w:abstractNumId w:val="3"/></w:num>
+            """,
+            body = """<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="5"/></w:numPr></w:pPr>
+                <w:r><w:t>البند الأول</w:t></w:r></w:p>""",
+        )
+        val style = doc.blocks.filterIsInstance<Paragraph>().first().style
+        assertEquals(ListMarker.NUMBERED, style.listMarker)
+        assertEquals("arabicAlpha", style.listFormat)
+    }
+
+    @Test
+    fun `and is written back lettered rather than numbered`() {
+        val document = DocumentModel(
+            blocks = listOf(
+                Paragraph(
+                    runs = listOf(TextRun("البند الأول")),
+                    style = ParagraphStyle(listMarker = ListMarker.NUMBERED, listFormat = "arabicAlpha"),
+                ),
+                Paragraph(
+                    runs = listOf(TextRun("البند الثاني")),
+                    style = ParagraphStyle(listMarker = ListMarker.NUMBERED, listFormat = "arabicAlpha"),
+                ),
+            )
+        )
+        val docx = DocxWriter.toByteArray(document)
+        val numbering = entries(docx).getValue("word/numbering.xml")
+        assertTrue(numbering.contains("""<w:numFmt w:val="arabicAlpha"/>"""), numbering)
+        val back = DocxReader.read(docx).blocks.filterIsInstance<Paragraph>()
+        assertEquals(listOf("arabicAlpha", "arabicAlpha"), back.map { it.style.listFormat })
+    }
+
+    @Test
+    fun `the page draws the letters a list counts in`() {
+        val arabic = ParagraphStyle(listMarker = ListMarker.NUMBERED, listFormat = "arabicAlpha")
+        assertEquals("\u0623- ", ListLabels.markerFor(arabic, 1))
+        assertEquals("\u0628- ", ListLabels.markerFor(arabic, 2))
+        assertEquals("\u062a- ", ListLabels.markerFor(arabic, 3))
+        // The older abjad order counts differently at the third.
+        val abjad = ParagraphStyle(listMarker = ListMarker.NUMBERED, listFormat = "arabicAbjad")
+        assertEquals("\u062c- ", ListLabels.markerFor(abjad, 3))
+    }
+
+    @Test
+    fun `a list that says nothing about counting counts as an outline does`() {
+        val plain = ParagraphStyle(listMarker = ListMarker.NUMBERED)
+        assertEquals("1. ", ListLabels.markerFor(plain, 1))
+        assertEquals("b) ", ListLabels.markerFor(plain.copy(listLevel = 1), 2))
+    }
+
+    @Test
+    fun `every way of counting a Word file names is drawn its own way`() {
+        fun marker(format: String, count: Int) = ListLabels.number(0, count, format)
+        assertEquals("3.", marker("decimal", 3))
+        assertEquals("03.", marker("decimalZero", 3))
+        assertEquals("c)", marker("lowerLetter", 3))
+        assertEquals("C)", marker("upperLetter", 3))
+        assertEquals("iii.", marker("lowerRoman", 3))
+        assertEquals("III.", marker("upperRoman", 3))
+        // A way of counting nobody here draws falls back to the level's own.
+        assertEquals("3.", marker("cardinalText", 3))
     }
 }

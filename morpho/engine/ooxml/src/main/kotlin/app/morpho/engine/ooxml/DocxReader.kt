@@ -175,7 +175,7 @@ object DocxReader {
         reference: String,
         parts: Map<String, ByteArray>,
         media: MediaStore,
-        numbering: Map<String, Map<Int, ListMarker>>,
+        numbering: Map<String, Map<Int, ListLevel>>,
         styles: StyleSheet,
     ): List<Block> {
         val references = children(sectPr, reference)
@@ -260,7 +260,7 @@ object DocxReader {
     /** [inline] keeps a paragraph's pictures in its line as runs — how a running header carries its artwork — instead of after it. */
     private fun parseBlocks(
         parent: Element,
-        numbering: Map<String, Map<Int, ListMarker>>,
+        numbering: Map<String, Map<Int, ListLevel>>,
         media: MediaStore,
         depth: Int,
         inline: Boolean = false,
@@ -459,7 +459,7 @@ object DocxReader {
     /** With [inline], the paragraph's pictures stay in its line as runs rather than following it. */
     private fun parseParagraph(
         p: Element,
-        numbering: Map<String, Map<Int, ListMarker>>,
+        numbering: Map<String, Map<Int, ListLevel>>,
         media: MediaStore? = null,
         inline: Boolean = false,
         notes: Notes = Notes(),
@@ -542,7 +542,7 @@ object DocxReader {
         properties: Map<String, Element>,
         styleId: String?,
         styleName: String?,
-        numbering: Map<String, Map<Int, ListMarker>>,
+        numbering: Map<String, Map<Int, ListLevel>>,
     ): ParagraphStyle {
         if (properties.isEmpty() && styleId == null) return ParagraphStyle()
         // What the style is called says what a paragraph is — its id where
@@ -583,7 +583,8 @@ object DocxReader {
             ?: 0
         // A level the numbering never defined still belongs to its list, and
         // is marked the way the list's outermost level is.
-        val listMarker = levels?.let { it[listLevel] ?: it[0] }
+        val counting = levels?.let { it[listLevel] ?: it[0] }
+        val listMarker = counting?.marker
         val alignment = when (properties["jc"]?.let { attr(it, "val") }) {
             "center" -> Alignment.CENTER
             "both", "distribute" -> Alignment.JUSTIFY
@@ -602,6 +603,7 @@ object DocxReader {
             direction = if (isOn(properties["bidi"])) TextDirection.RTL else null,
             listMarker = listMarker,
             listLevel = if (listMarker == null) 0 else listLevel,
+            listFormat = counting?.format?.takeIf { listMarker == ListMarker.NUMBERED },
             alignment = alignment,
             firstLineIndentPt = ind?.let { twips(attr(it, "firstLine")) },
             startIndentPt = ind?.let { twips(attr(it, "start") ?: attr(it, "left")) },
@@ -875,7 +877,7 @@ object DocxReader {
     private fun notesOf(
         bytes: ByteArray?,
         kind: String,
-        numbering: Map<String, Map<Int, ListMarker>>,
+        numbering: Map<String, Map<Int, ListLevel>>,
         media: MediaStore,
         styles: StyleSheet,
     ): Map<NoteRef, List<Block>> {
@@ -1004,7 +1006,7 @@ object DocxReader {
 
     private fun parseTable(
         tbl: Element,
-        numbering: Map<String, Map<Int, ListMarker>>,
+        numbering: Map<String, Map<Int, ListLevel>>,
         media: MediaStore,
         depth: Int,
         notes: Notes = Notes(),
@@ -1107,23 +1109,27 @@ object DocxReader {
     // word/numbering.xml
     // ------------------------------------------------------------------
 
+    /** One level of a list: what it marks its items with, and how it counts them. */
+    private data class ListLevel(val marker: ListMarker, val format: String)
+
     /**
-     * numId → the marker at each of its levels, resolved through each num's
+     * numId → what each of its levels does, resolved through each num's
      * abstractNum. A list is not one marker but a ladder of them — Word's
      * own default numbers the outer level and letters the one inside it —
      * and every way of counting other than a bullet is a numbered list: a
-     * clause lettered (a) is as numbered as one numbered 1.
+     * clause lettered (a) is as numbered as one numbered 1, and the way it
+     * counts is kept so it can be drawn and written back as it was.
      */
-    private fun parseNumbering(bytes: ByteArray): Map<String, Map<Int, ListMarker>> = try {
+    private fun parseNumbering(bytes: ByteArray): Map<String, Map<Int, ListLevel>> = try {
         val root = parseXml(bytes).documentElement
-        val byAbstractId = mutableMapOf<String, Map<Int, ListMarker>>()
+        val byAbstractId = mutableMapOf<String, Map<Int, ListLevel>>()
         for (abstractNum in children(root, "abstractNum")) {
             val id = attr(abstractNum, "abstractNumId") ?: continue
             byAbstractId[id] = buildMap {
                 for (lvl in children(abstractNum, "lvl")) {
                     val level = attr(lvl, "ilvl")?.toIntOrNull()?.takeIf { it >= 0 } ?: continue
                     val format = firstChild(lvl, "numFmt")?.let { attr(it, "val") } ?: continue
-                    markerFor(format)?.let { put(level, it) }
+                    markerFor(format)?.let { put(level, ListLevel(it, format)) }
                 }
             }
         }
@@ -1131,7 +1137,18 @@ object DocxReader {
             for (num in children(root, "num")) {
                 val numId = attr(num, "numId") ?: continue
                 val abstractId = firstChild(num, "abstractNumId")?.let { attr(it, "val") }
-                byAbstractId[abstractId]?.takeIf { it.isNotEmpty() }?.let { put(numId, it) }
+                val levels = byAbstractId[abstractId].orEmpty().toMutableMap()
+                // A list may count its own way rather than the way the
+                // numbering it is based on counts, and says so here.
+                for (override in children(num, "lvlOverride")) {
+                    val level = attr(override, "ilvl")?.toIntOrNull()?.takeIf { it >= 0 } ?: continue
+                    val format = firstChild(override, "lvl")
+                        ?.let { firstChild(it, "numFmt") }
+                        ?.let { attr(it, "val") }
+                        ?: continue
+                    markerFor(format)?.let { levels[level] = ListLevel(it, format) }
+                }
+                if (levels.isNotEmpty()) put(numId, levels)
             }
         }
     } catch (_: Exception) {

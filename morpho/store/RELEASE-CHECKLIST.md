@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 471 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 476 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -88,6 +88,9 @@ Work through, in this order — each exercises a path nothing else covers:
 - [ ] **An Arabic document with a table in it**, opened in real Word. The
       first column must be the rightmost one, as it is in the original —
       a mirrored table reads as a different table, not a wrong-looking one.
+- [ ] **An Arabic document whose clauses are lettered أ ب ت.** They must
+      come back lettered, in Word and in the exported PDF, rather than
+      renumbered 1 2 3.
 - [ ] **A document whose lists are nested** — numbered clauses with lettered
       sub-clauses, or bullets under bullets. Each level must keep its own
       marker and sit in from the one above, in the preview, in the exported

@@ -53,6 +53,14 @@ data class ParagraphStyle(
      * only one level hands all of them back as a single flat list.
      */
     val listLevel: Int = 0,
+    /**
+     * How the list counts at this item's level, in the words a Word file
+     * uses for it: "decimal", "lowerLetter", "arabicAlpha". Null lets the
+     * writer count the way an outline usually does. An Arabic document
+     * that numbers its clauses أ ب ت says so here, and comes back saying
+     * it rather than counting 1 2 3 like an English one.
+     */
+    val listFormat: String? = null,
     val alignment: Alignment? = null,
     /**
      * How the paragraph sits on its page, in points, as a reader measured

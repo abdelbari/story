@@ -141,6 +141,12 @@ object DocxWriter {
     private class NumberingPlan(document: DocumentModel) {
         private val idByParagraph = IdentityHashMap<Paragraph, Int>()
         private var nextNumberedId = FIRST_NUMBERED_NUM_ID
+        /**
+         * How each list counts at each of its levels, where the document
+         * says so: an Arabic list lettered أ ب ت is written back lettered
+         * rather than numbered 1 2 3.
+         */
+        private val formats = HashMap<Int, MutableMap<Int, String>>()
 
         init {
             assign(document.blocks)
@@ -151,12 +157,19 @@ object DocxWriter {
 
         fun numIdFor(paragraph: Paragraph): Int? = idByParagraph[paragraph]
 
+        /** How the list [numId] counts at each level it says anything about. */
+        fun formatsFor(numId: Int): Map<Int, String> = formats[numId].orEmpty()
+
         private fun assign(siblings: List<Block>) {
             var currentListId: Int? = null
             for (block in siblings) {
                 if (block is Paragraph && block.style.listMarker == ListMarker.NUMBERED) {
                     if (currentListId == null) currentListId = nextNumberedId++
                     idByParagraph[block] = currentListId
+                    block.style.listFormat?.let { format ->
+                        val level = block.style.listLevel.coerceIn(0, DEEPEST_LIST_LEVEL)
+                        formats.getOrPut(currentListId) { mutableMapOf() }.putIfAbsent(level, format)
+                    }
                     continue
                 }
                 val listId = currentListId
@@ -1042,17 +1055,32 @@ object DocxWriter {
             level(ilvl, format, "%${ilvl + 1}" + if (format == "lowerLetter") ")" else ".")
         }
 
+        /** What a level of [format] draws: the count, and what follows it. */
+        fun lvlTextFor(ilvl: Int, format: String): String {
+            val counter = "%" + (ilvl + 1)
+            return if (format == "lowerLetter" || format == "upperLetter") "$counter)" else "$counter."
+        }
+
         val nums = StringBuilder()
         nums.append("""<w:num w:numId="$BULLET_NUM_ID"><w:abstractNumId w:val="0"/></w:num>""")
         // One w:num per numbered list, each with a level-0 startOverride.
         // Word keeps a single running count per abstractNum, so a fresh
         // instance alone does NOT restart numbering — the override does.
         for (id in numbering.numberedListIds) {
-            nums.append(
-                """<w:num w:numId="$id"><w:abstractNumId w:val="1"/>""" +
-                    """<w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride>""" +
-                    "</w:num>"
-            )
+            val counts = numbering.formatsFor(id)
+            nums.append("""<w:num w:numId="$id"><w:abstractNumId w:val="1"/>""")
+            // The level-0 override is what restarts the count; a level that
+            // counts its own way says so in an override of its own, which is
+            // how a list keeps its lettering rather than being renumbered.
+            nums.append("""<w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/>""")
+            counts[0]?.let { nums.append(level(0, it, lvlTextFor(0, it))) }
+            nums.append("</w:lvlOverride>")
+            for ((ilvl, format) in counts.filterKeys { it > 0 }.toSortedMap()) {
+                nums.append("""<w:lvlOverride w:ilvl="$ilvl">""")
+                nums.append(level(ilvl, format, lvlTextFor(ilvl, format)))
+                nums.append("</w:lvlOverride>")
+            }
+            nums.append("</w:num>")
         }
 
         return XML_DECL +
