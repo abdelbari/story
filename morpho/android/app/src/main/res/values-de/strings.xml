@@ -15,8 +15,8 @@
     <string name="retry">Erneut versuchen</string>
     <string name="scanned_pdf">Dieses PDF scheint gescannt zu sein, ohne Textebene. Sie können es mit OCR vollständig auf dem Gerät lesen.</string>
     <string name="convert_with_ocr">Mit OCR lesen und konvertieren</string>
-    <string name="unsupported_type">Dieser Dateityp wird noch nicht unterstützt.</string>
-    <string name="read_error">Die Datei konnte nicht gelesen werden. Bitte erneut auswählen.</string>
+    <string name="unsupported_type">Morpho wandelt PDF-, Word- (.docx), Text- und Markdown-Dateien um. Diese ist etwas anderes.</string>
+    <string name="read_error">Diese Datei ließ sich nicht lesen. Sie ist womöglich beschädigt oder nicht von der Art, die ihr Name nennt.</string>
     <string name="write_error">Die umgewandelte Datei konnte nicht gespeichert werden.</string>
     <string name="privacy_line">Nur auf dem Gerät — Umwandlungen auf diesem Bildschirm berühren nie das Netzwerk.</string>
     <string name="review_open">Ansehen, wie gelesen wurde</string>
@@ -62,7 +62,7 @@
     <string name="password_wrong">Mit diesem Passwort lässt es sich nicht öffnen. Versuchen Sie es erneut.</string>
     <string name="password_locked">Geschützt – wartet auf das Passwort.</string>
     <string name="ocr_empty">Aus diesem Scan konnte nichts gelesen werden. Er ist möglicherweise leer oder in einer Schrift, für die Morpho noch kein Modell hat.</string>
-    <string name="too_large">Dieses Dokument braucht mehr Speicher, als dieses Gerät hat. Versuchen Sie eine kleinere Datei, oder teilen Sie sie auf.</string>
+    <string name="too_large">Dieses Dokument braucht mehr Speicher, als dieses Gerät hat. Ein Teil davon lässt sich umwandeln — wählen Sie die Seiten, die Sie brauchen.</string>
     <string name="converted_ready">Konvertiert – bereit zum Speichern.</string>
     <string name="save_file">Datei speichern</string>
     <string name="preview_title">Vorschau</string>

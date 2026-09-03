@@ -15,8 +15,8 @@
     <string name="retry">أعد المحاولة</string>
     <string name="scanned_pdf">يبدو هذا ملف PDF ممسوحًا ضوئيًا دون طبقة نصية. يمكنك قراءته بالتعرف الضوئي على الجهاز بالكامل.</string>
     <string name="convert_with_ocr">اقرأ بالتعرف الضوئي وحوِّل</string>
-    <string name="unsupported_type">نوع الملف هذا غير مدعوم بعد.</string>
-    <string name="read_error">تعذّرت قراءة الملف. جرّب اختياره مجددًا.</string>
+    <string name="unsupported_type">يحوّل مورفو ملفات PDF ووورد (.docx) والنصوص وماركداون. هذا الملف من نوع آخر.</string>
+    <string name="read_error">تعذّرت قراءة الملف. قد يكون تالفا أو ليس من النوع الذي يشير إليه اسمه.</string>
     <string name="write_error">تعذّر حفظ الملف المحوَّل.</string>
     <string name="privacy_line">على الجهاز فقط — التحويلات في هذه الشاشة لا تمر عبر الشبكة أبدًا.</string>
     <string name="review_open">اطّلع على طريقة القراءة</string>
@@ -62,7 +62,7 @@
     <string name="password_wrong">كلمة المرور هذه لم تفتح الملف. أعد المحاولة.</string>
     <string name="password_locked">محمي — في انتظار كلمة المرور.</string>
     <string name="ocr_empty">تعذّرت قراءة أي شيء من هذا المسح الضوئي. قد يكون فارغًا أو بخط لا يملك مورفو نموذجًا له بعد.</string>
-    <string name="too_large">يحتاج هذا المستند إلى ذاكرة أكبر مما يتوفر في هذا الجهاز. جرّب ملفًا أصغر أو قسّمه إلى أجزاء.</string>
+    <string name="too_large">يحتاج هذا الملف ذاكرة أكبر مما في هذا الجهاز. تحويل جزء منه سينجح — اختر الصفحات التي تريدها.</string>
     <string name="converted_ready">تم التحويل — جاهز للحفظ.</string>
     <string name="save_file">احفظ الملف</string>
     <string name="preview_title">معاينة</string>

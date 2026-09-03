@@ -16,8 +16,8 @@
     <string name="retry">Try again</string>
     <string name="scanned_pdf">This looks like a scanned PDF with no text layer. You can read it with fully on-device OCR.</string>
     <string name="convert_with_ocr">Read with OCR and convert</string>
-    <string name="unsupported_type">That file type isn’t supported yet.</string>
-    <string name="read_error">Couldn’t read that file. Try picking it again.</string>
+    <string name="unsupported_type">Morpho converts PDF, Word (.docx), text and Markdown files. That one is something else.</string>
+    <string name="read_error">Couldn’t read that file. It may be damaged, or not the kind of file its name says it is.</string>
     <string name="write_error">Couldn’t save the converted file.</string>
     <string name="privacy_line">On-device only — conversions on this screen never touch the network.</string>
     <string name="review_open">See how this was read</string>
@@ -63,7 +63,7 @@
     <string name="password_wrong">That password did not open it. Try again.</string>
     <string name="password_locked">Locked — waiting for the password.</string>
     <string name="ocr_empty">Nothing could be read from this scan. It may be blank, or in a script Morpho has no model for yet.</string>
-    <string name="too_large">This document needs more memory than this device has. Try a smaller file, or split it into parts.</string>
+    <string name="too_large">This document needs more memory than this device has. Converting part of it will work — choose the pages you need.</string>
     <string name="converted_ready">Converted — ready to save.</string>
     <string name="save_file">Save file</string>
     <string name="preview_title">Preview</string>
