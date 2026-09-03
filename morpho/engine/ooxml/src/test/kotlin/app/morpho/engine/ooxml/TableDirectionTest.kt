@@ -148,4 +148,43 @@ class TableDirectionTest {
         assertTrue(html.contains("</thead><tbody>"), html)
         assertTrue(html.contains("</tbody></table>"), html)
     }
+
+    @Test
+    fun `a row marked in the middle of a table is not written as a head`() {
+        // Word repeats only the leading rows a table marks; a row further
+        // down it ignores. Writing the mark there says a head that Word
+        // will not draw and the preview will not show, and reading such a
+        // file back and writing it again used to carry the claim on.
+        val docx = docxOf(
+            """<w:tbl>
+                <w:tr><w:tc><w:p><w:r><w:t>Year</w:t></w:r></w:p></w:tc></w:tr>
+                <w:tr><w:trPr><w:tblHeader/></w:trPr>
+                  <w:tc><w:p><w:r><w:t>2019</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"""
+        )
+        val written = partOf(DocxWriter.toByteArray(DocxReader.read(docx)), "word/document.xml")
+        assertEquals(0, Regex("<w:tblHeader/>").findAll(written).count(), written)
+    }
+
+    @Test
+    fun `a table that is all head is written and shown with none`() {
+        // There is no body under it to head: Word would repeat the whole
+        // table at the top of every page it ran onto, and a browser given
+        // a table that is nothing but `thead` does the same on paper.
+        val document = DocumentModel(
+            blocks = listOf(
+                Table(
+                    rows = listOf(
+                        TableRow(listOf(cell("Year")), repeatsAsHeader = true),
+                        TableRow(listOf(cell("Term")), repeatsAsHeader = true),
+                    )
+                )
+            )
+        )
+        val written = partOf(DocxWriter.toByteArray(document), "word/document.xml")
+        assertEquals(0, Regex("<w:tblHeader/>").findAll(written).count(), written)
+
+        val html = HtmlWriter.write(document, "t")
+        assertTrue(!html.contains("<thead>"), html)
+        assertTrue(html.contains("</tr>\n</table>"), html)
+    }
 }

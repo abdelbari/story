@@ -76,6 +76,24 @@ object TableGrid {
     }
 
     /**
+     * How many rows from the top of [table] are its head — the rows drawn
+     * again at the top of every page a long table runs onto.
+     *
+     * A head is a run of rows from the top and nothing else. Word repeats
+     * only the leading rows a table marks and ignores the mark further
+     * down, since a row in the middle of a table cannot be repeated above
+     * the rows before it; so a writer that marks such a row writes
+     * something Word will not do, and every writer that believes it shows
+     * a head where the reader will not see one.
+     *
+     * A table that is all head has no head: there is nothing under it to
+     * head, and a head repeated at the top of every page the table runs
+     * onto would be the table repeating itself.
+     */
+    fun headRows(table: Table): Int =
+        table.rows.takeWhile { it.repeatsAsHeader }.size.takeIf { it < table.rows.size } ?: 0
+
+    /**
      * How many columns the grid has: the widest row, counting each cell for
      * the columns it covers and each place a cell in an earlier row has
      * already taken.

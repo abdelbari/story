@@ -872,7 +872,7 @@ object DocxWriter {
             // The head of a table is drawn again at the top of every page
             // the table runs onto, which is Word's own doing once it is
             // told which rows those are.
-            if (table.rows.getOrNull(index)?.repeatsAsHeader == true) {
+            if (index < TableGrid.headRows(table)) {
                 sb.append("<w:trPr><w:tblHeader/></w:trPr>")
             }
             for (place in row) {

@@ -212,6 +212,9 @@ internal object PdfFileExporter {
 
         private var page: PdfDocument.Page? = null
         private var pageCount = 0
+
+        /** The number of the page being drawn — what a repeated table head is kept in step with. */
+        val ordinal: Int get() = pageCount
         var y = 0f
             private set
         /** What the notes of this page take at its foot, kept clear of the text. */
@@ -678,7 +681,12 @@ internal object PdfFileExporter {
             strokeWidth = 0.75f
             color = 0xFF9E9E9E.toInt()
         }
-        for (row in grid.rows) {
+        // One row, drawn where the cursor stands and carried over the page
+        // where it is taller than what is left. [atTopOfPage] is given
+        // every fresh page the row runs onto, before anything is measured
+        // against what is left of it, so that something can be put back at
+        // the head of it first.
+        fun band(row: List<TableGrid.Place>, atTopOfPage: () -> Unit = {}) {
             // Only the places a cell begins are drawn; a covered place is
             // the cell above still going, and an empty one is nothing.
             val places = row.filterIsInstance<TableGrid.Filled>()
@@ -729,6 +737,7 @@ internal object PdfFileExporter {
                     (lines[it].lastOrNull() ?: 0f) - drawnTo[it]
                 } ?: 0f
                 cursor.ensureRoom(tallest + 2 * CELL_PADDING)
+                atTopOfPage()
                 val room = (cursor.remaining - 2 * CELL_PADDING).coerceAtLeast(0f)
                 val cuts = lines.indices.map { StackedLines.cut(lines[it], drawnTo[it], room) }
                 val bandHeight = (cuts.indices.maxOfOrNull { cuts[it] - drawnTo[it] } ?: 0f) +
@@ -779,6 +788,28 @@ internal object PdfFileExporter {
                 if (unfinished) cursor.openPage()
             } while (unfinished)
         }
+        // The head of a long table goes back at the top of every page it
+        // runs onto. Word repeats the rows a table marks as repeating and
+        // a browser repeats a `<thead>`, both for the reason a reader
+        // needs it: the second page of a table is a grid of figures with
+        // nothing above it to say what they are. Which rows those are is
+        // asked of the engine, so that the page draws the head Word will
+        // repeat and the preview will show, rather than a third reading.
+        val head = grid.rows.take(TableGrid.headRows(block))
+        // The page the head was last drawn on, so it goes back on the next
+        // one and only once there.
+        var headOn = 0
+        val putHeadBack = {
+            if (head.isNotEmpty() && cursor.ordinal != headOn) {
+                // Drawing the head is not itself an occasion to put the
+                // head back: it is what is being put back.
+                for (row in head) band(row)
+                headOn = cursor.ordinal
+            }
+        }
+        for (row in head) band(row)
+        headOn = cursor.ordinal
+        for (row in grid.rows.drop(head.size)) band(row, putHeadBack)
         cursor.advance(minOf(10f, cursor.remaining))
     }
 

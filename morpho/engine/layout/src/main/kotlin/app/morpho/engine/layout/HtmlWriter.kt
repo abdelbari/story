@@ -481,7 +481,7 @@ object HtmlWriter {
         }
         // The head of a table is its own part of the table, which is what
         // makes a browser repeat it when the table runs onto another page.
-        val heads = table.rows.takeWhile { it.repeatsAsHeader }.size
+        val heads = TableGrid.headRows(table)
         if (heads > 0) sb.append("<thead>")
         for ((index, row) in table.rows.withIndex()) {
             if (index == heads && heads > 0) sb.append("</thead><tbody>")

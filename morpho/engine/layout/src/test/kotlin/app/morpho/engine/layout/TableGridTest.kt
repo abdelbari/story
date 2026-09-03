@@ -74,4 +74,32 @@ class TableGridTest {
         assertEquals(9, layout.columns, "the widest row is the grid")
         assertEquals("greedy@0+9", shape(table)[1].substringBefore(' '))
     }
+
+    private fun rows(vararg heads: Boolean) =
+        Table(heads.map { TableRow(listOf(cell("x")), repeatsAsHeader = it) })
+
+    @Test
+    fun `the head is the run of rows from the top`() {
+        assertEquals(0, TableGrid.headRows(rows(false, false, false)), "a table nobody marked")
+        assertEquals(1, TableGrid.headRows(rows(true, false, false)))
+        assertEquals(2, TableGrid.headRows(rows(true, true, false)))
+    }
+
+    @Test
+    fun `a row marked in the middle of a table is not a head`() {
+        // Word repeats the leading rows and ignores the mark further down:
+        // a row cannot be repeated above the rows before it. A writer that
+        // marked it would show a head the reader never sees.
+        assertEquals(0, TableGrid.headRows(rows(false, true, false)))
+        assertEquals(1, TableGrid.headRows(rows(true, false, true)), "only the run from the top")
+    }
+
+    @Test
+    fun `a table that is all head has none`() {
+        // There is nothing under it to head, and repeating it at the top of
+        // every page it runs onto would be the table repeating itself.
+        assertEquals(0, TableGrid.headRows(rows(true)))
+        assertEquals(0, TableGrid.headRows(rows(true, true)))
+        assertEquals(0, TableGrid.headRows(Table(emptyList())))
+    }
 }

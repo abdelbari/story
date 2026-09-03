@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 588 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 593 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -65,9 +65,11 @@ Work through, in this order — each exercises a path nothing else covers:
       price list, or a CV whose history sits in one long cell. It must
       carry on over the page — every row present, and a cell longer than
       the page continuing at the top of the next one — rather than
-      stopping at the bottom edge with the rest of it gone. Use one with
-      a picture in a cell — a letterhead's logo, a CV's photo — and check
-      the picture is in the exported PDF too.
+      stopping at the bottom edge with the rest of it gone. Its head must
+      stand at the top of every page it runs onto, once on each, and the
+      head of a table that has no body under it must not be repeated at
+      all. Use one with a picture in a cell — a letterhead's logo, a CV's
+      photo — and check the picture is in the exported PDF too.
 - [ ] **A Markdown file with a table in it**, converted to Word. It must
       arrive as a table, not as paragraphs of pipe characters, with the
       first row as the header. A table with a merged cell — a heading over
