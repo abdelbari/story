@@ -301,4 +301,37 @@ class MarkdownWriterTest {
         assertEquals(ListMarker.BULLET, (blocks[1] as Paragraph).style.listMarker)
         assertEquals("First aim", (blocks[1] as Paragraph).text)
     }
+
+    @Test
+    fun `a page's head and foot are written once, not lost`() {
+        val md = MarkdownWriter.write(
+            DocumentModel(
+                blocks = listOf(Paragraph(listOf(TextRun("The body of the paper.")))),
+                header = listOf(Paragraph(listOf(TextRun("The Journal of Something")))),
+                footer = listOf(Paragraph(listOf(TextRun("Volume 5, Issue 1")))),
+            )
+        )
+        assertEquals(
+            "The Journal of Something\n\nThe body of the paper.\n\nVolume 5, Issue 1\n",
+            md,
+        )
+    }
+
+    @Test
+    fun `a picture among words is written where it stood`() {
+        val md = MarkdownWriter.write(
+            DocumentModel(
+                listOf(
+                    Paragraph(
+                        listOf(
+                            TextRun("before "),
+                            TextRun("", image = ImageBlock(byteArrayOf(1, 2, 3), "image/png", 4, 4, 8f, 8f)),
+                            TextRun(" after"),
+                        )
+                    )
+                )
+            )
+        )
+        assertEquals("before ![image](data:image/png;base64,AQID) after\n", md)
+    }
 }

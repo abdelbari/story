@@ -23,19 +23,42 @@ package app.morpho.engine.layout
  * self-contained data-URI image syntax — large but faithful, and one-way:
  * [PlainTextImporter] reads such a line back as literal text, not an image.
  * A note is one-way too: read back, its reference is literal text and its
- * words are a line at the end.
+ * words are a line at the end. A page's running head and foot are written
+ * once each, at the top and the bottom, because a flat file has no margins
+ * to repeat them in; read back they are text of the document like any
+ * other, which is the honest half of a loss whose other half — dropping
+ * them — loses the words as well as the place.
  */
 object MarkdownWriter {
 
     fun write(document: DocumentModel): String {
         val out = StringBuilder()
         val notes = Notes(document.blocks)
+        // A page's own head and foot are not text of the document, but a
+        // Markdown file has no margins to keep them in, and dropping them
+        // loses the journal, the author and the section they name. They go
+        // where a person transcribing the page would put them: the head
+        // once at the top, the foot once at the bottom, rather than once
+        // for every page or not at all.
+        appendBlocks(out, document.header, notes)
+        appendBlocks(out, document.blocks, notes)
+        // The notes themselves, at the end, where Markdown keeps them.
+        if (notes.any()) {
+            if (out.isNotEmpty()) out.append("\n\n")
+            out.append(notes.definitions())
+        }
+        appendBlocks(out, document.footer, notes)
+        if (out.isNotEmpty()) out.append("\n")
+        return out.toString()
+    }
+
+    private fun appendBlocks(out: StringBuilder, blocks: List<Block>, notes: Notes) {
         var previousWasListItem = false
         // One count per level of nesting: an item of a list inside a list
         // counts on its own, and starts again each time its list does.
         val counts = ListCounts()
 
-        for (block in document.blocks) {
+        for (block in blocks) {
             when (block) {
                 is Paragraph -> {
                     val marker = block.style.listMarker
@@ -75,24 +98,18 @@ object MarkdownWriter {
                 }
                 is ImageBlock -> {
                     if (out.isNotEmpty()) out.append("\n\n")
-                    out.append("![image](data:")
-                        .append(block.mimeType)
-                        .append(";base64,")
-                        .append(java.util.Base64.getEncoder().encodeToString(block.bytes))
-                        .append(")")
+                    out.append(pictureOf(block))
                     previousWasListItem = false
                     counts.clear()
                 }
             }
         }
-        // The notes themselves, at the end, where Markdown keeps them.
-        if (notes.any()) {
-            if (out.isNotEmpty()) out.append("\n\n")
-            out.append(notes.definitions())
-        }
-        if (out.isNotEmpty()) out.append("\n")
-        return out.toString()
     }
+
+    /** A picture as the self-contained image Markdown writes. */
+    private fun pictureOf(image: ImageBlock): String =
+        "![image](data:" + image.mimeType + ";base64," +
+            java.util.Base64.getEncoder().encodeToString(image.bytes) + ")"
 
     /**
      * The document's notes, labelled and in the order their marks appear.
@@ -209,6 +226,16 @@ object MarkdownWriter {
         var index = 0
         while (index < runs.size) {
             val run = runs[index]
+            // A picture set among words — the head of a foot, beside the
+            // page number that follows it. Markdown writes one inline, and
+            // a run that carries a picture carries no text to write
+            // instead, so passing over it loses the picture outright.
+            val picture = run.image
+            if (picture != null) {
+                sb.append(pictureOf(picture))
+                index++
+                continue
+            }
             // A mark that carries a note becomes the reference to it: the
             // mark is the run's own text, so it is what the reference
             // replaces, and the note itself waits at the end.
@@ -222,7 +249,11 @@ object MarkdownWriter {
             // emphasis inside one stays inside it rather than closing the
             // link and opening it again.
             var end = index + 1
-            while (end < runs.size && notes.labelOf(runs[end]) == null && runs[end].link == run.link) end++
+            while (end < runs.size &&
+                notes.labelOf(runs[end]) == null &&
+                runs[end].image == null &&
+                runs[end].link == run.link
+            ) end++
             val held = runs.subList(index, end)
             val link = run.link
             val words = held.joinToString("") { it.text }
@@ -328,6 +359,10 @@ object MarkdownWriter {
     private fun escape(text: String): String =
         text.replace("\\", "\\\\").replace("*", "\\*").replace("~", "\\~").replace("|", "\\|")
             .replace("[", "\\[").replace("]", "\\]")
+            // Markdown has no tab stops, and a line that begins with a tab
+            // is a block of code — which is what a foot set as the page set
+            // it, the head then a tab then the number, would have become.
+            .replace("\t", " ")
 
     private fun appendTable(out: StringBuilder, table: Table, notes: Notes) {
         if (table.rows.isEmpty()) return
