@@ -213,8 +213,22 @@ object HtmlWriter {
             "'\u0630' '\u0636' '\u0638' '\u063a';suffix:'- ';}" +
             "li{margin:0 0 3pt;}" +
             "table{border-collapse:collapse;margin:0 0 9pt;table-layout:fixed;}" +
-            "section.footnotes{border-top:0.75pt solid;margin-top:12pt;padding-top:4pt;font-size:0.85em;}" +
-            "a.note-mark{text-decoration:none;vertical-align:super;font-size:0.75em;}" +
+            // The notes are set apart by a short rule, as a word processor
+            // draws one and as the drawn page draws it — a line from margin
+            // to margin reads as the end of the document rather than the
+            // start of its notes. It is a block of its own because a border
+            // on the section itself can only be the section's full width.
+            "section.footnotes{margin-top:12pt;font-size:${TypeScale.NOTE_SHARE}em;}" +
+            "section.footnotes::before{content:\"\";display:block;" +
+            "width:${(TypeScale.NOTE_RULE_SHARE * 100).toInt()}%;" +
+            "border-top:${TypeScale.pt(TypeScale.NOTE_RULE_PT)} solid;" +
+            "margin-bottom:${TypeScale.pt(TypeScale.NOTE_GAP_PT)};}" +
+            // One size for everything raised off the line: a note's mark,
+            // and any run the source set as a superscript or a subscript.
+            // Left to itself a browser sets those at about five-sixths,
+            // which is neither of the two the app had.
+            "sup,sub,a.note-mark{font-size:${TypeScale.RAISED_SHARE}em;}" +
+            "a.note-mark{text-decoration:none;vertical-align:super;}" +
             // A stretch somebody commented on: enough to see at a glance
             // without repainting the words themselves in another colour.
             "span.commented{background:#fff3bf;border-bottom:1px dotted #b08900;}" +

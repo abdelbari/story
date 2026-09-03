@@ -57,6 +57,36 @@ object TypeScale {
         ParagraphKind.TITLE, ParagraphKind.BODY -> false
     }
 
+    /**
+     * A raised or lowered run, as a share of the size it is set in.
+     *
+     * A footnote mark is on nearly every page of a paper, and there were
+     * three sizes of it: the drawn page set one at two-thirds, the preview
+     * set a note's mark at three-quarters, and an ordinary superscript in
+     * the preview was left to the browser, whose `smaller` is about
+     * five-sixths. One size.
+     */
+    const val RAISED_SHARE = 0.66f
+
+    /** A note at the foot of a page, as a share of the body it belongs to. */
+    const val NOTE_SHARE = 0.85f
+
+    /** The rule over a page's notes: this thick, in points. */
+    const val NOTE_RULE_PT = 0.75f
+
+    /**
+     * How far across the text the rule over the notes reaches.
+     *
+     * A word processor draws a short rule — about a third of the measure —
+     * rather than one from margin to margin, so that the notes are set
+     * apart from the text without a line across the page. The drawn page
+     * did that and the preview drew the full width.
+     */
+    const val NOTE_RULE_SHARE = 0.33f
+
+    /** Clear space between that rule and the first note under it. */
+    const val NOTE_GAP_PT = 6f
+
     /** [value] with no more decimals than it needs, for a stylesheet. */
     fun pt(value: Float): String =
         if (value == value.toInt().toFloat()) "${value.toInt()}pt" else "${value}pt"

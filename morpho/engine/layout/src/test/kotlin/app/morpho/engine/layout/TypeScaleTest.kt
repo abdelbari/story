@@ -56,6 +56,40 @@ class TypeScaleTest {
     }
 
     @Test
+    fun `everything raised off the line is raised by the same share`() {
+        // Three sizes for one thing: the drawn page set a raised run at
+        // two-thirds, the preview set a note's mark at three-quarters, and
+        // an ordinary superscript in the preview was left to the browser,
+        // whose own is about five-sixths. A footnote mark is on nearly
+        // every page of a paper.
+        assertTrue(
+            html.contains("sup,sub,a.note-mark{font-size:${TypeScale.RAISED_SHARE}em;}"),
+            html,
+        )
+    }
+
+    @Test
+    fun `the notes are set apart by the short rule a word processor draws`() {
+        // A rule from margin to margin reads as the end of the document
+        // rather than the start of its notes, and the drawn page never
+        // drew one: it drew a third of the measure, as Word does.
+        with(TypeScale) {
+            assertTrue(
+                html.contains("width:${(NOTE_RULE_SHARE * 100).toInt()}%;") &&
+                    html.contains("border-top:${pt(NOTE_RULE_PT)} solid;"),
+                html,
+            )
+            assertTrue(html.contains("section.footnotes{margin-top:12pt;font-size:${NOTE_SHARE}em;}"), html)
+            // A border on the section itself can only be its full width,
+            // so the rule has to be a block of its own.
+            assertTrue(html.contains("section.footnotes::before{content:\"\";display:block;"), html)
+        }
+        assertTrue(NOTE_RULE_LESS_THAN_HALF, "the rule is no longer the short one")
+    }
+
+    private val NOTE_RULE_LESS_THAN_HALF = TypeScale.NOTE_RULE_SHARE in 0.2f..0.5f
+
+    @Test
     fun `the scale goes down as the level goes down`() {
         val order = listOf(
             ParagraphKind.TITLE,

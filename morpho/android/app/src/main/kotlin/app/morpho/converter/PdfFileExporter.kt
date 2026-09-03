@@ -106,19 +106,11 @@ internal object PdfFileExporter {
     private const val SANE_MARGIN = 48f
     /** However wide the margins claim to be, this much page is kept for text. */
     private const val MIN_CONTENT_PT = 120f
-    /** A raised or lowered run is set this much smaller, as Word sets one. */
-    private const val RAISED_SCALE = 0.66f
     /** An exact line pitch is never less than this share of the largest type on the line, so no glyph is clipped. */
     private const val LEAST_LINE_SHARE = 1.15f
     /** Of an exact line, at most this share sits below the baseline. */
     private const val MAX_DESCENT_SHARE = 0.4f
     /** Word's default tab interval: half an inch. */
-    /** The clear space between a page's text and the rule above its notes. */
-    private const val NOTE_GAP_PT = 6f
-    /** How far across the page the rule above the notes runs. */
-    private const val NOTE_RULE_SHARE = 0.33f
-    /** A note is set this much smaller than the text that refers to it. */
-    private const val NOTE_SCALE = 0.85f
 
     /** The sheet a document is laid out on, in points. */
     private class Sheet(
@@ -245,7 +237,7 @@ internal object PdfFileExporter {
 
         /** Keeps [height] at the foot of this page for a note, if there is room to. */
         fun reserve(layout: StaticLayout): Boolean {
-            val height = layout.height + NOTE_GAP_PT
+            val height = layout.height + TypeScale.NOTE_GAP_PT
             if (height > remaining - 1f) return false
             reserved += height
             notes += layout to height
@@ -287,15 +279,15 @@ internal object PdfFileExporter {
             val bottom = sheet.height - sheet.marginBottom
             var top = bottom - notes.sumOf { it.second.toDouble() }.toFloat()
             val rule = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                strokeWidth = 0.75f
+                strokeWidth = TypeScale.NOTE_RULE_PT
                 color = 0xFF000000.toInt()
             }
             canvas.drawLine(
                 sheet.marginLeft, top,
-                sheet.marginLeft + sheet.contentWidth * NOTE_RULE_SHARE, top,
+                sheet.marginLeft + sheet.contentWidth * TypeScale.NOTE_RULE_SHARE, top,
                 rule,
             )
-            top += NOTE_GAP_PT
+            top += TypeScale.NOTE_GAP_PT
             for ((layout, _) in notes) {
                 canvas.save()
                 canvas.translate(sheet.marginLeft, top)
@@ -606,7 +598,7 @@ internal object PdfFileExporter {
     private fun reserveNotes(cursor: Cursor, block: Paragraph, direction: TextDirection) {
         for (run in block.runs) {
             val note = run.note?.takeIf { it.isNotEmpty() } ?: continue
-            val paint = paintFor(ParagraphKind.BODY).apply { textSize *= NOTE_SCALE }
+            val paint = paintFor(ParagraphKind.BODY).apply { textSize *= TypeScale.NOTE_SHARE }
             val text = SpannableStringBuilder()
             val mark = run.text.trim()
             if (mark.isNotEmpty()) text.append("$mark ")
@@ -1164,10 +1156,10 @@ internal object PdfFileExporter {
             run.highlightRgb?.let { span(BackgroundColorSpan(0xFF000000.toInt() or it)) }
             if (run.superscript) {
                 span(SuperscriptSpan())
-                span(RelativeSizeSpan(RAISED_SCALE))
+                span(RelativeSizeSpan(TypeScale.RAISED_SHARE))
             } else if (run.subscript) {
                 span(SubscriptSpan())
-                span(RelativeSizeSpan(RAISED_SCALE))
+                span(RelativeSizeSpan(TypeScale.RAISED_SHARE))
             }
         }
         return text
