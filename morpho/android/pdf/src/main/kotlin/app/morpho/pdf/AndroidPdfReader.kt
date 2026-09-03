@@ -2,6 +2,7 @@ package app.morpho.pdf
 
 import android.content.Context
 import app.morpho.engine.layout.DocumentModel
+import app.morpho.engine.layout.DocumentProperties
 import app.morpho.engine.layout.Footnotes
 import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.Links
@@ -203,8 +204,28 @@ class AndroidPdfReader(context: Context) {
      */
     private fun spoken(document: PDDocument, model: DocumentModel): DocumentModel {
         val language = runCatching { document.documentCatalog.language }.getOrNull()
-            ?.trim()?.takeIf { it.isNotEmpty() } ?: return model
-        return model.copy(defaultLanguage = language)
+            ?.trim()?.takeIf { it.isNotEmpty() }
+        val said = named(document)
+        if (language == null && said.isEmpty) return model
+        return model.copy(
+            defaultLanguage = language ?: model.defaultLanguage,
+            properties = if (said.isEmpty) model.properties else said,
+        )
+    }
+
+    /**
+     * What the file says it is: its title, who wrote it, what it is about.
+     *
+     * A PDF keeps these in its information dictionary and every reader
+     * shows them — in the window's title bar, in a search across a folder.
+     * Thrown away, a converted paper arrives called nothing at all, with
+     * this converter's own name where its author's was.
+     */
+    private fun named(document: PDDocument): DocumentProperties {
+        val info = runCatching { document.documentInformation }.getOrNull() ?: return DocumentProperties()
+        return runCatching {
+            DocumentProperties.of(info.title, info.author, info.subject, info.keywords)
+        }.getOrDefault(DocumentProperties())
     }
 
     /**

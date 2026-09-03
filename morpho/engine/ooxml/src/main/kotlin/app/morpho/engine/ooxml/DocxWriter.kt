@@ -86,7 +86,7 @@ object DocxWriter {
             zip.part("word/styles.xml", stylesXml(document))
             zip.part("word/numbering.xml", numberingXml(numbering))
             if (parts.mirrored) zip.part("word/settings.xml", settingsXml())
-            zip.part("docProps/core.xml", corePropsXml())
+            zip.part("docProps/core.xml", corePropsXml(document))
             zip.part("docProps/app.xml", appPropsXml())
             // A running header or footer is a part of its own, with its own
             // relationships to the pictures it shows. A book gives its
@@ -1246,11 +1246,31 @@ object DocxWriter {
         return sb.toString()
     }
 
-    private fun corePropsXml(): String = XML_DECL +
-        """<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" """ +
-        """xmlns:dc="http://purl.org/dc/elements/1.1/">""" +
-        """<dc:creator>Morpho</dc:creator>""" +
-        """</cp:coreProperties>"""
+    /**
+     * What the document says about itself, as Word's Properties pane
+     * shows it.
+     *
+     * The converter used to sign every file it wrote as its own work,
+     * with no title at all — so a paper converted from a PDF arrived
+     * called nothing, by nobody. What the source said is written instead,
+     * and the converter's name goes where it belongs: on the application
+     * that last touched the file, not on its author. A source that named
+     * nothing still leaves the converter as the creator, since a file has
+     * to say something and this is the truth about that one.
+     */
+    private fun corePropsXml(document: DocumentModel): String {
+        val said = document.properties
+        val sb = StringBuilder(XML_DECL)
+        sb.append("""<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" """)
+        sb.append("""xmlns:dc="http://purl.org/dc/elements/1.1/">""")
+        said.title?.let { sb.append("<dc:title>").append(xmlEscape(it)).append("</dc:title>") }
+        sb.append("<dc:creator>").append(xmlEscape(said.author ?: "Morpho")).append("</dc:creator>")
+        said.subject?.let { sb.append("<dc:subject>").append(xmlEscape(it)).append("</dc:subject>") }
+        said.keywords?.let { sb.append("<cp:keywords>").append(xmlEscape(it)).append("</cp:keywords>") }
+        sb.append("<cp:lastModifiedBy>Morpho</cp:lastModifiedBy>")
+        sb.append("</cp:coreProperties>")
+        return sb.toString()
+    }
 
     private fun appPropsXml(): String = XML_DECL +
         """<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">""" +

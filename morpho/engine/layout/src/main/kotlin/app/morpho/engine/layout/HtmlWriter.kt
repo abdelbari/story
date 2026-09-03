@@ -47,7 +47,20 @@ object HtmlWriter {
         val sb = StringBuilder(16 * 1024)
         sb.append("<!DOCTYPE html>\n")
         sb.append("""<html dir="$dir"$lang><head><meta charset="utf-8"/>""")
-        sb.append("<title>").append(escape(title ?: "Document")).append("</title>")
+        // What the caller asked to call it, else what the document calls
+        // itself. A preview headed "Document" tells its reader nothing,
+        // and a browser tab full of them tells them less.
+        val named = title ?: document.properties.title
+        sb.append("<title>").append(escape(named ?: "Document")).append("</title>")
+        document.properties.author?.let {
+            sb.append("""<meta name="author" content="${escape(it)}"/>""")
+        }
+        document.properties.subject?.let {
+            sb.append("""<meta name="description" content="${escape(it)}"/>""")
+        }
+        document.properties.keywords?.let {
+            sb.append("""<meta name="keywords" content="${escape(it)}"/>""")
+        }
         // A document turns a page sideways for a wide table; the sheets it
         // uses are named, so a browser printing this lays each part of it
         // on the sheet that part was set on.

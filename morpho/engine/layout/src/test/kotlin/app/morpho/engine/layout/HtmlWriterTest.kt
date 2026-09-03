@@ -1,5 +1,6 @@
 package app.morpho.engine.layout
 
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -186,5 +187,33 @@ class HtmlWriterTest {
         val doc = parse(html)
         assertTrue(doc.getElementsByTagName("p").item(0).textContent.contains("<script>"))
         assertTrue(doc.getElementsByTagName("script").length == 0)
+    }
+
+    @Test
+    fun `the preview is headed with what the document calls itself`() {
+        // A tab full of pages all called "Document" tells its reader
+        // nothing about which is which.
+        val model = DocumentModel(
+            listOf(Paragraph(listOf(TextRun("The body of it.")))),
+            properties = DocumentProperties(
+                title = "A Study of Forms",
+                author = "R. Nebbar",
+                subject = "The tools of research",
+            ),
+        )
+        val html = HtmlWriter.write(model)
+        assertTrue(html.contains("<title>A Study of Forms</title>"), "the preview kept the name Document")
+        assertTrue(html.contains("""<meta name="author" content="R. Nebbar"/>"""))
+        assertTrue(html.contains("""<meta name="description" content="The tools of research"/>"""))
+        // What the caller asks for still wins: the app names the preview
+        // after the file the reader chose.
+        assertTrue(HtmlWriter.write(model, title = "chosen.pdf").contains("<title>chosen.pdf</title>"))
+    }
+
+    @Test
+    fun `a document that names itself nothing is still headed something`() {
+        val html = HtmlWriter.write(DocumentModel(listOf(Paragraph(listOf(TextRun("Body."))))))
+        assertTrue(html.contains("<title>Document</title>"))
+        assertFalse(html.contains("""<meta name="author"""))
     }
 }

@@ -36,7 +36,53 @@ data class DocumentModel(
      */
     val evenHeader: List<Block> = emptyList(),
     val evenFooter: List<Block> = emptyList(),
+    /**
+     * What the file says it is: its title, who wrote it, what it is about.
+     * Every format keeps these somewhere of its own and every one of them
+     * shows them — Word in its Properties pane, a reader in the window's
+     * title bar, a search across a folder of files. A converter that drops
+     * them hands back a document that has forgotten its own name.
+     */
+    val properties: DocumentProperties = DocumentProperties(),
 )
+
+/**
+ * What a document says about itself, apart from what it says.
+ *
+ * A PDF keeps these in its information dictionary, a .docx in its core
+ * properties; both show them to whoever opens the file, and a search over
+ * a folder looks at them before it looks at a word of the text. Null is
+ * what a file that says nothing says: written back it leaves the field
+ * out, rather than putting an empty one there.
+ */
+data class DocumentProperties(
+    val title: String? = null,
+    val author: String? = null,
+    val subject: String? = null,
+    val keywords: String? = null,
+) {
+    /** True when the file said nothing about itself at all. */
+    val isEmpty: Boolean
+        get() = title == null && author == null && subject == null && keywords == null
+
+    companion object {
+        /**
+         * The four fields as a file gave them, with blanks and whitespace
+         * taken for silence. A producer that writes an empty title has not
+         * named the document, and carrying "" across writes an empty title
+         * into a file that would otherwise have none.
+         */
+        fun of(title: String?, author: String?, subject: String?, keywords: String?) =
+            DocumentProperties(
+                title = tidy(title),
+                author = tidy(author),
+                subject = tidy(subject),
+                keywords = tidy(keywords),
+            )
+
+        private fun tidy(value: String?): String? = value?.trim()?.takeIf { it.isNotEmpty() }
+    }
+}
 
 enum class TextDirection { LTR, RTL }
 

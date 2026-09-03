@@ -4,6 +4,7 @@ import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
+import app.morpho.engine.layout.DocumentProperties
 import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.ListLabels
 import app.morpho.engine.layout.ListMarker
@@ -80,6 +81,9 @@ object DocxReader {
     private const val MAX_TOTAL_MEDIA_BYTES = 64 * 1024 * 1024
     /** The package's own relationships, which say where its document is. */
     private const val PACKAGE_RELS = "_rels/.rels"
+
+    /** Where a package keeps what the document says about itself. */
+    private const val CORE_PROPS = "docProps/core.xml"
     private const val OFFICE_DOCUMENT =
         "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
     /** Where a .docx keeps its document unless its relationships say otherwise. */
@@ -168,12 +172,43 @@ object DocxReader {
                 evenFooter = sectPr?.let {
                     furniture(it, "footerReference", parts, media, numbering, styles, at, side = "even")
                 }.orEmpty(),
+                properties = said(parts),
             )
         } catch (e: IllegalArgumentException) {
             throw e
         } catch (e: Exception) {
             throw IllegalArgumentException("Not a readable .docx package.", e)
         }
+    }
+
+    /**
+     * What the package says the document is: its title, who wrote it, what
+     * it is about. Word shows these in its Properties pane and a search
+     * over a folder reads them before a word of the text, and a converter
+     * that drops them hands back a document that has forgotten its name.
+     *
+     * A package with no such part, or one that cannot be parsed, says
+     * nothing — which is what a great many .docx files do say.
+     */
+    private fun said(parts: Map<String, ByteArray>): DocumentProperties {
+        val bytes = parts[CORE_PROPS] ?: return DocumentProperties()
+        val root = runCatching { parseXml(bytes).documentElement }.getOrNull() ?: return DocumentProperties()
+        // Core properties are written in namespaces of their own — Dublin
+        // Core for the title and the author — so they are looked up by
+        // name rather than through the WordprocessingML helpers.
+        fun value(name: String): String? {
+            val nodes = root.childNodes
+            for (index in 0 until nodes.length) {
+                val node = nodes.item(index)
+                if (node is Element && node.localName == name) return node.textContent
+            }
+            return null
+        }
+        // The converter signs what it writes; read back as an author it
+        // would replace the one the file had, converted file by converted
+        // file, until nobody wrote anything.
+        val author = value("creator")?.takeIf { it.trim() != "Morpho" }
+        return DocumentProperties.of(value("title"), author, value("subject"), value("keywords"))
     }
 
     private fun readNeededParts(input: InputStream): Map<String, ByteArray> {
@@ -184,7 +219,7 @@ object DocxReader {
                 val entry = zip.nextEntry ?: break
                 if (!entry.isDirectory &&
                     (
-                        entry.name == PACKAGE_RELS ||
+                        entry.name == PACKAGE_RELS || entry.name == CORE_PROPS ||
                             DOCUMENT_PART.matches(entry.name) || SIDE_PART.matches(entry.name) ||
                             FURNITURE_PART.matches(entry.name) || RELATIONSHIPS_PART.matches(entry.name)
                         )
