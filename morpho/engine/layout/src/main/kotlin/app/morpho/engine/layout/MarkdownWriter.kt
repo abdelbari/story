@@ -372,10 +372,24 @@ object MarkdownWriter {
         if (table.rows.isEmpty()) return
         val columnCount = table.rows.maxOf { it.cells.size }.coerceAtLeast(1)
 
-        fun cellText(cell: TableCell): String =
-            cell.blocks.filterIsInstance<Paragraph>()
-                .joinToString(" ") { runsToMarkdown(it.runs, notes) }
-                .replace("\n", " ")
+        // Everything a cell holds, not only its paragraphs. Markdown has no
+        // table inside a table and no way to invent one, so the words of an
+        // inner table are given in the order they are read — but they are
+        // given: dropped, a form or an invoice laid out as a table inside a
+        // table loses the half of itself that carries the figures, and
+        // nothing in the file says anything is missing.
+        fun wordsOf(blocks: List<Block>): String =
+            blocks.joinToString(" ") { block ->
+                when (block) {
+                    is Paragraph -> runsToMarkdown(block.runs, notes)
+                    is Table -> block.rows.joinToString(" ") { row ->
+                        row.cells.joinToString(" ") { wordsOf(it.blocks) }
+                    }
+                    is ImageBlock -> pictureOf(block)
+                }
+            }
+
+        fun cellText(cell: TableCell): String = wordsOf(cell.blocks).replace("\n", " ")
 
         fun appendRow(cells: List<TableCell>) {
             out.append("|")

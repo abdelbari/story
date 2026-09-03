@@ -318,6 +318,37 @@ class MarkdownWriterTest {
     }
 
     @Test
+    fun `a table inside a cell keeps its words`() {
+        // Markdown has no table inside a table and no way to invent one,
+        // so the words of the inner one are given in the order they are
+        // read — but they are given. Dropped, a form or an invoice laid
+        // out as a table inside a table loses the half of itself that
+        // carries the figures, and nothing in the file says so.
+        fun para(text: String) = Paragraph(listOf(TextRun(text)))
+        val inner = Table(
+            rows = listOf(
+                TableRow(listOf(TableCell(listOf(para("net"))), TableCell(listOf(para("120.00"))))),
+                TableRow(listOf(TableCell(listOf(para("tax"))), TableCell(listOf(para("24.00"))))),
+            ),
+        )
+        val markdown = MarkdownWriter.write(
+            DocumentModel(
+                listOf(
+                    Table(
+                        rows = listOf(
+                            TableRow(listOf(TableCell(listOf(para("Item"))), TableCell(listOf(para("Amount"))))),
+                            TableRow(listOf(TableCell(listOf(para("Survey"))), TableCell(listOf(inner)))),
+                        ),
+                    )
+                )
+            )
+        )
+        for (word in listOf("net", "120.00", "tax", "24.00")) {
+            assertTrue(markdown.contains(word), "\"$word\" was dropped: $markdown")
+        }
+    }
+
+    @Test
     fun `a picture among words is written where it stood`() {
         val md = MarkdownWriter.write(
             DocumentModel(
