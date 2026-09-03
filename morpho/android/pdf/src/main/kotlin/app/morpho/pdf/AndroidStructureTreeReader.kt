@@ -26,6 +26,7 @@ import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLook
 import app.morpho.engine.layout.pdf.PdfRun
 import app.morpho.engine.layout.pdf.PdfRuns
+import app.morpho.engine.layout.pdf.PdfSlant
 import com.tom_roush.pdfbox.contentstream.operator.DrawObject
 import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingColor
 import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingColorN
@@ -1411,10 +1412,23 @@ internal object AndroidStructureTreeReader {
             return name.contains("Bold", ignoreCase = true)
         }
 
-        /** Whether [position] was drawn in an italic face, by the same evidence as [isBold]. */
+        /**
+         * Whether [position] was drawn leaning, and so reads as italic.
+         *
+         * The font's name is the evidence [isBold] has and the only one a
+         * reader used to look for. It is not enough: a producer with no
+         * italic cut of the typeface — which is every Arabic typeface Word
+         * ships — fakes the lean by skewing the matrix it draws with and
+         * goes on naming the upright font. So the font's own declared
+         * angle and the matrix itself are asked as well.
+         */
         private fun isItalic(position: TextPosition): Boolean {
-            val name = position.font?.name ?: return false
-            return name.contains("Italic", ignoreCase = true) || name.contains("Oblique", ignoreCase = true)
+            val font = position.font
+            if (PdfSlant.named(font?.name)) return true
+            val declared = runCatching { font?.fontDescriptor?.italicAngle }.getOrNull()
+            if (declared != null && PdfSlant.declares(declared)) return true
+            val matrix = runCatching { position.textMatrix }.getOrNull() ?: return false
+            return PdfSlant.leansIn(matrix.scaleX, matrix.shearY, matrix.shearX, matrix.scaleY)
         }
 
         private fun hasLetter(text: String?): Boolean =

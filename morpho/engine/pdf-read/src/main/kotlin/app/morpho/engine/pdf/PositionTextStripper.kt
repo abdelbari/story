@@ -9,6 +9,7 @@ import app.morpho.engine.layout.pdf.PdfLook
 import app.morpho.engine.layout.pdf.PdfPageSheet
 import app.morpho.engine.layout.pdf.PdfRule
 import app.morpho.engine.layout.pdf.PdfRun
+import app.morpho.engine.layout.pdf.PdfSlant
 import app.morpho.engine.layout.pdf.PdfSegment
 import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingColor
 import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingColorN
@@ -470,14 +471,31 @@ internal class PositionTextStripper : PDFTextStripper() {
             fontFamily = name?.substringAfter('+', name)?.substringBefore(',')?.trim()?.ifEmpty { null },
             fontSizePt = position.fontSizeInPt,
             bold = name?.contains("Bold", ignoreCase = true) ?: false,
-            italic = name?.let {
-                it.contains("Italic", ignoreCase = true) || it.contains("Oblique", ignoreCase = true)
-            } ?: false,
+            italic = leans(position),
             raised = raised,
             colorRgb = colors[position],
             highlightRgb = highlightAt(position),
             link = linkAt(position),
         )
+    }
+
+    /**
+     * Whether [position] was drawn leaning, and so reads as italic.
+     *
+     * Three things can say so and any one of them is enough: the font's
+     * name, the font's own declared angle, and the matrix the glyph was
+     * drawn with. The last is the one that matters for a document set in
+     * a typeface with no italic cut — every Arabic one Word ships — where
+     * the producer fakes the lean by skewing what it draws with and names
+     * the upright font it started from.
+     */
+    private fun leans(position: TextPosition): Boolean {
+        val font = position.font
+        if (PdfSlant.named(font?.name)) return true
+        val declared = runCatching { font?.fontDescriptor?.italicAngle }.getOrNull()
+        if (declared != null && PdfSlant.declares(declared)) return true
+        val matrix = runCatching { position.textMatrix }.getOrNull() ?: return false
+        return PdfSlant.leansIn(matrix.scaleX, matrix.shearY, matrix.shearX, matrix.scaleY)
     }
 
     /** The colour of the highlight over [position], if one covers it. */
