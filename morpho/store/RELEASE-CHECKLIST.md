@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 648 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 652 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -21,6 +21,10 @@ the folder-to-open step that catches everyone.
 Work through, in this order — each exercises a path nothing else covers:
 
 - [ ] **A born-digital PDF → Word.** Headings, lists and tables should survive.
+- [ ] **A report whose chapters are numbered headings** — "2. Method",
+      "2.1 Sampling" — converted to Word. Word's own navigation pane must
+      show the chapters as an outline: a numbered heading is a heading, not
+      an item of a list that happens to be in bold.
 - [ ] **A PDF exported from Word** (a tagged PDF, the fast path). Reading order
       must be right even if the layout is complex.
 - [ ] **An Arabic document → Word**, opened in real Word. Letters must stay

@@ -595,15 +595,18 @@ object DocxWriter {
         /** The properties of the section this paragraph ends, written last as the schema wants. */
         sectionProperties: String? = null,
     ) {
-        val styleId = when {
-            style.listMarker != null -> "ListParagraph"
-            else -> when (style.kind) {
-                ParagraphKind.TITLE -> "Title"
-                ParagraphKind.HEADING_1 -> "Heading1"
-                ParagraphKind.HEADING_2 -> "Heading2"
-                ParagraphKind.HEADING_3 -> "Heading3"
-                ParagraphKind.BODY -> null
-            }
+        // A numbered heading is a heading. A report, a thesis and a
+        // standard number their chapters by a list their heading styles
+        // belong to, and Word writes both the heading style and the
+        // numbering on such a paragraph; naming it List Paragraph instead
+        // said it was an ordinary item of a list, and every numbered
+        // chapter of every such document came back as body text.
+        val styleId = when (style.kind) {
+            ParagraphKind.TITLE -> "Title"
+            ParagraphKind.HEADING_1 -> "Heading1"
+            ParagraphKind.HEADING_2 -> "Heading2"
+            ParagraphKind.HEADING_3 -> "Heading3"
+            ParagraphKind.BODY -> if (style.listMarker != null) "ListParagraph" else null
         }
         val jc = when (style.alignment) {
             Alignment.CENTER -> "center"

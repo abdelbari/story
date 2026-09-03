@@ -235,16 +235,24 @@ object HtmlWriter {
             } else {
                 ""
             }
+        val heading = when (paragraph.style.kind) {
+            ParagraphKind.TITLE -> "h1" to """ class="doc-title""""
+            ParagraphKind.HEADING_1 -> "h1" to ""
+            ParagraphKind.HEADING_2 -> "h2" to ""
+            ParagraphKind.HEADING_3 -> "h3" to ""
+            ParagraphKind.BODY -> null
+        }
+        // A numbered heading is a heading and an item of a list both — a
+        // report numbers its chapters by the list its headings belong to —
+        // so the item holds the heading rather than standing in for it,
+        // and a chapter's title is not set in the body's face for having
+        // a number in front of it.
         val (tag, classAttr) = when {
             asListItem -> "li" to ""
-            else -> when (paragraph.style.kind) {
-                ParagraphKind.TITLE -> "h1" to """ class="doc-title""""
-                ParagraphKind.HEADING_1 -> "h1" to ""
-                ParagraphKind.HEADING_2 -> "h2" to ""
-                ParagraphKind.HEADING_3 -> "h3" to ""
-                ParagraphKind.BODY -> "p" to ""
-            }
+            heading != null -> heading
+            else -> "p" to ""
         }
+        val inner = if (asListItem) heading else null
         val styles = buildList {
             when (paragraph.style.alignment) {
                 Alignment.CENTER -> add("text-align:center")
@@ -282,13 +290,20 @@ object HtmlWriter {
         val idAttr = paragraph.bookmarks.firstNotNullOfOrNull(::anchorId)
             ?.let { """ id="$it"""" }
             .orEmpty()
-        sb.append("<").append(tag).append(classAttr).append(idAttr).append(dirAttr).append(styleAttr).append(">")
+        sb.append("<").append(tag)
+        if (inner == null) sb.append(classAttr).append(idAttr).append(dirAttr).append(styleAttr)
+        sb.append(">")
+        if (inner != null) {
+            sb.append("<").append(inner.first).append(inner.second)
+                .append(idAttr).append(dirAttr).append(styleAttr).append(">")
+        }
         val stops = paragraph.style.tabStopsPt?.filter { it > 0f }?.sorted().orEmpty()
         if (stops.isNotEmpty() && paragraph.runs.any { '\t' in it.text }) {
             appendTabbed(sb, paragraph.runs, stops, effective)
         } else {
             for (run in paragraph.runs) appendRun(sb, run, effective)
         }
+        if (inner != null) sb.append("</").append(inner.first).append(">")
         sb.append("</").append(tag).append(">\n")
     }
 
