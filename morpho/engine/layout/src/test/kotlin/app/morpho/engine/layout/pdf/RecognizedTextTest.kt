@@ -107,9 +107,9 @@ class RecognizedTextTest {
                 word("Tagged", 72f, 146f, 160f, 166f, startsLine = true),
             )
         )
-        assertEquals(11f, lines[0].maxFontSize, "a lone tall letter decided a body line")
-        assertEquals(11f, lines[1].maxFontSize)
-        assertEquals(22f, lines[2].maxFontSize, "a line of twice the ink is twice the type")
+        assertEquals(12f, lines[0].maxFontSize, "a lone tall letter decided a body line")
+        assertEquals(12f, lines[1].maxFontSize)
+        assertEquals(24f, lines[2].maxFontSize, "a line of twice the ink is twice the type")
     }
 
     @Test
@@ -121,33 +121,98 @@ class RecognizedTextTest {
                 word("ordinary", 72f, 150f, 150f, 159f, startsLine = true),
             )
         )
-        assertEquals(10f, lines[1].maxFontSize, "an ordinary line reads as ordinary type")
-        assertEquals(20f, lines[0].maxFontSize, "a line of one letter is measured, not skipped")
+        assertEquals(12f, lines[1].maxFontSize, "an ordinary line reads as ordinary type")
+        assertEquals(24f, lines[0].maxFontSize, "a line of one letter is measured, not skipped")
     }
 
     @Test
-    fun `the ink a line covers is read as the point size it was set in`() {
-        // Recognition measures the ink — the top of the ascenders to the
-        // foot of the descenders — and that is not a point size. A point
-        // size is the body the type is cast on, and a typeface fills about
-        // nine tenths of it, so nine tenths is what turns one into the
-        // other.
+    fun `the document's own middle is its body, and the rest follows from it`() {
+        // What recognition measures is the ink, and the ink is not the
+        // point size: measured on the real thing, Arabic set at twelve
+        // points measures nearer fourteen, where a Latin face would
+        // measure nearer eleven. No constant serves both, so none is
+        // used. The ratio between one line and another is what recognition
+        // gets right, and the ratio is all this takes.
         fun page(inks: List<Float>) = RecognizedText.linesOf(
             inks.mapIndexed { at, ink ->
                 word("line$at", 72f, at * 40f, 300f, at * 40f + ink, startsLine = true)
             }
         ).map { it.maxFontSize }
 
-        // 10.8 points of ink is a line set in 12, which is what a 12-point
-        // line of an ordinary text face really measures.
-        assertEquals(listOf(12f), page(listOf(10.8f)))
-        assertEquals(listOf(9f, 12f, 16f), page(listOf(8.1f, 10.8f, 14.4f)))
-        // The ratios recognition measured survive the conversion, because
-        // it is one multiplication and not a fit to anything.
-        val scale = page(listOf(5.4f, 10.8f, 21.6f))
+        assertEquals(listOf(12f), page(listOf(10.8f)), "one line is the body by itself")
+        assertEquals(listOf(9f, 12f, 16f), page(listOf(9f, 12f, 16f)))
+        // The same document measured in any other unit gives the same
+        // answer, which is the point of taking only the ratios.
+        assertEquals(listOf(9f, 12f, 16f), page(listOf(0.9f, 1.2f, 1.6f)))
+        assertEquals(listOf(9f, 12f, 16f), page(listOf(90f, 120f, 160f)))
+        // And the ratios themselves come through whole.
+        val scale = page(listOf(6f, 12f, 24f))
         assertEquals(listOf(6f, 12f, 24f), scale)
         assertEquals(2f, scale[1] / scale[0], 0.001f)
         assertEquals(2f, scale[2] / scale[1], 0.001f)
+    }
+
+    @Test
+    fun `a paper set in two scripts is measured in both`() {
+        // The ratio between a line's ink and its point size is a fact
+        // about the typeface, and the two scripts this converter is most
+        // often given disagree by a quarter: measured on the real thing,
+        // Arabic set at twelve points measures about fourteen and Latin at
+        // twelve measures about eleven. An Arabic paper with an English
+        // abstract — which is what an Arabic paper is — cannot be put
+        // right by one number, and read on its Arabic its English came
+        // back a quarter too small.
+        val arabic = listOf("البحث", "العلمي", "الاستمارة", "أدوات", "جمع",
+            "البيانات", "الميدانية", "أنواع", "مزايا", "الخلاصة", "المراجع", "مقدمة")
+        val latin = listOf("research", "method", "abstract", "keywords", "findings",
+            "sources", "figures", "tables", "summary", "notes", "index", "appendix")
+        var y = 0f
+        val words = arabic.map { word(it, 72f, y.also { _ -> y += 40f }, 300f, y - 40f + 14f, startsLine = true) } +
+            latin.map { word(it, 72f, y.also { _ -> y += 40f }, 300f, y - 40f + 11f, startsLine = true) }
+        val lines = RecognizedText.linesOf(words)
+        assertEquals(
+            List(arabic.size + latin.size) { 12f },
+            lines.map { it.maxFontSize },
+            "one script was measured with the other's rule",
+        )
+    }
+
+    @Test
+    fun `a script with only a few lines takes the document's own measure`() {
+        // A middle taken from four lines is not a middle. A handful of
+        // words in the other script are read with the document's rule
+        // rather than being given one of their own.
+        val arabic = List(12) { "الاستمارة" }
+        var y = 0f
+        val words = arabic.map { word(it, 72f, y.also { _ -> y += 40f }, 300f, y - 40f + 14f, startsLine = true) } +
+            listOf(
+                word("Abstract", 72f, y.also { y += 40f }, 300f, y - 40f + 14f, startsLine = true),
+                word("Keywords", 72f, y.also { y += 40f }, 300f, y - 40f + 14f, startsLine = true),
+            )
+        val lines = RecognizedText.linesOf(words)
+        assertEquals(List(14) { 12f }, lines.map { it.maxFontSize })
+    }
+
+    @Test
+    fun `a line within the spread of the body is the body`() {
+        // Of the two hundred and sixty-six lines of the real paper the
+        // file itself sets at twelve points, recognition measured them
+        // from ten to seventeen — a fifth either side of the middle.
+        // Written out as they came, a document set in one size arrives set
+        // in nine, and every body line that measured high reads as a
+        // heading; four of them did, on a paper with one heading that size
+        // can find. What is outside that spread is a real difference and
+        // keeps it.
+        var y = 0f
+        fun line(ink: Float) = word("ordinary words here", 72f, y.also { y += 40f }, 300f, y - 40f + ink, startsLine = true)
+        val lines = RecognizedText.linesOf(
+            listOf(line(12f), line(12f), line(12f), line(14f), line(10f), line(16f), line(9f))
+        )
+        assertEquals(
+            listOf(12f, 12f, 12f, 12f, 12f, 16f, 9f),
+            lines.map { it.maxFontSize },
+            "the spread of the body is the body; a third above it is a heading",
+        )
     }
 
     @Test
@@ -168,23 +233,23 @@ class RecognizedTextTest {
     }
 
     @Test
-    fun `a document measured in something other than ink is put back on its feet`() {
-        // The point size comes from a fact about how type is drawn, so it
-        // needs no document to calibrate it — but a recogniser that
-        // measured something else would put every size of a document out
-        // together, and there is no real scan here to prove one against.
-        // A body of two points is the sign of it. The document's middle
-        // then goes to the size a body is set at, and the scale it was
-        // written in survives whole.
+    fun `an Arabic paper measured as recognition really measures it`() {
+        // The numbers are the real ones: the models this app ships, on the
+        // paper this project was built for, measure its twelve-point body
+        // at about fourteen points of ink and its fifteen-point title at
+        // about eighteen and a half. Read as points those would set the
+        // whole document a quarter too large; read as ratios the body
+        // lands where the file says it is.
         val lines = RecognizedText.linesOf(
             listOf(
-                word("title", 72f, 100f, 300f, 112f, startsLine = true),
-                word("body", 72f, 120f, 200f, 126f, startsLine = true),
-                word("body", 72f, 140f, 200f, 146f, startsLine = true),
-                word("small", 72f, 160f, 200f, 163f, startsLine = true),
+                word("title", 72f, 100f, 300f, 118.4f, startsLine = true),
+                word("body", 72f, 140f, 200f, 153.9f, startsLine = true),
+                word("body", 72f, 180f, 200f, 193.9f, startsLine = true),
+                word("body", 72f, 220f, 200f, 233.9f, startsLine = true),
             )
         )
-        assertEquals(listOf(24f, 12f, 12f, 6f), lines.map { it.maxFontSize })
+        assertEquals(12f, lines[1].maxFontSize, "the body of the paper is twelve points")
+        assertEquals(16f, lines[0].maxFontSize, "and its title fifteen, near enough")
     }
 
     @Test
@@ -201,7 +266,7 @@ class RecognizedTextTest {
                 word("body.", 114f, 170f, 160f, 180f),
             )
         )
-        assertEquals(listOf(22f, 11f, 11f), lines.map { it.maxFontSize })
+        assertEquals(listOf(24f, 12f, 12f), lines.map { it.maxFontSize })
         for (line in lines) {
             assertEquals(
                 List(line.segments.size) { line.maxFontSize },

@@ -1,6 +1,8 @@
 package app.morpho.engine.layout.pdf
 
+import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.ParagraphKind
+import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TypeScale
 
 /**
@@ -86,65 +88,117 @@ object RecognizedText {
             run += word
         }
         flush()
-        val inks = out.map(::sizeOf)
-        val rescue = rescueOf(inks)
-        return out.mapIndexedNotNull { at, line -> lineOf(line, pointsOf(inks[at] * rescue)) }
+        val measured = out.map(::sizeOf)
+        val scales = scalesOf(measured, out.map(::readsRightToLeft))
+        return out.mapIndexedNotNull { at, line -> lineOf(line, pointsOf(measured[at] * scales[at])) }
+    }
+
+    /** Whether the words of a line are read right to left. */
+    private fun readsRightToLeft(words: List<RecognizedWord>): Boolean =
+        Bidi.dominantDirection(words.joinToString(" ") { it.text }) == TextDirection.RTL
+
+    /**
+     * The scale each line's measurement takes, one for each script the
+     * document is set in.
+     *
+     * The ratio between a line's ink and its point size is a fact about
+     * the typeface, and the two scripts this converter is most often given
+     * disagree about it by a quarter: Arabic set at twelve points measures
+     * about fourteen, and Latin at twelve measures about eleven. An Arabic
+     * paper with an English abstract — which is what an Arabic paper is —
+     * therefore cannot be put right by one number. Read on the Arabic, its
+     * English comes out a quarter too small; read on the English, its
+     * Arabic comes out a quarter too large.
+     *
+     * So each script sets its own, where there is enough of it to set one.
+     * A handful of words in the other script take the document's, since a
+     * middle taken from four lines is not a middle.
+     */
+    private fun scalesOf(measured: List<Float>, rightToLeft: List<Boolean>): List<Float> {
+        val whole = scaleOf(measured)
+        val own = listOf(true, false).associateWith { side ->
+            val mine = measured.filterIndexed { at, _ -> rightToLeft[at] == side }
+            if (mine.size < LEAST_TO_SET_A_SCALE) null else scaleOf(mine)
+        }
+        return measured.indices.map { own[rightToLeft[it]] ?: whole }
+    }
+
+    /** Fewer lines than this in a script do not settle how it is measured. */
+    private const val LEAST_TO_SET_A_SCALE = 10
+
+    /**
+     * What recognition's measurements have to be multiplied by before they
+     * are point sizes.
+     *
+     * Recognition measures a line's ink — the top of its ascenders to the
+     * foot of its descenders — and that is not the point size the type was
+     * cast on. It is tempting to say what the difference is: a typeface
+     * fills about nine tenths of the body it is cast on, so divide by nine
+     * tenths. Measured against the real thing, that is wrong, and wrong by
+     * a lot. Two hundred and sixty-seven lines of the paper this project
+     * was built for, recognised by the models this app ships and matched
+     * back to the lines of the file itself:
+     *
+     *     the file says   a scan measures   lines   the ratio
+     *          12 pt       13.9 pt (10-17)   266      1.16
+     *          15 pt       18.4 pt             1      1.23
+     *
+     * The ink of Arabic set at twelve points runs *wider* than twelve
+     * points, not narrower: its ascenders reach and its descenders hang
+     * further than a Latin face's, and the marks above and below reach
+     * further still. A constant that is right for one script is a quarter
+     * out for another, and a converter whose reason to exist is Arabic
+     * cannot take the Latin one.
+     *
+     * So no constant. What recognition measures reliably is the ratio
+     * between one line and another, and the ratio is all that is used:
+     * the document's middle line is its body, the body is set at the size
+     * this converter sets a body at, and every other line takes its own
+     * measure against that. On the same paper that puts the body at
+     * twelve points, which is what the file says, and the title at sixteen
+     * against a real fifteen.
+     *
+     * What is given up is the claim to know what the original measured.
+     * That claim was never true: the ratio between ink and point size
+     * moves by a quarter with the script and the face, and nothing in a
+     * scan says which face it was.
+     */
+    private fun scaleOf(measured: List<Float>): Float {
+        val body = HeadingSizes.median(measured.filter { it > 0f })
+        return if (body <= 0f) 1f else TypeScale.sizePt(ParagraphKind.BODY) / body
     }
 
     /**
-     * What every measurement of the document has to be scaled by first.
+     * [points] as Word writes a size, to the half point it keeps them in
+     * — and to the body's own size where it is near enough to be it.
      *
-     * One, nearly always. [INK_SHARE] is a fact about how type is drawn,
-     * not a fit to anything, so the sizes it gives are the document's own
-     * — but a recogniser that measured something other than the ink would
-     * put every size of the document out together, and there is no real
-     * scan in this project to prove one against. The sign of it is a body
-     * that is not a size a body is ever set in: no paper is set in six
-     * points, and none in thirty.
+     * A line's measurement is noisy in a way a PDF's stated size never is,
+     * and the noise is not small. Of the two hundred and sixty-six lines
+     * of the real paper that the file itself sets at twelve points,
+     * recognition measured them across a range of ten to seventeen: a
+     * fifth either side of the middle. Written out as they came, a
+     * document set in one size arrives set in nine, and every line of the
+     * body that measured high reads as a heading — four of them did, on a
+     * paper with one heading that size can find.
      *
-     * Where that happens the document's own middle is put at the size this
-     * converter sets a body at. Every ratio between its sizes survives —
-     * a title is still twice its body — and what is given up is the claim
-     * to know what the original measured, which in that case was never
-     * worth anything.
+     * So a measurement within the spread of the body is the body. What is
+     * outside it is a real difference: the paper's title measured a third
+     * above its body and stays a third above it.
      */
-    private fun rescueOf(inks: List<Float>): Float {
-        val body = HeadingSizes.median(inks.filter { it > 0f }) / INK_SHARE
-        if (body <= 0f || body in LEAST_BODY..MOST_BODY) return 1f
-        return TypeScale.sizePt(ParagraphKind.BODY) / body
+    private fun pointsOf(points: Float): Float {
+        val body = TypeScale.sizePt(ParagraphKind.BODY)
+        val settled = if (points > body / NOISE && points < body * NOISE) body else points
+        return (kotlin.math.round(settled * 2f) / 2f).coerceIn(LEAST_POINTS, MOST_POINTS)
     }
 
-    /** Below this, nothing is a document's body text. */
-    private const val LEAST_BODY = 8f
-
-    /** And above it, nothing is either. */
-    private const val MOST_BODY = 18f
-
     /**
-     * Of a typeface's point size, the share its ink actually covers.
+     * How far from the middle a line of the body's own size was measured.
      *
-     * What recognition measures is the ink: the top of the ascenders to
-     * the foot of the descenders, which is what its own estimate of a
-     * line's type reports. That is not a point size. A point size is the
-     * body the type is cast on, and a typeface is drawn so its ascenders
-     * and descenders together fill about nine tenths of it — a face that
-     * filled its body would set solid, with no room between the lines, so
-     * a text face outside about 0.85 to 1.0 is unusual.
-     *
-     * So the point size is what recognition measured divided by this. It
-     * is a fact about how type is drawn rather than a number fitted to one
-     * document, which matters because there is only one real scan to fit
-     * to. On the paper this project was built for, whose sizes the PDF
-     * itself spells out as 6, 11, 12 and 15 points, it gives 6, 10, 12 and
-     * 14.5 — the document's own scale, back to within a point, where
-     * before every run of a scan came out with no size at all and a title
-     * converted at the size of a footnote.
+     * A fifth either way, on the one real scan there is to measure. Taken
+     * any wider this swallows a heading; any narrower and the body is
+     * still written out in nine sizes.
      */
-    const val INK_SHARE = 0.9f
-
-    /** [ink] as a point size, to the half point Word keeps sizes in. */
-    private fun pointsOf(ink: Float): Float =
-        (kotlin.math.round(ink / INK_SHARE * 2f) / 2f).coerceIn(LEAST_POINTS, MOST_POINTS)
+    private const val NOISE = 1.25f
 
     /** Smaller than this is not type a reader could be meant to read. */
     private const val LEAST_POINTS = 4f
@@ -217,6 +271,10 @@ object RecognizedText {
         // the line's x-height and its ascenders, and this does not.
         words.firstNotNullOfOrNull { it.sizePt }?.takeIf { it > 0f }?.let { return it }
         val measured = words.filter { it.text.trim().length > 1 }.ifEmpty { words }
-        return measured.maxOf { it.bottom - it.top }.coerceAtLeast(1f)
+        // Never below nothing: a box recognition turned inside out would
+        // otherwise drag the document's middle below zero and take every
+        // size of it with them. How small is small enough to be nothing is
+        // settled once, where the points are written.
+        return measured.maxOf { it.bottom - it.top }.coerceAtLeast(0f)
     }
 }
