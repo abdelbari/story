@@ -22,6 +22,13 @@ object LineJoiner {
     /** U+002D hyphen-minus and U+2010 hyphen; dashes are punctuation, not breaks. */
     private const val HYPHENS = "-‐"
 
+    /**
+     * Whether [line] stops in the middle of a word rather than at the end
+     * of one: it ends on a hyphen, so whatever follows is the rest of that
+     * word and cannot be the start of anything else.
+     */
+    fun breaksAWord(line: String): Boolean = line.trimEnd().lastOrNull()?.let { it in HYPHENS } == true
+
     fun join(lines: List<String>): String {
         val sb = StringBuilder()
         for (line in lines) {

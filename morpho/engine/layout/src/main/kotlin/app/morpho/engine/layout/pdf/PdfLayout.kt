@@ -644,7 +644,14 @@ object PdfLayout {
         val before = blockByPage[previous.page] ?: return true
         val after = blockByPage[line.page] ?: return true
         val rtl = Bidi.firstStrongDirection(previous.text) == TextDirection.RTL
-        if (endGap(previous, before, rtl) > PAGE_END_SHARE * (before.second - before.first)) return true
+        // A line that stops on a hyphen stopped in the middle of a word,
+        // and so in the middle of a paragraph, however short of its margin
+        // it stopped.
+        if (!LineJoiner.breaksAWord(previous.text) &&
+            endGap(previous, before, rtl) > PAGE_END_SHARE * (before.second - before.first)
+        ) {
+            return true
+        }
         // A first line indented in from its block's edge opens a paragraph
         // wherever it stands.
         val startsIn =
@@ -704,6 +711,7 @@ object PdfLayout {
             // points short of the margin and still be a line in the middle
             // of a paragraph.
             val rtl = Bidi.firstStrongDirection(previous.text) == TextDirection.RTL
+            if (LineJoiner.breaksAWord(previous.text)) return false
             return endGap(previous, block, rtl) > PARAGRAPH_END_SHARE * (block.second - block.first)
         }
         val anyRtl = Bidi.firstStrongDirection(previous.text) == TextDirection.RTL ||

@@ -115,4 +115,19 @@ class AcrossPagesTest {
         assertTrue(read.size >= 2, read.map { it.text.take(40) }.toString())
         assertTrue(read[1].text.startsWith("• An item"), read[1].text)
     }
+
+    @Test
+    fun `a word broken across a page turn is put back together`() {
+        // A line that stops on a hyphen stopped in the middle of a word,
+        // so it cannot be the end of a paragraph however short it is —
+        // and the word must not arrive as two, a page apart.
+        val first = full(1, count = 49) + listOf(Triple("of the trans-", 0f, 11f))
+        val second = listOf(Triple("continental line and what followed it.", 0f, 11f))
+        val read = paragraphs(listOf(first, second))
+        assertEquals(1, read.size, read.map { it.text.take(40) }.toString())
+        // Whether the typesetter's hyphen was a real one cannot be told, so
+        // it is kept: wrong in at most one of the two readings, and never a
+        // word run into the next.
+        assertTrue(read.single().text.contains("trans-continental line"), read.single().text.takeLast(60))
+    }
 }
