@@ -119,6 +119,20 @@ enum class TextFont(val androidFamily: String, val label: String) {
  */
 fun TextSpec.layoutKey(sizePx: Int): String = "$font|$bold|$italic|$sizePx|$text"
 
+/**
+ * How a clip whose shape differs from the canvas is fitted into it.
+ *
+ * FIT letterboxes, FILL crops to cover, STRETCH distorts. The names map to
+ * media3's Presentation layouts, which is where the fitting actually happens —
+ * in the preview as well as the export, so the two cannot disagree.
+ */
+@Serializable
+enum class CanvasFit(val label: String) {
+    FIT("Fit"),
+    FILL("Fill"),
+    STRETCH("Stretch"),
+}
+
 /** Placement of a picture-in-picture video overlay. Null on a clip = full frame. */
 @Serializable
 @Immutable
@@ -207,6 +221,7 @@ data class TimelineState(
     val tracks: PersistentList<Track>,
     val outputWidth: Int = 1080,
     val outputHeight: Int = 1920,
+    val canvasFit: CanvasFit = CanvasFit.FIT,
     val projectFps: Float = 30f,
     /** Monotonic; bumped by the store on each committed reduction. */
     val revision: Long = 0L,

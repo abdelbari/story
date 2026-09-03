@@ -1,5 +1,6 @@
 package com.kinetic.editor
 
+import com.kinetic.editor.core.model.CanvasFit
 import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ClipModel
 import com.kinetic.editor.core.model.ColorGradeSpec
@@ -490,6 +491,52 @@ class CoreLogicTest {
         val unwritable = File("/proc/kinetic-does-not-exist/project.json")
         assertFalse(ProjectCodec.save(unwritable, TimelineState.empty()))
         assertNull(ProjectCodec.load(unwritable))
+    }
+
+    @Test
+    fun duplicateLandsBesideTheOriginalWithItsOwnIdentity() {
+        val a = clip("a", 4_000)
+        val b = clip("b", 3_000)
+        val s0 = stateWith(listOf(a, b))
+        val out = reduce(s0, EditorIntent.DuplicateClip(a.id))
+        val clips = out.mainTrack.clips
+        assertEquals(3, clips.size)
+        // Next in line, not appended at the end.
+        assertEquals(a.id, clips[0].id)
+        assertEquals(b.id, clips[2].id)
+        // A copy, not an alias: a later edit to one must not move the other.
+        assertNotEquals(a.id, clips[1].id)
+        assertEquals(a.trimInMs, clips[1].trimInMs)
+        assertEquals(a.trimOutMs, clips[1].trimOutMs)
+
+        // On a freely placed track the copy has to move, or it hides underneath.
+        val pip = ClipModel(
+            ClipId("p"), MediaRef("uri://pip", 4_000, true, false, 30f), 0, 4_000,
+            startMs = 1_000, pip = PipSpec(),
+        )
+        val base = TimelineState.empty()
+        val withPip = base.copy(
+            tracks = base.tracks.map {
+                if (it.type == TrackType.VIDEO_OVERLAY) it.copy(clips = persistentListOf(pip)) else it
+            }.toPersistentList(),
+        )
+        val dup = reduce(withPip, EditorIntent.DuplicateClip(pip.id))
+            .tracks.first { it.type == TrackType.VIDEO_OVERLAY }.clips
+        assertEquals(2, dup.size)
+        assertEquals(1_000L + pip.durationMs, dup[1].startMs)
+
+        assertTrue(reduce(s0, EditorIntent.DuplicateClip(ClipId("nope"))) === s0)
+    }
+
+    @Test
+    fun canvasFitSurvivesARoundTripAndDefaultsToFit() {
+        val s0 = stateWith(listOf(clip("a", 4_000)))
+        assertEquals(CanvasFit.FIT, s0.canvasFit)
+        val filled = reduce(s0, EditorIntent.SetCanvasFit(CanvasFit.FILL))
+        assertEquals(CanvasFit.FILL, filled.canvasFit)
+        assertEquals(CanvasFit.FILL, ProjectCodec.decode(ProjectCodec.encode(filled))!!.canvasFit)
+        // The default is omitted on disk, so older projects still open.
+        assertFalse(ProjectCodec.encode(s0).contains("canvasFit"))
     }
 
     @Test

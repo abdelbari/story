@@ -18,6 +18,7 @@ import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import com.kinetic.editor.audio.VolumeEnvelopeAudioProcessor
+import com.kinetic.editor.core.model.CanvasFit
 import com.kinetic.editor.core.model.PipWindow
 import com.kinetic.editor.core.model.pipWindows
 import com.kinetic.editor.core.model.PlacedClip
@@ -60,7 +61,9 @@ data class ExportSpec(
  *  - Sequences opening with a gap, or with an item lacking a track that later
  *    items carry, need the force-audio/video flags or Transformer fails.
  *  - TEXT/STICKER      -> composition-level OverlayEffect windows (timeline time).
- *  - Canvas size       -> Presentation.createForWidthAndHeight at composition level.
+ *  - Canvas size/fit   -> Presentation on every MAIN item, so the compositor
+ *    and the overlays all work in canvas coordinates, plus once more at
+ *    composition level as a guarantee of the encoded size.
  */
 object CompositionMapper {
 
@@ -76,7 +79,7 @@ object CompositionMapper {
         var previousTransition: TransitionSpec? = null
         for (placed in mainPlacements) {
             mainBuilder.addItem(
-                mainTrackItem(context, state.mainTrack, placed, previousTransition, lutCache),
+                mainTrackItem(context, state, spec, placed, previousTransition, lutCache),
             )
             previousTransition = placed.clip.transitionOut
         }
@@ -103,7 +106,10 @@ object CompositionMapper {
         }
 
         val compositionVideoEffects = buildList<Effect> {
-            add(Presentation.createForWidthAndHeight(spec.width, spec.height, Presentation.LAYOUT_SCALE_TO_FIT))
+            // The main items are already canvas-sized, so this is a no-op in the
+            // ordinary case; it is here as a guarantee that whatever reaches the
+            // encoder is the size the user asked for.
+            add(presentation(spec, state.canvasFit))
             com.kinetic.editor.effects.OverlayFactory.build(context, state, spec.width)?.let(::add)
         }
 
@@ -121,11 +127,13 @@ object CompositionMapper {
 
     private fun mainTrackItem(
         context: Context,
-        track: Track,
+        state: TimelineState,
+        spec: ExportSpec,
         placed: PlacedClip,
         previousTransition: TransitionSpec?,
         lutCache: MutableMap<String, Bitmap?>,
     ): EditedMediaItem {
+        val track = state.mainTrack
         val clip = placed.clip
 
         val mediaItem = MediaItem.Builder()
@@ -170,6 +178,11 @@ object CompositionMapper {
             )
             // After the grade, so the shader still sees clip-local source time.
             speed.videoEffect?.let(::add)
+            // Last, and per item rather than once for the whole composition: it
+            // makes every main frame canvas-sized BEFORE the compositor sees it,
+            // which is what puts picture-in-picture and overlays in the same
+            // coordinate space the preview lays them out in. See build().
+            add(presentation(spec, state.canvasFit))
         }
 
         val audioProcessors = buildList<AudioProcessor> {
@@ -183,6 +196,18 @@ object CompositionMapper {
             .setRemoveAudio(removeAudio)
             .build()
     }
+
+    /** The canvas, and how a differently-shaped clip is fitted into it. */
+    private fun presentation(spec: ExportSpec, fit: CanvasFit): Presentation =
+        Presentation.createForWidthAndHeight(
+            spec.width,
+            spec.height,
+            when (fit) {
+                CanvasFit.FIT -> Presentation.LAYOUT_SCALE_TO_FIT
+                CanvasFit.FILL -> Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
+                CanvasFit.STRETCH -> Presentation.LAYOUT_STRETCH_TO_FIT
+            },
+        )
 
     /**
      * The speed change for one item, as media3 wants it applied.

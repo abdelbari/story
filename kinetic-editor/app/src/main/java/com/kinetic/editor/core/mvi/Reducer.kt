@@ -87,9 +87,11 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
             )
         }
     }
+    is EditorIntent.DuplicateClip -> reduceDuplicate(state, intent.clipId)
     is EditorIntent.SetTrackMuted -> mapTracks(state) { t ->
         if (t.id == intent.trackId) t.copy(muted = intent.muted) else t
     }
+    is EditorIntent.SetCanvasFit -> state.copy(canvasFit = intent.fit)
     is EditorIntent.SetCanvas -> state.copy(
         // Hardware encoders want even dimensions; keep both within sane bounds.
         outputWidth = (intent.width.coerceIn(16, 4096) / 2) * 2,
@@ -203,6 +205,27 @@ private fun reduceSplit(state: TimelineState, intent: EditorIntent.SplitClip): T
                 }
             },
         )
+    }
+}
+
+/**
+ * A copy of the clip, right where the user is looking: next in line on the
+ * sequential main track, and immediately after itself in time on a freely
+ * placed one, where dropping it at the same start would hide it under the
+ * original.
+ */
+private fun reduceDuplicate(state: TimelineState, id: ClipId): TimelineState {
+    val (track, clip) = state.findClip(id) ?: return state
+    val copy = clip.copy(id = ClipId.random())
+    return mapTracks(state) { t ->
+        if (t.id != track.id) {
+            t
+        } else if (t.type == TrackType.VIDEO_MAIN) {
+            val idx = t.clips.indexOfFirst { it.id == id }
+            t.copy(clips = t.clips.add(idx + 1, copy))
+        } else {
+            t.copy(clips = t.clips.add(copy.copy(startMs = clip.startMs + clip.durationMs)))
+        }
     }
 }
 

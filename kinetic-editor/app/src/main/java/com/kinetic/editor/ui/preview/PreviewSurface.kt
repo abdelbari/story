@@ -37,7 +37,6 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.kinetic.editor.core.model.PipSpec
-import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.layoutKey
@@ -54,11 +53,11 @@ import kotlinx.coroutines.withContext
  * Compose Canvas ABOVE the surface. Overlays in preview cost no GL work and
  * update live while typing; the export renders the same specs via OverlayEffect.
  *
- * Two nested frames, mirroring the export. The CANVAS (the output size) holds
- * the PICTURE: the main clip letterboxed by its own proportions, which is the
- * fit the export's Presentation applies. Picture-in-picture boxes are placed
- * relative to the picture (the compositor's frame); text and stickers relative
- * to the canvas (the composition-level overlay's frame).
+ * One frame, because the engine letterboxes with the same `Presentation` the
+ * export applies: what reaches this surface is already canvas-sized and fitted.
+ * So the surface is simply the canvas, and everything drawn over it — PiP
+ * boxes, text, stickers — is placed in canvas coordinates, exactly as the
+ * export's compositor and overlays place them.
  */
 @Composable
 fun PreviewSurface(
@@ -68,11 +67,6 @@ fun PreviewSurface(
     modifier: Modifier = Modifier,
 ) {
     val canvasAspect = state.outputWidth.toFloat() / state.outputHeight.toFloat()
-    val mainPlacements = remember(state) { state.placements(state.mainTrack) }
-    // Changes only when the playhead crosses into a clip of a different shape.
-    val pictureAspect by remember(mainPlacements, canvasAspect) {
-        derivedStateOf { pictureAspectAt(mainPlacements, viewport.playheadMs) ?: canvasAspect }
-    }
 
     Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         Box(
@@ -80,28 +74,15 @@ fun PreviewSurface(
                 .aspectRatio(canvasAspect)
                 .align(Alignment.Center),
         ) {
-            Box(
-                Modifier
-                    .aspectRatio(pictureAspect)
-                    .align(Alignment.Center),
-            ) {
-                AndroidView(
-                    factory = { ctx -> SurfaceView(ctx).also(engine::attachSurface) },
-                    onRelease = { engine.detachSurface() },
-                    modifier = Modifier.fillMaxSize(),
-                )
-                PipLayer(engine, viewport)
-            }
+            AndroidView(
+                factory = { ctx -> SurfaceView(ctx).also(engine::attachSurface) },
+                onRelease = { engine.detachSurface() },
+                modifier = Modifier.fillMaxSize(),
+            )
+            PipLayer(engine, viewport)
             PreviewOverlayLayer(state, viewport, Modifier.fillMaxSize())
         }
     }
-}
-
-/** Display aspect of the main clip under the playhead; null when its size is unknown. */
-private fun pictureAspectAt(placements: List<PlacedClip>, timeMs: Long): Float? {
-    if (placements.isEmpty()) return null
-    val media = (placements.firstOrNull { timeMs in it } ?: placements.last()).clip.media
-    return if (media.width > 0 && media.height > 0) media.width.toFloat() / media.height else null
 }
 
 /**

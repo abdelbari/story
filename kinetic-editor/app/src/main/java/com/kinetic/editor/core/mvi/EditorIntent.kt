@@ -1,5 +1,6 @@
 package com.kinetic.editor.core.mvi
 
+import com.kinetic.editor.core.model.CanvasFit
 import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.LutSpec
@@ -37,6 +38,9 @@ sealed interface EditorIntent {
     ) : EditorIntent
 
     data class RemoveClip(val clipId: ClipId) : EditorIntent
+
+    /** Copies a clip in place: after it on the main track, beside it elsewhere. */
+    data class DuplicateClip(val clipId: ClipId) : EditorIntent
 
     data class MoveClip(
         val clipId: ClipId,
@@ -114,6 +118,9 @@ sealed interface EditorIntent {
      * not a crop.
      */
     data class SetCanvas(val width: Int, val height: Int) : EditorIntent
+
+    /** Letterbox, crop or stretch a clip whose shape differs from the canvas. */
+    data class SetCanvasFit(val fit: CanvasFit) : EditorIntent
 
     /** Replaces the whole document (project restore). Clears undo history. */
     data class Replace(val state: TimelineState) : EditorIntent

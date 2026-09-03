@@ -99,6 +99,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (prev.videoStructureHash() != next.videoStructureHash()) {
             preview.setTimeline(next, keepTimelineMs = keepTimelineMs)
         }
+        if (prev.outputWidth != next.outputWidth ||
+            prev.outputHeight != next.outputHeight ||
+            prev.canvasFit != next.canvasFit
+        ) {
+            // Its own path: re-letterboxing is a change of effects, not of media,
+            // so it must not tear down the concatenated source.
+            preview.applyCanvas(next)
+        }
         if (prev.audioStructureHash() != next.audioStructureHash() ||
             prev.overlayStructureHash() != next.overlayStructureHash()
         ) {

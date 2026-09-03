@@ -13,6 +13,8 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.source.ConcatenatingMediaSource2
+import androidx.media3.effect.Presentation
+import com.kinetic.editor.core.model.CanvasFit
 import com.kinetic.editor.core.model.PipWindow
 import com.kinetic.editor.core.model.pipWindows
 import com.kinetic.editor.core.model.PlacedClip
@@ -84,7 +86,8 @@ class PreviewEngine(
         .build()
         .apply {
             setSeekParameters(SeekParameters.EXACT)
-            // Applies to all subsequent media; set once before the first prepare().
+            // Replaced by applyCanvas() before the first prepare(); a player with
+            // no media yet has nothing to letterbox into.
             setVideoEffects(listOf(GradeGlEffect(fxProvider)))
             playWhenReady = false
             addListener(PlayerEvents())
@@ -165,6 +168,7 @@ class PreviewEngine(
     fun setTimeline(state: TimelineState, keepTimelineMs: Long) {
         latestState = state
         _error.value = null
+        applyCanvas(state)
         rebuildSegments(state)
         val placements = state.placements(state.mainTrack)
         if (placements.isEmpty()) {
@@ -202,6 +206,30 @@ class PreviewEngine(
         // they hold, so those must already be the new ones.
         for (slave in slaves.values) slave.refresh(state)
         rebuildFx(state)
+    }
+
+    /**
+     * Canvas size or fit changed: the preview letterboxes with the SAME
+     * Presentation the export applies, rather than approximating it in the view
+     * tree, so "what you see is what renders" holds for the frame's shape too.
+     * The main picture reaching the surface is therefore already canvas-sized,
+     * which is what lets the UI place overlays in canvas coordinates.
+     */
+    fun applyCanvas(state: TimelineState) {
+        player.setVideoEffects(
+            listOf(
+                GradeGlEffect(fxProvider),
+                Presentation.createForWidthAndHeight(
+                    state.outputWidth,
+                    state.outputHeight,
+                    when (state.canvasFit) {
+                        CanvasFit.FIT -> Presentation.LAYOUT_SCALE_TO_FIT
+                        CanvasFit.FILL -> Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
+                        CanvasFit.STRETCH -> Presentation.LAYOUT_STRETCH_TO_FIT
+                    },
+                ),
+            ),
+        )
     }
 
     /** Slave-structural change (audio or PiP): rebuild those playlists only. */

@@ -61,6 +61,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.kinetic.editor.core.model.CanvasFit
 import com.kinetic.editor.core.model.ClipModel
 import com.kinetic.editor.core.model.Track
 import com.kinetic.editor.core.model.fadeKeyframes
@@ -417,6 +418,11 @@ private fun ToolBar(
                 vm.store.dispatch(EditorIntent.SplitClip(id, viewport.playheadMs))
             }
         }
+        ToolButton("Copy", enabled = hasSelection) {
+            vm.store.selection.value?.let { id ->
+                vm.store.dispatch(EditorIntent.DuplicateClip(id))
+            }
+        }
         ToolButton("Delete", enabled = hasSelection) {
             vm.store.selection.value?.let { id ->
                 vm.store.dispatch(EditorIntent.RemoveClip(id))
@@ -427,6 +433,11 @@ private fun ToolBar(
         ToolButton("Canvas ${CANVAS_PRESETS.getOrNull(preset)?.label ?: "${canvas.first}×${canvas.second}"}") {
             val next = CANVAS_PRESETS[(preset + 1) % CANVAS_PRESETS.size]
             vm.store.dispatch(EditorIntent.SetCanvas(next.width, next.height))
+        }
+        ToolButton(state.canvasFit.label) {
+            val order = CanvasFit.entries
+            val next = order[(order.indexOf(state.canvasFit) + 1) % order.size]
+            vm.store.dispatch(EditorIntent.SetCanvasFit(next))
         }
         ToolButton("Export") {
             if (Build.VERSION.SDK_INT >= 33 &&

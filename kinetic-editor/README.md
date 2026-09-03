@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 44 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 46 pure-JVM logic tests
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
@@ -40,8 +40,8 @@ environment, so the app has not been assembled by Gradle there. Instead:
   undefined name and a missing import in `EditorScreen`.)
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 44 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 46-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 46 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 48-scenario executable sandbox suite.
 
 ---
 
@@ -202,6 +202,15 @@ during pinch-zoom. Instead:
   when a clip's framing actually changes. `PipSpec.scale` is the fraction of
   the picture's width; height follows the source's own proportions; between
   clips the box is hidden rather than left frozen on a stale frame.
+- **The preview letterboxes with the export's own `Presentation`**, rather than
+  approximating the fit in the view tree. What reaches the surface is already
+  canvas-sized, so the surface *is* the canvas and every overlay — PiP boxes,
+  text, stickers — is placed in canvas coordinates. The export matches by
+  construction: `Presentation` runs on each main item *before* the compositor,
+  so the compositor and the composition-level overlays work in that same space.
+  Getting this wrong is subtle — position a PiP against the letterboxed picture
+  in one pipeline and against the canvas in the other, and it lands in a
+  different place in the render than on screen.
 - A PiP is **graded by the same shader as everything else**: its player carries
   `GradeGlEffect` too, fed by a one-snapshot provider rather than a timeline,
   because a PiP has no transitions and its uniforms are therefore constant
@@ -298,7 +307,8 @@ the exporter — the model, the preview and the export path agree on all three.
 | Text | editable content (multi-line), four type faces, bold, italic, eight colours, size, position |
 | Overlays | stickers (size, position, rotation), picture-in-picture (size, position, rotation, opacity) — every control is the number the export consumes |
 | Looks | eight one-tap filters that set the same grade/LUT fields the sliders edit, so a preset is a starting point rather than a mode |
-| Canvas | 9:16, 16:9, 1:1 and 4:5 presets; the preview letterboxes the picture into the chosen frame exactly as the export's `Presentation` does |
+| Canvas | 9:16, 16:9, 1:1 and 4:5 presets, each fitted, filled (cropped) or stretched — applied by the same `Presentation` in preview and export |
+| Editing | trim, split, move, reorder, duplicate, delete, per-clip speed |
 | Output | background MP4 export with live progress, published to Movies/Kinetic |
 
 Volume fades deserve a note: the model stores a general keyframe envelope, but
