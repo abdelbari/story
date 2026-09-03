@@ -106,6 +106,11 @@ object HtmlWriter {
             "td,th{border:1px solid #555;padding:4pt 8pt;vertical-align:top;}" +
             "img{max-width:100%;height:auto;}" +
             "p.image{text-align:center;}" +
+            // A running head is set against the page, not against the
+            // column of text: it reaches into the margins as often as not,
+            // and centred inside the text it sits where it never sat.
+            "header.page-header p.image,footer.page-footer p.image{text-align:start;margin:0;}" +
+            "header.page-header img,footer.page-footer img{max-width:none;}" +
             "img.inline{vertical-align:baseline;}" +
             ".page-header{margin-bottom:12pt;}.page-footer{margin-top:12pt;}"
 

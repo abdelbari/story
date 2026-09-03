@@ -522,7 +522,7 @@ object DocxWriter {
             is Paragraph ->
                 appendParagraph(sb, block, document, numbering, images, links, part, notes, endsSection)
             is Table -> appendTable(sb, block, document, numbering, images, links, part, notes)
-            is ImageBlock -> appendImage(sb, images.entryFor(block))
+            is ImageBlock -> appendImage(sb, images.entryFor(block), document, part)
         }
     }
 
@@ -559,7 +559,7 @@ object DocxWriter {
         while (index < paragraph.runs.size) {
             val target = paragraph.runs[index].link
             if (target == null) {
-                appendRun(sb, paragraph.runs[index], effectiveDirection, images, document, notes, styleIsBold)
+                appendRun(sb, paragraph.runs[index], effectiveDirection, images, document, notes, styleIsBold, part)
                 index++
                 continue
             }
@@ -576,7 +576,7 @@ object DocxWriter {
                 relId != null -> sb.append("""<w:hyperlink r:id="$relId">""")
             }
             for (i in index..last) {
-                appendRun(sb, paragraph.runs[i], effectiveDirection, images, document, notes, styleIsBold)
+                appendRun(sb, paragraph.runs[i], effectiveDirection, images, document, notes, styleIsBold, part)
             }
             if (anchor != null || relId != null) sb.append("</w:hyperlink>")
             index = last + 1
@@ -721,10 +721,11 @@ object DocxWriter {
         notes: NotePlan? = null,
         /** Whether the paragraph's style sets bold, which only a heading's does. */
         styleIsBold: Boolean = false,
+        part: String = "",
     ) {
         run.image?.let { image ->
             sb.append("<w:r>")
-            appendDrawing(sb, images.entryFor(image))
+            appendDrawing(sb, images.entryFor(image), room(document, part))
             sb.append("</w:r>")
             return
         }
@@ -956,7 +957,7 @@ object DocxWriter {
     /** EMUs in a point: 914400 in an inch, 72 points in an inch. */
 
     private const val EMU_PER_PT = 12700L
-    /** Content area inside the A4 margins, in EMU. */
+    /** Content area inside the A4 margins, in EMU: the page a document that says nothing is set on. */
     private const val MAX_CX_EMU = 5_731_933L
     private const val MAX_CY_EMU = 8_863_330L
 
@@ -966,14 +967,55 @@ object DocxWriter {
     private const val R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
     /** An image as its own paragraph with an inline w:drawing. */
-    private fun appendImage(sb: StringBuilder, entry: ImagePlan.Entry) {
-        sb.append("<w:p><w:r>")
-        appendDrawing(sb, entry)
+    private fun appendImage(
+        sb: StringBuilder,
+        entry: ImagePlan.Entry,
+        document: DocumentModel? = null,
+        part: String = "",
+    ) {
+        sb.append("<w:p>")
+        // A picture standing alone in a running head or foot is the head:
+        // it wants no space around it and no line spacing of Word's own,
+        // or the head comes back taller than the one it was cropped from
+        // and the text under it starts lower down the page.
+        if (part == ImagePlan.PART_HEADER || part == ImagePlan.PART_FOOTER) {
+            sb.append("<w:pPr>")
+            if (document?.defaultDirection == TextDirection.RTL) sb.append("<w:bidi/>")
+            sb.append("""<w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/>""")
+            sb.append("</w:pPr>")
+        }
+        sb.append("<w:r>")
+        appendDrawing(sb, entry, document?.let { room(it, part) } ?: (MAX_CX_EMU to MAX_CY_EMU))
         sb.append("</w:r></w:p>")
     }
 
-    /** One inline picture, in a run of the caller's. */
-    private fun appendDrawing(sb: StringBuilder, entry: ImagePlan.Entry) {
+    /**
+     * How large a picture may be drawn in [part], in EMU across and down.
+     *
+     * A picture in the text is held to the text: the column it is set in.
+     * A picture in a running head or foot is not — a head is set against
+     * the page and reaches into the margins as often as not, which is why
+     * a journal's, drawn as artwork, is kept as the picture it is. Held to
+     * the text column it comes back a little narrower than it was, which
+     * is a running head that no longer lines up with the page it heads.
+     */
+    private fun room(document: DocumentModel, part: String): Pair<Long, Long> {
+        val page = document.pageSetup ?: return MAX_CX_EMU to MAX_CY_EMU
+        val furniture = part == ImagePlan.PART_HEADER || part == ImagePlan.PART_FOOTER
+        val across =
+            if (furniture) page.widthPt else page.widthPt - page.marginLeftPt - page.marginRightPt
+        val down =
+            if (furniture) page.heightPt else page.heightPt - page.marginTopPt - page.marginBottomPt
+        return (across.coerceAtLeast(1f) * EMU_PER_PT).toLong() to
+            (down.coerceAtLeast(1f) * EMU_PER_PT).toLong()
+    }
+
+    /** One inline picture, in a run of the caller's, held to the room [part] gives it. */
+    private fun appendDrawing(
+        sb: StringBuilder,
+        entry: ImagePlan.Entry,
+        room: Pair<Long, Long> = MAX_CX_EMU to MAX_CY_EMU,
+    ) {
         val block = entry.block
         // Shown at the size the reader measured on the page when it did,
         // else at its pixel size as CSS would show it.
@@ -981,14 +1023,15 @@ object DocxWriter {
             ?: (block.widthPx.coerceAtLeast(1) * EMU_PER_PX)
         var cy = block.heightPt?.takeIf { it > 0f }?.let { (it * EMU_PER_PT).toLong() }
             ?: (block.heightPx.coerceAtLeast(1) * EMU_PER_PX)
-        // Scale into the content area, preserving aspect ratio.
-        if (cx > MAX_CX_EMU) {
-            cy = cy * MAX_CX_EMU / cx
-            cx = MAX_CX_EMU
+        val (maxCx, maxCy) = room
+        // Scale into the room there is, preserving aspect ratio.
+        if (cx > maxCx) {
+            cy = cy * maxCx / cx
+            cx = maxCx
         }
-        if (cy > MAX_CY_EMU) {
-            cx = cx * MAX_CY_EMU / cy
-            cy = MAX_CY_EMU
+        if (cy > maxCy) {
+            cx = cx * maxCy / cy
+            cy = maxCy
         }
         cx = cx.coerceAtLeast(1)
         cy = cy.coerceAtLeast(1)

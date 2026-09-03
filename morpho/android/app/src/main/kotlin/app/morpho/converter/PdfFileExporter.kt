@@ -341,7 +341,11 @@ internal object PdfFileExporter {
         /** Draws [block] with its top at [y]; returns its height. */
         private fun drawBlock(canvas: Canvas, block: Block, y: Float, number: Int, sheet: Sheet): Float = when (block) {
             is ImageBlock -> {
-                val (width, height) = pictureSize(block, sheet.contentWidth.toFloat())
+                // A running head is set against the page, not against the
+                // column of text: it reaches into the margins as often as
+                // not, and held to the text it comes back narrower than the
+                // page it heads.
+                val (width, height) = pictureSize(block, sheet.width.toFloat())
                 val bitmap = bitmapOf(block)
                 if (bitmap != null) {
                     val x = if (rtl(null)) sheet.width - sheet.marginRight - width else sheet.marginLeft
