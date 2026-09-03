@@ -172,4 +172,133 @@ class MarkdownWriterTest {
         assertEquals(1.0, FidelityScorer.textSimilarity(textOf(once), textOf(twice)), 1e-9)
         assertTrue(MarkdownWriter.write(twice) == markdown, "second write drifted")
     }
+
+    private fun back(vararg blocks: Block): List<Block> =
+        PlainTextImporter.import(MarkdownWriter.write(DocumentModel(blocks.toList()))).blocks
+
+    @Test
+    fun `runs a marker cannot tell apart are written as one span`() {
+        // Word splits a sentence into runs wherever it likes. Closing a
+        // marker only to open the same one again writes `~~a~~~~b~~`,
+        // whose four tildes are four tildes on the page.
+        val md = MarkdownWriter.write(
+            DocumentModel(
+                listOf(
+                    body(
+                        TextRun("struck ", strikethrough = true),
+                        TextRun("through", strikethrough = true),
+                        TextRun(" and "),
+                        TextRun("bold ", bold = true),
+                        TextRun("throughout", bold = true),
+                    )
+                )
+            )
+        )
+        assertTrue(md.contains("~~struck through~~"), md)
+        assertTrue(md.contains("**bold throughout**"), md)
+        assertTrue(!md.contains("~~~~") && !md.contains("****"), md)
+    }
+
+    @Test
+    fun `one pair of tildes covers a stretch that changes inside it`() {
+        // The strike is outside the emphasis, so a struck word that turns
+        // bold halfway used to close the tildes and open them again.
+        val md = MarkdownWriter.write(
+            DocumentModel(
+                listOf(
+                    body(
+                        TextRun("gone", strikethrough = true),
+                        TextRun("and gone", strikethrough = true, bold = true),
+                    )
+                )
+            )
+        )
+        assertTrue(!md.contains("~~~~"), md)
+        val runs = (back(body(
+            TextRun("gone", strikethrough = true),
+            TextRun("and gone", strikethrough = true, bold = true),
+        )).single() as Paragraph).runs
+        assertEquals("goneand gone", runs.joinToString("") { it.text })
+        assertTrue(runs.all { it.strikethrough }, "all of it was struck through")
+    }
+
+    @Test
+    fun `a link written across several runs keeps the emphasis inside it`() {
+        val runs = (back(body(
+            TextRun("the ", link = "https://example.org"),
+            TextRun("big", link = "https://example.org", bold = true),
+            TextRun(" page", link = "https://example.org"),
+        )).single() as Paragraph).runs
+        assertEquals("the big page", runs.joinToString("") { it.text })
+        assertTrue(runs.all { it.link == "https://example.org" }, "all of it was the link")
+        assertEquals("big", runs.single { it.bold }.text)
+    }
+
+    @Test
+    fun `a note's words are written the way the document's are`() {
+        // Written raw, a note holding a bracket or an asterisk came back
+        // as something else, and a note's bold came back plain.
+        val note = listOf<Block>(
+            Paragraph(listOf(
+                TextRun("See [note 3] and "),
+                TextRun("Al-Muqaddima", italic = true),
+                TextRun(", p. 4*."),
+            ))
+        )
+        val runs = (back(body(TextRun("A claim."), TextRun("1", note = note)))
+            .single() as Paragraph).runs
+        val words = runs.single { it.note != null }.note!!.single() as Paragraph
+        assertEquals("See [note 3] and Al-Muqaddima, p. 4*.", words.text)
+        assertEquals("Al-Muqaddima", words.runs.single { it.italic }.text)
+    }
+
+    @Test
+    fun `two notes never answer to one label`() {
+        // A mark that can be its own label keeps it; a mark that cannot is
+        // given a number — and that number must not be one another note
+        // already answers to, or both marks lead to the first note's words
+        // and the second note is lost outright.
+        val first = listOf<Block>(Paragraph(listOf(TextRun("The first note."))))
+        val second = listOf<Block>(Paragraph(listOf(TextRun("The second note."))))
+        val third = listOf<Block>(Paragraph(listOf(TextRun("The third note."))))
+        val runs = (back(body(
+            TextRun("a"), TextRun("x", note = first),
+            TextRun("b"), TextRun("1", note = second),
+            TextRun("c"), TextRun("x", note = third),
+        )).single() as Paragraph).runs
+        val notes = runs.filter { it.note != null }
+            .map { (it.note!!.single() as Paragraph).text }
+        assertEquals(listOf("The first note.", "The second note.", "The third note."), notes)
+    }
+
+    @Test
+    fun `a paragraph that only begins like a heading or a list stays a paragraph`() {
+        // "1. Introduction" left over from a list a page drew, "- see the
+        // appendix", "#3 in the series": read back as they stand, the
+        // marker is eaten and the paragraph comes back a word short.
+        for (text in listOf(
+            "# not a heading", "## nor this one", "- not a list", "* nor this one",
+            "1. not numbered", "2) nor this one", "| not a table |",
+        )) {
+            val paragraph = back(body(text)).single() as Paragraph
+            assertEquals(text, paragraph.text, "text: $text")
+            assertEquals(ParagraphKind.BODY, paragraph.style.kind, "kind: $text")
+            assertEquals(null, paragraph.style.listMarker, "marker: $text")
+        }
+    }
+
+    @Test
+    fun `a heading and a list item still say what they are`() {
+        // The escape is a paragraph's business only: a heading already
+        // says what it is, and escaping its hash would leave the hash in
+        // the words.
+        val blocks = back(
+            Paragraph(listOf(TextRun("Findings")), ParagraphStyle(kind = ParagraphKind.HEADING_1)),
+            Paragraph(listOf(TextRun("First aim")), ParagraphStyle(listMarker = ListMarker.BULLET)),
+        )
+        assertEquals(ParagraphKind.HEADING_1, (blocks[0] as Paragraph).style.kind)
+        assertEquals("Findings", (blocks[0] as Paragraph).text)
+        assertEquals(ListMarker.BULLET, (blocks[1] as Paragraph).style.listMarker)
+        assertEquals("First aim", (blocks[1] as Paragraph).text)
+    }
 }

@@ -56,8 +56,14 @@ object MarkdownWriter {
                         ListMarker.NUMBERED ->
                             out.append(indent).append(count).append(". ")
                                 .append(runsToMarkdown(block.runs, notes))
-                        null ->
-                            out.append(headingPrefix(block.style.kind)).append(runsToMarkdown(block.runs, notes))
+                        null -> {
+                            val prefix = headingPrefix(block.style.kind)
+                            val line = runsToMarkdown(block.runs, notes)
+                            // A heading already says what it is; a paragraph
+                            // that only begins like one must say it does not.
+                            out.append(prefix)
+                                .append(if (prefix.isEmpty()) escapeLineStart(line) else line)
+                        }
                     }
                     previousWasListItem = marker != null
                 }
@@ -113,9 +119,21 @@ object MarkdownWriter {
             }
             walk(blocks)
             val counts = marked.groupingBy { label(it) }.eachCount()
-            for ((index, run) in marked.withIndex()) {
+            // A label names one note. A mark that can be its own label is
+            // kept, so a page's printed mark survives; a mark that cannot
+            // is given a number — and that number must not be one another
+            // note already answers to, or two marks lead to the same words
+            // and the second note is lost outright.
+            val taken = marked.mapNotNullTo(HashSet()) { label(it)?.takeIf { own -> counts[own] == 1 } }
+            var counter = 0
+            for (run in marked) {
                 val own = label(run)
-                val used = if (own != null && counts[own] == 1) own else (index + 1).toString()
+                val used = if (own != null && counts[own] == 1) {
+                    own
+                } else {
+                    do counter++ while (!taken.add(counter.toString()))
+                    counter.toString()
+                }
                 labelByRun[run] = used
                 bodies += used to run.note.orEmpty()
             }
@@ -132,15 +150,52 @@ object MarkdownWriter {
 
         fun any(): Boolean = bodies.isNotEmpty()
 
-        /** Each note as its own definition, in the order the marks appeared. */
+        /**
+         * Each note as its own definition, in the order the marks appeared.
+         *
+         * A note's words are written the way the document's are — escaped,
+         * and with the emphasis and links they carry — because they are the
+         * document's words. Written raw, a note holding a bracket or an
+         * asterisk came back as something else, and a note's bold came back
+         * plain.
+         */
         fun definitions(): String = bodies.joinToString(separator = "\n") { (label, blocks) ->
             val words = blocks.filterIsInstance<Paragraph>()
-                .joinToString(" ") { it.text.trim() }
+                .joinToString(" ") { runsToMarkdown(it.runs, this).trim() }
                 .replace("\n", " ")
                 .trim()
             "[^" + label + "]: " + words
         }
     }
+
+    /**
+     * [line] with a leading marker escaped, where a paragraph happens to
+     * begin with one.
+     *
+     * "1. Introduction" left over from a list a page drew and the reader
+     * did not recognise, "- see the appendix", "#3 in the series": read
+     * back as they stand, the marker is taken for what it looks like and
+     * eaten, and the paragraph comes back as the list item or the heading
+     * it was only shaped like, a word short.
+     *
+     * A bullet Word draws with `•` is the one marker with no escape of
+     * its own: a paragraph that opens with one and is not a list item
+     * comes back as a list item without it.
+     */
+    private fun escapeLineStart(line: String): String {
+        val space = line.takeWhile { it.isWhitespace() }
+        val rest = line.substring(space.length)
+        if (OPENS_A_BLOCK.containsMatchIn(rest)) return space + "\\" + rest
+        val counted = OPENS_A_COUNT.find(rest) ?: return line
+        val at = counted.groups[1]!!.range.first
+        return space + rest.substring(0, at) + "\\" + rest.substring(at)
+    }
+
+    /** What the importer reads at the head of a line as a heading or a bullet. */
+    private val OPENS_A_BLOCK = Regex("""^(#{1,3}|-) """)
+
+    /** A number that opens a list item, with the mark that makes it one. */
+    private val OPENS_A_COUNT = Regex("""^[0-9\u0660-\u0669\u06F0-\u06F9]{1,2}([.)])\s""")
 
     private fun headingPrefix(kind: ParagraphKind): String = when (kind) {
         ParagraphKind.TITLE, ParagraphKind.HEADING_1 -> "# "
@@ -151,50 +206,116 @@ object MarkdownWriter {
 
     private fun runsToMarkdown(runs: List<TextRun>, notes: Notes): String {
         val sb = StringBuilder()
-        for (run in runs) {
+        var index = 0
+        while (index < runs.size) {
+            val run = runs[index]
             // A mark that carries a note becomes the reference to it: the
             // mark is the run's own text, so it is what the reference
             // replaces, and the note itself waits at the end.
             val label = notes.labelOf(run)
             if (label != null) {
                 sb.append("[^").append(label).append("]")
+                index++
                 continue
             }
-            // A link the source carried. An address written out in full is
-            // left as it is: Markdown makes those live on their own, and
-            // "[a@b.com](mailto:a@b.com)" only says the same thing twice.
+            // A link is written around as many runs as carry it, so the
+            // emphasis inside one stays inside it rather than closing the
+            // link and opening it again.
+            var end = index + 1
+            while (end < runs.size && notes.labelOf(runs[end]) == null && runs[end].link == run.link) end++
+            val held = runs.subList(index, end)
             val link = run.link
-            if (link != null && run.text.isNotBlank() && !linksToItself(run.text.trim(), link)) {
-                sb.append(run.text.takeWhile { it.isWhitespace() })
-                sb.append("[").append(escape(run.text.trim())).append("](").append(link).append(")")
-                sb.append(run.text.takeLastWhile { it.isWhitespace() })
-                continue
+            val words = held.joinToString("") { it.text }
+            if (link != null && words.isNotBlank() && !linksToItself(words.trim(), link)) {
+                // A link the source carried. An address written out in
+                // full is left as it is: Markdown makes those live on
+                // their own, and "[a@b.com](mailto:a@b.com)" only says the
+                // same thing twice.
+                sb.append(words.takeWhile { it.isWhitespace() })
+                sb.append("[")
+                appendStruck(sb, trimmedRuns(held))
+                sb.append("](").append(link).append(")")
+                sb.append(words.takeLastWhile { it.isWhitespace() })
+            } else {
+                appendStruck(sb, held)
             }
-            val emphasis = when {
-                run.bold && run.italic -> "***"
-                run.bold -> "**"
-                run.italic -> "*"
-                else -> ""
-            }
-            // Struck-through text is written the way every Markdown that
-            // knows the idea writes it, outside the emphasis markers.
-            val marker = if (run.strikethrough) "~~" + emphasis else emphasis
-            val core = run.text.trim()
-            if (marker.isEmpty() || core.isEmpty()) {
-                // Unstyled text, or a whitespace-only styled run that no
-                // marker could legally wrap, is written as-is.
-                sb.append(escape(run.text))
-                continue
-            }
-            // Word routinely splits runs so styled text carries boundary
-            // whitespace; markers must hug non-whitespace or they will not
-            // re-parse (here or in CommonMark), so whitespace is hoisted
-            // outside the span.
-            sb.append(run.text.takeWhile { it.isWhitespace() })
-            sb.append(marker).append(escape(core)).append(marker.reversed())
-            sb.append(run.text.takeLastWhile { it.isWhitespace() })
+            index = end
         }
         return sb.toString()
+    }
+
+    /**
+     * [runs] with one pair of tildes around each stretch that is struck
+     * through, whatever changes inside it.
+     *
+     * Word splits a sentence into runs wherever it likes — at a
+     * spell-check boundary, at a language change, at nothing at all — and
+     * closing a marker only to open the same one again writes `~~a~~~~b~~`,
+     * whose four tildes are four tildes on the page: a run of more than two
+     * is not a marker here, and is not one in CommonMark either.
+     */
+    private fun appendStruck(sb: StringBuilder, runs: List<TextRun>) {
+        var index = 0
+        while (index < runs.size) {
+            val struck = runs[index].strikethrough
+            var end = index + 1
+            while (end < runs.size && runs[end].strikethrough == struck) end++
+            val held = runs.subList(index, end)
+            val words = held.joinToString("") { it.text }
+            if (!struck || words.isBlank()) {
+                appendEmphasis(sb, held)
+            } else {
+                // A marker must hug non-whitespace or it will not re-parse,
+                // so the space at either end is hoisted outside the pair.
+                sb.append(words.takeWhile { it.isWhitespace() })
+                sb.append("~~")
+                appendEmphasis(sb, trimmedRuns(held))
+                sb.append("~~")
+                sb.append(words.takeLastWhile { it.isWhitespace() })
+            }
+            index = end
+        }
+    }
+
+    /** [runs] with each stretch of one weight and slope written once. */
+    private fun appendEmphasis(sb: StringBuilder, runs: List<TextRun>) {
+        var index = 0
+        while (index < runs.size) {
+            val look = runs[index]
+            var end = index + 1
+            while (end < runs.size &&
+                runs[end].bold == look.bold &&
+                runs[end].italic == look.italic
+            ) end++
+            val words = runs.subList(index, end).joinToString("") { it.text }
+            val marker = when {
+                look.bold && look.italic -> "***"
+                look.bold -> "**"
+                look.italic -> "*"
+                else -> ""
+            }
+            val core = words.trim()
+            if (marker.isEmpty() || core.isEmpty()) {
+                // Unstyled text, or a stretch of nothing but whitespace
+                // that no marker could legally wrap, is written as it is.
+                sb.append(escape(words))
+            } else {
+                sb.append(words.takeWhile { it.isWhitespace() })
+                sb.append(marker).append(escape(core)).append(marker.reversed())
+                sb.append(words.takeLastWhile { it.isWhitespace() })
+            }
+            index = end
+        }
+    }
+
+    /** [runs] with the space at either end of the whole stretch taken off. */
+    private fun trimmedRuns(runs: List<TextRun>): List<TextRun> {
+        if (runs.isEmpty()) return runs
+        val out = runs.toMutableList()
+        out[0] = out[0].copy(text = out[0].text.trimStart())
+        val last = out.size - 1
+        out[last] = out[last].copy(text = out[last].text.trimEnd())
+        return out
     }
 
     /** Whether the link says no more than the text it sits on already does. */
