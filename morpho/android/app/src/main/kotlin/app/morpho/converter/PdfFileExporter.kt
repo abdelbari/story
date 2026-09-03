@@ -153,7 +153,13 @@ internal object PdfFileExporter {
     fun render(model: DocumentModel): ByteArray {
         val pdf = PdfDocument()
         try {
-            val sheet = Sheet.of(model.pageSetup)
+            // The sheet the document opens on, which is its own unless
+            // its first paragraph starts a section of another shape. Taken
+            // from the document alone, the turn would be made after the
+            // first page had already been opened, and the file would begin
+            // with a blank one.
+            val opening = (model.blocks.firstOrNull() as? Paragraph)?.style?.sectionSetup
+            val sheet = Sheet.of(opening ?: model.pageSetup)
             val furniture = Furniture(model, sheet)
             val cursor = Cursor(pdf, sheet) { canvas, ordinal -> furniture.draw(canvas, ordinal) }
             cursor.openPage()
