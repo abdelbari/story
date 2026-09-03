@@ -75,6 +75,49 @@ class PdfTableDetectionTest {
     }
 
     @Test
+    fun `a head centred over its columns is part of the table`() {
+        // A table's head is centred over columns whose figures are ranged
+        // right, so its cells begin nowhere near theirs and need not
+        // overlap them by a point. Read on start positions alone it is not
+        // part of the table at all, and a converted report keeps its
+        // numbers and loses the words that say what they count.
+        val model = PdfLayout.reconstruct(
+            listOf(
+                line("Item" to 100f, "Respondents" to 250f, "Share" to 430f),
+                line("Clear" to 72f, "48" to 300f, "80%" to 470f),
+                line("Vague" to 72f, "12" to 300f, "20%" to 470f),
+            ),
+            confidence = 0.6f,
+        )
+        val table = model.blocks.filterIsInstance<Table>().single()
+        assertEquals(3, table.rows.size, "the head was left out: ${table.rows.map { r -> r.cells.map { it.blocks } }}")
+        assertEquals(
+            listOf("Item", "Respondents", "Share"),
+            table.rows.first().cells.map { cell ->
+                cell.blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }
+            },
+        )
+    }
+
+    @Test
+    fun `a table is never founded on columns that only nearly line up`() {
+        // The guard on the reading above. Two lines with a wide gap in
+        // each of them share the clear space in the middle, and that is
+        // not enough to call them a table: the rows that prove one line
+        // up exactly, and only then may the rows around them join it on
+        // the looser reading.
+        val model = PdfLayout.reconstruct(
+            listOf(
+                line("alpha" to 72f, "beta" to 220f),
+                line("gamma" to 72f, "delta" to 300f),
+                line("epsilon" to 72f, "zeta" to 380f),
+            ),
+            confidence = 0.6f,
+        )
+        assertTrue(model.blocks.filterIsInstance<Table>().isEmpty())
+    }
+
+    @Test
     fun `misaligned columns stay paragraphs`() {
         val model = PdfLayout.reconstruct(
             listOf(

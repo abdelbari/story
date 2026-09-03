@@ -330,11 +330,13 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
             // neighbours — Word's Arabic justification leaves one inside a
             // word — is not a word break; the page shows one word.
             if (unicode.isBlank() && isSwallowed(ordered, index)) continue
-            if (inferBreaks && previous != null && previous.widthDirAdj > 0f &&
+            if (previous != null && previous.widthDirAdj > 0f &&
                 unicode.isNotBlank() && !visual.endsWith(' ')
             ) {
                 val gap = position.xDirAdj - (previous.xDirAdj + previous.widthDirAdj)
-                if (gap > WORD_GAP_FACTOR * position.fontSizeInPt) {
+                val enough =
+                    if (inferBreaks) WORD_GAP_FACTOR else WIDE_GAP_FACTOR
+                if (gap > enough * position.fontSizeInPt) {
                     visual.append(' ')
                     painters += null
                     starts += previous.xDirAdj + previous.widthDirAdj
@@ -506,6 +508,26 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         const val VISIBLE_SPACE_SHARE = 0.3f
         /** A gap wider than this share of the type size is a word break, where no space was painted. */
         const val WORD_GAP_FACTOR = 0.2f
+
+        /**
+         * A gap this many type sizes wide is a word break whatever else the
+         * line holds.
+         *
+         * A producer that paints its own spaces is trusted on where the
+         * words are, and a line of its is read exactly as painted — which
+         * is right until the "line" is a row of a table. Its cells stand
+         * apart by tens of points, and one cell holding a space of its own
+         * is enough to have every one of those gaps read as nothing: a
+         * head reading "Item Respondents Share" in English came back as
+         * three words and in Arabic as one, because the Arabic for
+         * "respondents" is two words and the English is one.
+         *
+         * Nothing inside a word is ever this wide. Word stretches the
+         * spaces of a justified Arabic line and draws a kashida through
+         * its letters; neither reaches two whole type sizes, and both are
+         * painted rather than left as a gap.
+         */
+        const val WIDE_GAP_FACTOR = 2f
         /** A smaller glyph off the line's baseline by this share of its type size is raised or lowered. */
         const val RAISED_SHARE = 0.2f
         /** A backward step no wider than this, right after the previous glyph, is kerning, not a new word. */

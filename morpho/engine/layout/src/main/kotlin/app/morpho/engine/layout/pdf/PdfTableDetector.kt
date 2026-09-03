@@ -73,8 +73,29 @@ object PdfTableDetector {
                 j++
             }
             if (j - i >= MIN_ROWS) {
-                regions += Region(start = i, end = j, rows = cells.subList(i, j).toList())
-                i = j
+                // The rows that stand in the same columns without being
+                // set the same way: a head centred over them, a line of
+                // totals ranged right under them. A table is never
+                // founded on that reading — two lines with a wide gap
+                // each are not a table because the gaps happen to
+                // overlap — but a table already proved by rows that line
+                // up exactly may take in the rows around it that share
+                // its columns.
+                val floor = regions.lastOrNull()?.end ?: 0
+                var from = i
+                while (from > floor && lines[from - 1].page == lines[i].page &&
+                    sameColumns(cells[i], cells[from - 1])
+                ) {
+                    from--
+                }
+                var to = j
+                while (to < lines.size && lines[to].page == lines[i].page &&
+                    sameColumns(cells[i], cells[to])
+                ) {
+                    to++
+                }
+                regions += Region(start = from, end = to, rows = cells.subList(from, to).toList())
+                i = to
             } else {
                 i++
             }
@@ -84,8 +105,42 @@ object PdfTableDetector {
 
     private fun aligns(template: List<PdfSegment>, candidate: List<PdfSegment>): Boolean {
         if (candidate.size != template.size) return false
-        return template.indices.all { column ->
-            abs(template[column].xStart - candidate[column].xStart) <= START_TOLERANCE_PT
+        if (template.indices.all { column ->
+                abs(template[column].xStart - candidate[column].xStart) <= START_TOLERANCE_PT
+            }
+        ) {
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Whether two rows stand in the same columns without being set the
+     * same way — a head centred over figures ranged right, a line of
+     * totals under columns of prose.
+     *
+     * Where the cells themselves are is the wrong question: a centred head
+     * and a ranged-right figure need not overlap by a point. What the two
+     * rows share is the clear space between their cells. The gutter of a
+     * column is where neither row put any ink, and two rows stand in the
+     * same columns when their gutters do — which reads the same whether a
+     * cell is centred, ranged left or ranged right.
+     *
+     * This is a looser reading than [aligns] and is only ever used to take
+     * in the rows around a table that rows lining up exactly have already
+     * proved. On its own it would call any two lines with a wide gap in
+     * them a table.
+     */
+    private fun sameColumns(template: List<PdfSegment>, candidate: List<PdfSegment>): Boolean {
+        if (candidate.size != template.size) return false
+        val here = gutters(template)
+        val there = gutters(candidate)
+        return here.indices.all { at ->
+            here[at].first < there[at].second && there[at].first < here[at].second
         }
     }
+
+    /** The clear space between each pair of neighbouring cells, left to right. */
+    private fun gutters(cells: List<PdfSegment>): List<Pair<Float, Float>> =
+        (0 until cells.size - 1).map { cells[it].xEnd to cells[it + 1].xStart }
 }

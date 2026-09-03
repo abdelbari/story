@@ -46,6 +46,46 @@ class ArabicTableTest {
         assertTrue(widths!![0] > widths[1], "the widths came back the wrong way round: " + widths)
     }
 
+    @Test
+    fun `a row whose cells hold spaces of their own still keeps them apart`() {
+        // A producer that paints its own spaces is trusted on where the
+        // words are, and a line of its is read exactly as painted — which
+        // is right until the line is a row of a table. One cell holding a
+        // space of its own was enough to have every gap between the cells
+        // read as nothing: a head reading "Item Respondents Share" came
+        // back as three words in English and as one in Arabic, because the
+        // Arabic for "respondents" is two words and the English is one.
+        val text = PdfReader().extract(headOnItsOwnPdf()).blocks
+            .filterIsInstance<Paragraph>().joinToString(" ") { it.text }
+        assertTrue(text.contains("البند عدد المجيبين"), "the cells were run together: $text")
+        assertTrue(text.contains("عدد المجيبين النسبة"), "the cells were run together: $text")
+    }
+
+    /** One row of three cells, the middle one two words, and nothing else on the page. */
+    private fun headOnItsOwnPdf(): ByteArray {
+        val out = ByteArrayOutputStream()
+        PDDocument().use { document ->
+            val page = PDPage(PDRectangle.A4)
+            document.addPage(page)
+            val font = PDType0Font.load(
+                document,
+                javaClass.getResourceAsStream("/fonts/NotoNaskhArabic-Regular.ttf")
+                    ?: error("test font missing"),
+            )
+            PDPageContentStream(document, page).use { content ->
+                for ((word, x) in listOf("البند" to 440f, "عدد المجيبين" to 260f, "النسبة" to 100f)) {
+                    content.beginText()
+                    content.setFont(font, 12f)
+                    content.newLineAtOffset(x, 700f)
+                    content.showText(word.reversed())
+                    content.endText()
+                }
+            }
+            document.save(out)
+        }
+        return out.toByteArray()
+    }
+
     /**
      * Two columns of Arabic, the wider one on the right, drawn as a PDF
      * draws them: each word painted where it stands, nothing tagged.
