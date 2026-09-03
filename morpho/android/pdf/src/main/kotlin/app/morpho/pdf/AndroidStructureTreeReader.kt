@@ -5,6 +5,7 @@ import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ExtractedText
+import app.morpho.engine.layout.Footnotes
 import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.ListLabels
 import app.morpho.engine.layout.ListMarker
@@ -1665,9 +1666,16 @@ internal object AndroidStructureTreeReader {
          * producer broke it, and the break is part of the document.
          */
         private fun markPageBreaks() {
+            // A note is pinned to the foot of its page whatever the text
+            // above it does, so a page whose text stopped half way still
+            // has ink near its bottom edge. Counted as the page's text, a
+            // paper's title page looks full to the margin and its break —
+            // the one break of the document a reader sees first — is lost.
+            val notes = Footnotes.noteBlocks(blocks)
             val lastBaselineByPage = HashMap<Int, Float>()
             val pitches = mutableListOf<Float>()
-            for (placement in placementByBlockIndex.values) {
+            for ((index, placement) in placementByBlockIndex) {
+                if (index in notes) continue
                 lastBaselineByPage.merge(placement.lastPage, placement.lastBaseline, ::maxOf)
                 placement.pitchPt?.let { pitches += it }
             }

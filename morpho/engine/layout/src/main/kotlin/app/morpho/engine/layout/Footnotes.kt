@@ -34,6 +34,24 @@ object Footnotes {
     /** A note as the page set it: its mark, where the mark is, and where its words are. */
     private class Found(val mark: String, val markIndex: Int, val bodyIndex: Int)
 
+    /**
+     * Which blocks are a page's notes rather than its text.
+     *
+     * A note is pinned to the foot of the page whatever the text above it
+     * does, so a page whose text stopped half way still has ink near its
+     * bottom edge. Anything measuring how far a page's text ran has to
+     * leave the notes out of it, and this says which they are — by the
+     * same reading [refine] uses to move them, before it moves them.
+     */
+    fun noteBlocks(blocks: List<Block>): Set<Int> {
+        val out = mutableSetOf<Int>()
+        for (found in notesIn(blocks)) {
+            out += found.markIndex
+            out += found.bodyIndex
+        }
+        return out
+    }
+
     /** [document] with each note moved onto the mark that refers to it. */
     fun refine(document: DocumentModel): DocumentModel {
         val notes = notesIn(document.blocks)

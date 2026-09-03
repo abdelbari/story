@@ -221,7 +221,7 @@ object PdfLayout {
         // The pages that filled up, and so the pages whose break was the
         // producer's doing rather than the page's: a paragraph — and a
         // table — carries over the first kind and not the second.
-        val filled = filledPages(lines, sheets)
+        val filled = filledPages(lines, sheets, rules)
         val deliberate = deliberateBreaks(lines, filled)
         // A table the page ruled says exactly where its cells are, wrapped
         // ones included, so it is asked first; the alignment of cells is
@@ -412,10 +412,25 @@ object PdfLayout {
      * one line to say what a line's step is, nothing is named filled: with
      * no evidence either way, a page ends what stood on it.
      */
-    private fun filledPages(lines: List<PdfLine>, sheets: List<PdfPageSheet>): Set<Int> {
+    private fun filledPages(
+        lines: List<PdfLine>,
+        sheets: List<PdfPageSheet>,
+        rules: List<PdfRule>,
+    ): Set<Int> {
         val byPage = lines.groupBy { it.page }
         if (byPage.size < 2) return emptySet()
         val heightByPage = sheets.associate { it.page to it.heightPt }
+        // A note is pinned to the foot of its page whatever the text above
+        // it does, so a page whose text stopped half way still has ink
+        // near its bottom edge. Counted as the page's text, a paper's
+        // title page looks full to the margin and the break a reader sees
+        // first is lost.
+        val noteEdges = noteEdges(byPage, heightByPage, rules)
+        fun bottomOf(pageLines: List<PdfLine>): Float {
+            val edge = noteEdges[pageLines.first().page] ?: return pageLines.maxOf { it.baselineY }
+            return pageLines.filter { it.baselineY < edge }.maxOfOrNull { it.baselineY }
+                ?: pageLines.maxOf { it.baselineY }
+        }
         val pitch = HeadingSizes.median(
             lines.sortedWith(compareBy({ it.page }, { it.baselineY }))
                 .zipWithNext { a, b -> if (a.page == b.page) b.baselineY - a.baselineY else 0f }
@@ -427,12 +442,12 @@ object PdfLayout {
         // leaves below its last line. A page that leaves much more than
         // that stopped before the sheet made it.
         val foot = known.minOfOrNull { (page, pageLines) ->
-            heightByPage.getValue(page) - pageLines.maxOf { it.baselineY }
+            heightByPage.getValue(page) - bottomOf(pageLines)
         } ?: return emptySet()
         return known.filterValues { pageLines ->
             val height = heightByPage.getValue(pageLines.first().page)
             val above = pageLines.minOf { it.baselineY }
-            val below = height - pageLines.maxOf { it.baselineY }
+            val below = height - bottomOf(pageLines)
             below <= foot + EARLY_BREAK_LINES * pitch &&
                 // And its text must cover the sheet the way a page of text
                 // does. A document may carry six lines at the top of every
@@ -440,6 +455,41 @@ object PdfLayout {
                 // while none of them is a page the sheet stopped.
                 above + below <= FILLED_SHARE * height
         }.keys
+    }
+
+    /** A rule this much of the page's own text width or less is a note's separator, not a border. */
+    private const val NOTE_RULE_SHARE = 0.6f
+
+    /** A note's separator is drawn at least this far down the page. */
+    private const val NOTE_RULE_DEPTH = 0.5f
+
+    /**
+     * Where each page drew the short rule it sets its notes under, in
+     * top-down points — the same rule [Footnotes] reads to know a note
+     * from a paragraph, asked here before the blocks exist.
+     *
+     * A page's own foot rule runs the width of the text and is not one;
+     * a note's is a stub at the start margin, a third of the measure or
+     * so, and everything below it belongs to the notes.
+     */
+    private fun noteEdges(
+        byPage: Map<Int, List<PdfLine>>,
+        heightByPage: Map<Int, Float>,
+        rules: List<PdfRule>,
+    ): Map<Int, Float> {
+        if (rules.isEmpty()) return emptyMap()
+        val edges = HashMap<Int, Float>()
+        for ((page, pageLines) in byPage) {
+            val height = heightByPage[page] ?: continue
+            val measure = pageLines.maxOfOrNull { it.xEnd - it.x }?.takeIf { it > 0f } ?: continue
+            rules.asSequence()
+                .filter { it.page == page }
+                .filter { it.y > NOTE_RULE_DEPTH * height }
+                .filter { it.right - it.left <= NOTE_RULE_SHARE * measure }
+                .minOfOrNull { it.y }
+                ?.let { edges[page] = it }
+        }
+        return edges
     }
 
     /**
