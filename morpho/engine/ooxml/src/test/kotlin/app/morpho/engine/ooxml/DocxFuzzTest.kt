@@ -3,17 +3,21 @@ package app.morpho.engine.ooxml
 import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
+import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.ListMarker
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.ParagraphStyle
 import app.morpho.engine.layout.Table
 import app.morpho.engine.layout.TableCell
+import app.morpho.engine.layout.RunField
 import app.morpho.engine.layout.TableGrid
 import app.morpho.engine.layout.TableRow
 import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import kotlin.random.Random
 
@@ -188,5 +192,129 @@ class DocxFuzzTest {
             val said = runsOf(document.blocks)
             assertEquals(look(document.blocks, said), look(back.blocks, said), "seed $seed: look")
         }
+    }
+
+    /**
+     * A document made of pictures as much as words: one in a line of text,
+     * one beside a tab stop the way a page's foot sets its number, one in
+     * a cell, one standing alone, and the page's own head and foot.
+     *
+     * A picture is a run with no text of its own. Three writers have now
+     * lost one to that — passed over because the paragraph holding it had
+     * no words to write — so each is asked to account for every picture it
+     * was given, in the places a picture actually turns up.
+     */
+    private inner class Pictured(private val random: Random) {
+
+        private fun picture() = ImageBlock(
+            bytes = PNG,
+            mimeType = "image/png",
+            widthPx = 8,
+            heightPx = 4,
+            widthPt = 16f,
+            heightPt = 8f,
+        )
+
+        private fun paragraph() = Paragraph(
+            runs = buildList {
+                if (random.nextBoolean()) add(TextRun("before "))
+                add(TextRun("", image = picture()))
+                if (random.nextBoolean()) add(TextRun("\t"))
+                if (random.nextBoolean()) add(TextRun("48", field = RunField.PAGE_NUMBER))
+            },
+            style = ParagraphStyle(
+                direction = if (random.nextBoolean()) TextDirection.RTL else TextDirection.LTR,
+                tabStopsPt = if (random.nextBoolean()) listOf(120f, 443f) else null,
+                listMarker = if (random.nextBoolean()) ListMarker.BULLET else null,
+            ),
+        )
+
+        fun document() = DocumentModel(
+            blocks = (1..random.nextInt(1, 5)).map {
+                when (random.nextInt(3)) {
+                    0 -> Table(listOf(TableRow(listOf(TableCell(listOf(paragraph())), TableCell(listOf(paragraph()))))))
+                    1 -> picture()
+                    else -> paragraph()
+                }
+            },
+            header = if (random.nextBoolean()) listOf(paragraph()) else emptyList(),
+            footer = if (random.nextBoolean()) listOf(paragraph()) else emptyList(),
+        )
+    }
+
+    /** How many pictures a document holds, wherever they are kept. */
+    private fun picturesIn(document: DocumentModel): Int {
+        var count = 0
+        fun walk(blocks: List<Block>) {
+            for (block in blocks) when (block) {
+                is Paragraph -> count += block.runs.count { it.image != null }
+                is Table -> for (row in block.rows) for (cell in row.cells) walk(cell.blocks)
+                is ImageBlock -> count++
+            }
+        }
+        walk(document.header)
+        walk(document.blocks)
+        walk(document.footer)
+        return count
+    }
+
+    @Test
+    fun `every picture of a document is drawn in the file`() {
+        for (seed in 1..200) {
+            val document = Pictured(Random(seed)).document()
+            val parts = partsOf(DocxWriter.toByteArray(document))
+            val drawings = listOf("word/document.xml", "word/header1.xml", "word/footer1.xml")
+                .mapNotNull { parts[it] }
+                .sumOf { Regex("<w:drawing>").findAll(it).count() }
+            assertEquals(picturesIn(document), drawings, "seed $seed")
+        }
+    }
+
+    @Test
+    fun `every picture a file draws is a picture the package holds`() {
+        for (seed in 1..200) {
+            val document = Pictured(Random(seed)).document()
+            val bytes = DocxWriter.toByteArray(document)
+            val parts = partsOf(bytes)
+            // Every relationship a drawing points at must be declared in
+            // the relationships of the part that draws it, and the file it
+            // names must be in the package. A picture Word cannot resolve
+            // is a red cross where the head of the page should be.
+            for (part in listOf("word/document.xml", "word/header1.xml", "word/footer1.xml")) {
+                val xml = parts[part] ?: continue
+                val rels = parts[part.replaceFirst("word/", "word/_rels/") + ".rels"].orEmpty()
+                for (match in Regex("""r:embed="([^"]+)"""").findAll(xml)) {
+                    val id = match.groupValues[1]
+                    val target = Regex("""Id="$id"[^>]*Target="([^"]+)"""").find(rels)?.groupValues?.get(1)
+                    assertNotNull(target, "seed $seed: $part draws $id with no relationship for it")
+                    assertTrue(
+                        parts.containsKey("word/" + target), 
+                        "seed $seed: $part points at word/$target, which the package does not hold",
+                    )
+                }
+            }
+        }
+    }
+
+    /** A real 1x1 PNG; what matters here is that every one of them arrives. */
+    private val PNG: ByteArray = java.util.Base64.getDecoder().decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAC0lEQVR4nGNgQAcAABIAAeRVjecAAAAASUVORK5CYII="
+    )
+
+    /** The package as its parts, the XML ones as text. */
+    private fun partsOf(docx: ByteArray): Map<String, String> {
+        val out = mutableMapOf<String, String>()
+        java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(docx)).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                val bytes = zip.readBytes()
+                out[entry.name] = if (entry.name.endsWith(".xml") || entry.name.endsWith(".rels")) {
+                    bytes.toString(Charsets.UTF_8)
+                } else {
+                    ""
+                }
+            }
+        }
+        return out
     }
 }

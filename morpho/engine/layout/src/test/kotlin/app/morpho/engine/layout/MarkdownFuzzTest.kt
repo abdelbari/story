@@ -207,4 +207,92 @@ class MarkdownFuzzTest {
             marked.map { (it.note!!.single() as Paragraph).text },
         )
     }
+
+    /**
+     * A document made of pictures as much as words: one in a line of text,
+     * one beside a tab, one in a cell, one standing alone, and the page's
+     * own head and foot.
+     *
+     * A picture is a run with no text of its own, and a writer that walks
+     * a paragraph asking it for its words passes over the picture without
+     * noticing. That is how a foot set as the page set it — the running
+     * head, a tab, the page number — came out of this writer as the
+     * number alone, and out of the preview the same way. Counting them is
+     * what catches it: every word is still there when the picture is gone.
+     */
+    private inner class Pictured(private val random: Random) {
+
+        private fun picture() = ImageBlock(
+            bytes = byteArrayOf(1, 2, 3, random.nextInt(256).toByte()),
+            mimeType = "image/png",
+            widthPx = 8,
+            heightPx = 4,
+            widthPt = 16f,
+            heightPt = 8f,
+        )
+
+        private fun paragraph() = Paragraph(
+            runs = buildList {
+                if (random.nextBoolean()) add(TextRun("before "))
+                add(TextRun("", image = picture()))
+                if (random.nextBoolean()) add(TextRun("\t"))
+                if (random.nextBoolean()) add(TextRun("after", link = "https://example.org"))
+            },
+            style = ParagraphStyle(
+                listMarker = if (random.nextBoolean()) ListMarker.BULLET else null,
+                tabStopsPt = if (random.nextBoolean()) listOf(120f, 443f) else null,
+            ),
+        )
+
+        fun document() = DocumentModel(
+            blocks = (1..random.nextInt(1, 5)).map {
+                when (random.nextInt(3)) {
+                    0 -> Table(listOf(TableRow(listOf(TableCell(listOf(paragraph())), TableCell(listOf(paragraph()))))))
+                    1 -> picture()
+                    else -> paragraph()
+                }
+            },
+            header = if (random.nextBoolean()) listOf(paragraph()) else emptyList(),
+            footer = if (random.nextBoolean()) listOf(paragraph()) else emptyList(),
+        )
+    }
+
+    /** How many pictures a document holds, wherever they are kept. */
+    private fun picturesIn(document: DocumentModel): Int {
+        var count = 0
+        fun walk(blocks: List<Block>) {
+            for (block in blocks) when (block) {
+                is Paragraph -> count += block.runs.count { it.image != null }
+                is Table -> for (row in block.rows) for (cell in row.cells) walk(cell.blocks)
+                is ImageBlock -> count++
+            }
+        }
+        walk(document.header)
+        walk(document.blocks)
+        walk(document.footer)
+        return count
+    }
+
+    @Test
+    fun `every picture of a document is written out`() {
+        for (seed in 1..200) {
+            val document = Pictured(Random(seed)).document()
+            val md = MarkdownWriter.write(document)
+            assertEquals(
+                picturesIn(document),
+                Regex("!\\[image]\\(data:").findAll(md).count(),
+                "seed $seed",
+            )
+        }
+    }
+
+    @Test
+    fun `nothing written as Markdown begins a line with a tab`() {
+        for (seed in 1..200) {
+            val md = MarkdownWriter.write(Pictured(Random(seed)).document())
+            // A line that begins with a tab is a block of code, which is
+            // not what a foot set to a tab stop meant to say.
+            assertTrue(md.lineSequence().none { it.startsWith("\t") }, "seed $seed: $md")
+        }
+    }
 }
