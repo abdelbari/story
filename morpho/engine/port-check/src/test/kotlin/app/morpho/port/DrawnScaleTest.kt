@@ -52,6 +52,19 @@ class DrawnScaleTest {
         }
     }
 
+    @Test
+    fun `the drawn page is set on the sheet the other writers use`() {
+        // The same drift, on the other axis: a document with no page of
+        // its own — a text file, a Markdown file — was written to Word as
+        // A4 with inch margins and drawn as A4 with two-thirds of an inch.
+        val body = bodyOf("fun of(measured: PageSetup?): Sheet")
+        assertTrue(body.isNotBlank(), "could not find Sheet.of in ${exporter.name}")
+        assertTrue(
+            body.contains("PageSetup.DEFAULT"),
+            "the drawn page invents a sheet for a document that measured none:\n$body",
+        )
+    }
+
     /**
      * The body of the function whose declaration contains [signature],
      * from its declaration to the blank line after it — enough to see

@@ -434,4 +434,37 @@ data class PageSetup(
      * the one page the original left clear.
      */
     val differentFirstPage: Boolean = false,
-)
+) {
+    companion object {
+        /**
+         * The sheet a document is set on when nothing measured one.
+         *
+         * A PDF and a Word file both say what page they are on, so this is
+         * for the documents that do not: a text file, a Markdown file, a
+         * page of prose typed anywhere. There were three answers to it and
+         * they were in three files — the Word writer set A4 with inch
+         * margins, the drawn page set A4 with two-thirds-of-an-inch ones,
+         * and the preview set no page at all, which left the print sheet
+         * to use whatever the framework thought. The same notes.md became
+         * three different documents depending which button was pressed.
+         *
+         * A4 because the app is written for readers who use it, and an
+         * inch of margin because that is what a word processor opens a
+         * blank document with — and because the Word file was already
+         * doing it, so this is the answer that was already right. The
+         * numbers are the ones that land exactly on Word's own twentieths
+         * of a point: 11906 by 16838, margins of 1440, head and foot at
+         * 708.
+         */
+        val DEFAULT = PageSetup(
+            widthPt = 595.3f,
+            heightPt = 841.9f,
+            marginTopPt = 72f,
+            marginBottomPt = 72f,
+            marginLeftPt = 72f,
+            marginRightPt = 72f,
+            headerDistancePt = 35.4f,
+            footerDistancePt = 35.4f,
+        )
+    }
+}

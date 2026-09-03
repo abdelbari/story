@@ -1339,13 +1339,12 @@ object DocxWriter {
         if (document.evenHeader.isNotEmpty()) sb.append("""<w:headerReference w:type="even" r:id="$EVEN_HEADER_REL_ID"/>""")
         if (document.footer.isNotEmpty()) sb.append("""<w:footerReference w:type="default" r:id="$FOOTER_REL_ID"/>""")
         if (document.evenFooter.isNotEmpty()) sb.append("""<w:footerReference w:type="even" r:id="$EVEN_FOOTER_REL_ID"/>""")
-        // The source's own page when the reader measured it; else A4
-        // portrait with 2.54 cm margins (values in twentieths of a point).
-        if (page == null) {
-            sb.append("""<w:pgSz w:w="11906" w:h="16838"/>""")
-            sb.append("""<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" """)
-            sb.append("""w:header="708" w:footer="708" w:gutter="0"/>""")
-        } else {
+        // The source's own page when the reader measured it; else the sheet
+        // a document with none is set on, which the drawn page and the
+        // preview take from the same place — three files had three answers
+        // to it and the same notes.md came out three different documents.
+        run {
+            val page = page ?: PageSetup.DEFAULT
             val landscape = if (page.widthPt > page.heightPt) """ w:orient="landscape"""" else ""
             sb.append("""<w:pgSz w:w="${twips(page.widthPt)}" w:h="${twips(page.heightPt)}"$landscape/>""")
             sb.append("""<w:pgMar w:top="${twips(page.marginTopPt)}" w:right="${twips(page.marginRightPt)}" """)

@@ -641,11 +641,18 @@ object HtmlWriter {
     private fun hexColor(rgb: Int): String = "#%06x".format(rgb and 0xFFFFFF)
 
     /**
-     * The source's page, when a reader measured it, as the sheet the print
-     * framework lays this out on and the margins the preview keeps.
+     * The source's page as the sheet the print framework lays this out on
+     * and the margins the preview keeps — and, where nothing measured one,
+     * the sheet a document with no page of its own is set on.
+     *
+     * Writing no rule at all left the print sheet to lay a text file out
+     * on whatever page the framework preferred, at whatever margins, while
+     * the same file converted to Word came out A4 with inch margins: the
+     * one route that makes a PDF by printing disagreed with the one that
+     * writes a .docx about what page the document was even on.
      */
-    private fun pageCss(page: PageSetup?, direction: TextDirection): String {
-        if (page == null) return ""
+    private fun pageCss(setup: PageSetup?, direction: TextDirection): String {
+        val page = setup ?: PageSetup.DEFAULT
         val margins = "${pt(page.marginTopPt)} ${pt(page.marginRightPt)} " +
             "${pt(page.marginBottomPt)} ${pt(page.marginLeftPt)}"
         // A running head is set against the page and reaches into the

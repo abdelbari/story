@@ -94,12 +94,16 @@ internal object PdfFileExporter {
 
     private const val CELL_PADDING = 4f
     private const val PX_TO_PT = 0.75f
-    /** A4 in points, and the margins a document that measured none is given. */
-    private const val DEFAULT_WIDTH = 595
-    private const val DEFAULT_HEIGHT = 842
-    private const val DEFAULT_MARGIN = 48f
-    /** Where a running head or foot sits when the source did not say: half an inch in. */
-    private const val DEFAULT_FURNITURE_DISTANCE = 36f
+    /**
+     * The margins a page gets when the ones it was measured with leave no
+     * room to write in — a rescue, not a default: the sheet a document
+     * with no page at all is set on is [PageSetup.DEFAULT], which every
+     * other writer uses too. Smaller than that on purpose, since the page
+     * being rescued is as likely to be a slide or a receipt as a sheet of
+     * A4, and an inch of margin on either side of a narrow one leaves
+     * nothing.
+     */
+    private const val SANE_MARGIN = 48f
     /** However wide the margins claim to be, this much page is kept for text. */
     private const val MIN_CONTENT_PT = 120f
     /** A raised or lowered run is set this much smaller, as Word sets one. */
@@ -132,14 +136,15 @@ internal object PdfFileExporter {
         val contentHeight: Float = height - marginTop - marginBottom
 
         companion object {
-            fun of(page: PageSetup?): Sheet {
-                if (page == null || page.widthPt < 1f || page.heightPt < 1f) {
-                    return Sheet(
-                        DEFAULT_WIDTH, DEFAULT_HEIGHT,
-                        DEFAULT_MARGIN, DEFAULT_MARGIN, DEFAULT_MARGIN, DEFAULT_MARGIN,
-                        DEFAULT_FURNITURE_DISTANCE, DEFAULT_FURNITURE_DISTANCE, 1,
-                    )
-                }
+            fun of(measured: PageSetup?): Sheet {
+                // Nothing measured a page, or what it measured is not one:
+                // the sheet a document with no page of its own is set on,
+                // which is the same sheet the .docx says and the same the
+                // preview prints. Three files used to answer this three
+                // ways and the same notes.md came out three documents.
+                val page = measured
+                    ?.takeIf { it.widthPt >= 1f && it.heightPt >= 1f }
+                    ?: PageSetup.DEFAULT
                 val width = page.widthPt.roundToInt()
                 val height = page.heightPt.roundToInt()
                 // A measurement that leaves no room to write is not one to
@@ -150,12 +155,12 @@ internal object PdfFileExporter {
                 return Sheet(
                     width = width,
                     height = height,
-                    marginTop = if (vertical) page.marginTopPt else DEFAULT_MARGIN,
-                    marginBottom = if (vertical) page.marginBottomPt else DEFAULT_MARGIN,
-                    marginLeft = if (horizontal) page.marginLeftPt else DEFAULT_MARGIN,
-                    marginRight = if (horizontal) page.marginRightPt else DEFAULT_MARGIN,
-                    headerDistance = page.headerDistancePt?.takeIf { it >= 0f } ?: DEFAULT_FURNITURE_DISTANCE,
-                    footerDistance = page.footerDistancePt?.takeIf { it >= 0f } ?: DEFAULT_FURNITURE_DISTANCE,
+                    marginTop = if (vertical) page.marginTopPt else SANE_MARGIN,
+                    marginBottom = if (vertical) page.marginBottomPt else SANE_MARGIN,
+                    marginLeft = if (horizontal) page.marginLeftPt else SANE_MARGIN,
+                    marginRight = if (horizontal) page.marginRightPt else SANE_MARGIN,
+                    headerDistance = page.headerDistancePt?.takeIf { it >= 0f } ?: PageSetup.DEFAULT.headerDistancePt!!,
+                    footerDistance = page.footerDistancePt?.takeIf { it >= 0f } ?: PageSetup.DEFAULT.footerDistancePt!!,
                     firstPageNumber = page.firstPageNumber,
                 )
             }
