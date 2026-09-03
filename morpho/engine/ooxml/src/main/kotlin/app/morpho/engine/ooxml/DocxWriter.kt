@@ -1,9 +1,9 @@
 package app.morpho.engine.ooxml
 
-import kotlin.math.roundToInt
 import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.Comment
+import app.morpho.engine.layout.DocumentFormats
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.Links
@@ -23,6 +23,7 @@ import java.nio.charset.StandardCharsets
 import java.util.IdentityHashMap
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlin.math.roundToInt
 
 /**
  * Writes a [DocumentModel] as a minimal, valid WordprocessingML (.docx)
@@ -44,8 +45,12 @@ import java.util.zip.ZipOutputStream
  */
 object DocxWriter {
 
-    const val MIME_TYPE: String =
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    /**
+     * The one definition lives with the rest of what the app has to know
+     * about file types; a second copy of a string this long is a typo
+     * waiting to be made in one place and not the other.
+     */
+    const val MIME_TYPE: String = DocumentFormats.WORD_MIME
 
     private const val W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 

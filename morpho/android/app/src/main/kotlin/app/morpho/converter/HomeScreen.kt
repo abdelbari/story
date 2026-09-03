@@ -40,15 +40,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import app.morpho.engine.layout.DocumentFormats
 import app.morpho.engine.ooxml.DocxWriter
 
-private val inputMimeTypes = arrayOf(
-    "text/plain",
-    "text/markdown",
-    "text/*",
-    DocxWriter.MIME_TYPE,
-    "application/pdf",
-)
+// The types the picker offers, off the same list the converter decides by:
+// a type offered here and refused there wastes the reader's pick, and one
+// read there and not offered here is a file they are never shown.
+private val inputMimeTypes = DocumentFormats.PICKABLE_MIME_TYPES.toTypedArray()
 
 @Composable
 fun HomeScreen(viewModel: ConvertViewModel) {

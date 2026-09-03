@@ -6,6 +6,7 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.morpho.engine.layout.DocumentFormats
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.FidelityReport
 import app.morpho.engine.layout.HtmlWriter
@@ -308,9 +309,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             val state = ConvertUiState.Picked(
                 fileName = name,
                 mime = mime,
-                isWordDocument = mime == DocxWriter.MIME_TYPE ||
-                    name.lowercase().endsWith(".docx"),
-                isPdf = mime == "application/pdf" || name.lowercase().endsWith(".pdf"),
+                isWordDocument = DocumentFormats.isWord(name, mime),
+                isPdf = DocumentFormats.isPdf(name, mime),
             )
             // A newer pick while this query was in flight wins outright.
             if (epoch != pickEpoch) return@launch
@@ -388,11 +388,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
      * A null or blank provider MIME alone is no evidence of text — an
      * unknown binary would convert to garbage. Extensions decide.
      */
-    private fun looksTextual(source: ConvertUiState.Picked): Boolean {
-        val lowerName = source.fileName.lowercase()
-        return source.mime.orEmpty().startsWith("text/") ||
-            listOf(".txt", ".md", ".markdown").any { lowerName.endsWith(it) }
-    }
+    private fun looksTextual(source: ConvertUiState.Picked): Boolean =
+        DocumentFormats.isPlainText(source.fileName, source.mime)
 
     /** Model for the PDF-export paths; refuses inputs that aren't documents. */
     private fun modelOf(bytes: ByteArray, source: ConvertUiState.Picked): DocumentModel = when {
@@ -448,8 +445,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         // to the conversion that now owns them.
         if (epoch != pickEpoch) return
 
-        val base = source.fileName.substringBeforeLast('.').ifEmpty { "converted" }
-        outputName = "$base.$extension"
+        outputName = DocumentFormats.outputName(source.fileName, extension)
         lastModel = model
         lastPreviewHtml = HtmlWriter.write(model, outputName)
         lastPreviewPdf = previewPages(model)
@@ -572,7 +568,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                 publish(epoch, ConvertUiState.Failed(FailReason.READ_ERROR))
                 return@launch
             }
-            val jobName = source.fileName.substringBeforeLast('.').ifEmpty { "document" }
+            val jobName = DocumentFormats.baseName(source.fileName, whenEmpty = "document")
             try {
                 // The page this becomes is a PDF, not a preview: it
                 // carries no notes, so that printing a commented
@@ -699,7 +695,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     }
 
     companion object {
-        const val MARKDOWN_MIME = "text/markdown"
-        const val PDF_MIME = "application/pdf"
+        const val MARKDOWN_MIME = DocumentFormats.MARKDOWN_MIME
+        const val PDF_MIME = DocumentFormats.PDF_MIME
     }
 }
