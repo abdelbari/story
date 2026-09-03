@@ -279,4 +279,13 @@ data class PageSetup(
     val footerDistancePt: Float? = null,
     /** The number the first page carries — a journal article starts where the issue left off. */
     val firstPageNumber: Int = 1,
+    /**
+     * The first page keeps neither the running head nor the foot: a report
+     * whose title page carries no header, which is most of them.
+     *
+     * Told nothing, a converter stamps the running head onto the title
+     * page — the one page of the document a reader looks at hardest, and
+     * the one page the original left clear.
+     */
+    val differentFirstPage: Boolean = false,
 )

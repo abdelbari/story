@@ -42,7 +42,7 @@ class RunningFurnitureTest {
     }
 
     /** Five pages of prose, each under a running head and over its number. */
-    private fun paper(head: String?, firstNumber: Int?): ByteArray {
+    private fun paper(head: String?, firstNumber: Int?, fromPage: Int = 0): ByteArray {
         PDDocument().use { doc ->
             for (page in 0 until 5) {
                 val sheet = PDPage(PDRectangle.A4)
@@ -55,7 +55,9 @@ class RunningFurnitureTest {
                         content.showText(text)
                         content.endText()
                     }
-                    if (head != null) show(PDType1Font.HELVETICA_OBLIQUE, 9f, margin, 800f, head)
+                    if (head != null && page >= fromPage) {
+                        show(PDType1Font.HELVETICA_OBLIQUE, 9f, margin, 800f, head)
+                    }
                     var y = 740f
                     for (piece in 1..4) {
                         val text = "Paragraph $piece of page ${page + 1}. It runs on for a sentence " +
@@ -67,7 +69,7 @@ class RunningFurnitureTest {
                         }
                         y -= 10f
                     }
-                    if (firstNumber != null) {
+                    if (firstNumber != null && page >= fromPage) {
                         show(PDType1Font.HELVETICA, 9f, 290f, 50f, (firstNumber + page).toString())
                     }
                 }
@@ -106,5 +108,25 @@ class RunningFurnitureTest {
         val model = PdfReader().extract(paper(head = null, firstNumber = null))
         assertTrue(model.header.isEmpty() && model.footer.isEmpty())
         assertEquals(20, model.blocks.size)
+    }
+
+    @Test
+    fun `a title page that carried no running head keeps none`() {
+        // The head and the number begin on page two, which is how a report
+        // with a title page is set. Stamping the head onto page one would
+        // put it on the one page the original left clear.
+        val model = PdfReader().extract(paper("The Journal of Something, Volume 4", 48, fromPage = 1))
+        assertEquals(
+            "The Journal of Something, Volume 4",
+            (model.header.single() as Paragraph).text.trim(),
+            "the head the other pages carry is still the document's",
+        )
+        assertTrue(model.pageSetup?.differentFirstPage == true, "and page one is its own")
+    }
+
+    @Test
+    fun `a paper that heads every page has no first page of its own`() {
+        val model = PdfReader().extract(paper("The Journal of Something, Volume 4", 48))
+        assertTrue(model.pageSetup?.differentFirstPage == false)
     }
 }

@@ -575,4 +575,53 @@ class LookRoundTripTest {
     private val PNG: ByteArray = java.util.Base64.getDecoder().decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAC0lEQVR4nGNgQAcAABIAAeRVjecAAAAASUVORK5CYII="
     )
+
+    @Test
+    fun `a title page of its own survives the round trip`() {
+        val document = DocumentModel(
+            blocks = listOf(Paragraph(listOf(TextRun("body")))),
+            pageSetup = PageSetup(
+                595f, 842f, 56f, 72f, 56f, 84f,
+                headerDistancePt = 30f, footerDistancePt = 40f,
+                firstPageNumber = 48, differentFirstPage = true,
+            ),
+            header = listOf(Paragraph(listOf(TextRun("The Journal of Something")))),
+        )
+        val docx = DocxWriter.toByteArray(document)
+        val xml = partOf(docx, "word/document.xml")
+        // The schema puts w:titlePg after the numbering, and Word reads a
+        // section whose children are out of order as no section at all.
+        val section = xml.substring(xml.lastIndexOf("<w:sectPr"))
+        assertTrue(section.contains("<w:titlePg/>"), section)
+        assertTrue(
+            section.indexOf("<w:pgNumType") < section.indexOf("<w:titlePg/>"),
+            "w:titlePg must follow the numbering: $section",
+        )
+        // And no first-page reference is declared, so the page shows none.
+        assertFalse(section.contains("""w:type="first""""), section)
+        assertEquals(true, DocxReader.read(docx).pageSetup?.differentFirstPage)
+    }
+
+    @Test
+    fun `a document that heads every page writes no title page`() {
+        val document = DocumentModel(
+            blocks = listOf(Paragraph(listOf(TextRun("body")))),
+            pageSetup = PageSetup(595f, 842f, 56f, 72f, 56f, 84f),
+            header = listOf(Paragraph(listOf(TextRun("The Journal of Something")))),
+        )
+        val docx = DocxWriter.toByteArray(document)
+        assertFalse(partOf(docx, "word/document.xml").contains("<w:titlePg/>"))
+        assertEquals(false, DocxReader.read(docx).pageSetup?.differentFirstPage)
+    }
+
+    /** One part of a package, as text. */
+    private fun partOf(docx: ByteArray, name: String): String {
+        java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(docx)).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                if (entry.name == name) return zip.readBytes().toString(Charsets.UTF_8)
+            }
+        }
+        throw AssertionError("$name is not in the package")
+    }
 }

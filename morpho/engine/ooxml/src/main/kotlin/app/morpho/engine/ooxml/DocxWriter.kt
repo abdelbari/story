@@ -1051,7 +1051,11 @@ object DocxWriter {
         sb.append("</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>")
     }
 
-    /** Children of w:sectPr in schema order: the header and footer references, the sheet, its margins, the numbering. */
+    /**
+     * Children of w:sectPr in schema order: the header and footer
+     * references, the sheet, its margins, the numbering, and whether the
+     * first page keeps any of it.
+     */
     private fun sectPr(document: DocumentModel, page: PageSetup?): String {
         val sb = StringBuilder("<w:sectPr>")
         if (document.header.isNotEmpty()) sb.append("""<w:headerReference w:type="default" r:id="$HEADER_REL_ID"/>""")
@@ -1072,6 +1076,13 @@ object DocxWriter {
             sb.append("""w:header="$header" w:footer="$footer" w:gutter="0"/>""")
             if (page.firstPageNumber != 1) sb.append("""<w:pgNumType w:start="${page.firstPageNumber}"/>""")
         }
+        // A first page of its own, with no reference declared for it, is a
+        // first page that shows neither head nor foot — which is what a
+        // title page that carried none should come back as. It goes last:
+        // w:titlePg follows the numbering in the schema's own order, and
+        // Word reads a section whose children are out of order as no
+        // section at all.
+        if (page?.differentFirstPage == true) sb.append("<w:titlePg/>")
         return sb.append("</w:sectPr>").toString()
     }
 

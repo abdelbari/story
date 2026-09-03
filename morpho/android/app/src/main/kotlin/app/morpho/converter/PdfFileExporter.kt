@@ -308,8 +308,7 @@ internal object PdfFileExporter {
      * its picture, its tabs to the stops the source measured, and its
      * page-number field with this page's number — because that is what it
      * is on the page, and a text layout would wrap or reorder it.
-     */
-    /**
+     *
      * [opening] is the sheet the document opens on, which is where its
      * pages are numbered from; every other measurement is made against
      * the sheet the page being drawn is set on, since a document turns a
@@ -319,7 +318,14 @@ internal object PdfFileExporter {
     private class Furniture(private val model: DocumentModel, private val opening: Sheet) {
         private val bitmaps = IdentityHashMap<ImageBlock, Bitmap?>()
 
+        /** The document's own first page keeps neither head nor foot. */
+        private val clearFirstPage = model.pageSetup?.differentFirstPage == true
+
         fun draw(canvas: Canvas, ordinal: Int, sheet: Sheet) {
+            // A title page that carried no running head keeps none: it is
+            // the one page of a document a reader looks at hardest, and the
+            // one the original left clear.
+            if (clearFirstPage && ordinal == 1) return
             val number = opening.firstPageNumber + ordinal - 1
             if (model.header.isNotEmpty()) {
                 var y = sheet.headerDistance

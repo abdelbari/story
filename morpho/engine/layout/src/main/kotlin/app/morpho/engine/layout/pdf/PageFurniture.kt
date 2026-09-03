@@ -64,6 +64,8 @@ object PageFurniture {
         val footerDistancePt: Float? = null,
         /** The number the document's first page carries, when its pages number themselves. */
         val firstPageNumber: Int? = null,
+        /** The first page carried none of it: a title page, left clear. */
+        val differentFirstPage: Boolean = false,
     )
 
     /**
@@ -314,6 +316,11 @@ object PageFurniture {
             headerDistancePt = headerDistance,
             footerDistancePt = footerDistance,
             firstPageNumber = counted?.let { it.offset + 1 },
+            // A title page carries no running head, and the reference page
+            // is the second one for exactly that reason. Stamping the head
+            // it found onto page one would put it on the one page of the
+            // document the original deliberately left clear.
+            differentFirstPage = 1 !in furnished && (header.isNotEmpty() || footer.isNotEmpty()),
         )
     }
 

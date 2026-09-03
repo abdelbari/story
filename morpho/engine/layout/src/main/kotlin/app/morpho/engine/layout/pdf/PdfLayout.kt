@@ -160,6 +160,7 @@ object PdfLayout {
                 headerDistancePt = split.headerDistancePt ?: page.headerDistancePt,
                 footerDistancePt = split.footerDistancePt ?: page.footerDistancePt,
                 firstPageNumber = split.firstPageNumber ?: page.firstPageNumber,
+                differentFirstPage = split.differentFirstPage,
             ),
         )
     }

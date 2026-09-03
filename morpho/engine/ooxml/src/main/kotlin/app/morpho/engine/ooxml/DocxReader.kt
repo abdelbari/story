@@ -787,6 +787,10 @@ object DocxReader {
             headerDistancePt = margins?.let { twips(attr(it, "header")) },
             footerDistancePt = margins?.let { twips(attr(it, "footer")) },
             firstPageNumber = firstChild(sectPr, "pgNumType")?.let { attr(it, "start") }?.trim()?.toIntOrNull() ?: 1,
+            // A section with a first page of its own keeps neither head nor
+            // foot on it unless it names one for it, which is how a title
+            // page comes to be clear.
+            differentFirstPage = isOn(firstChild(sectPr, "titlePg")),
         )
     }
 

@@ -134,6 +134,8 @@ private class Furnishings(
     val headerDistancePt: Float?,
     val footerDistancePt: Float?,
     val firstPageNumber: Int,
+    /** The first page carried none of it: a title page, left clear. */
+    val differentFirstPage: Boolean = false,
 ) {
     companion object {
         val NONE = Furnishings(emptyList(), emptyList(), null, null, 1)
@@ -1083,7 +1085,14 @@ internal object AndroidStructureTreeReader {
 
             val (header, headerDistance) = side(atTop = true)
             val (footer, footerDistance) = side(atTop = false)
-            return Furnishings(header, footer, headerDistance, footerDistance, firstPageNumber)
+            // A title page carries no running head, and the reference page
+            // is the second one for exactly that reason. Stamping the head
+            // it found onto page one would put it on the one page of the
+            // document the original deliberately left clear.
+            val bare = furnitureByPage.isNotEmpty() &&
+                furnitureByPage[0].isNullOrEmpty() &&
+                (header.isNotEmpty() || footer.isNotEmpty())
+            return Furnishings(header, footer, headerDistance, footerDistance, firstPageNumber, bare)
         }
 
         /** The box, in top-down page points, that a page's furniture occupies. */
@@ -1305,6 +1314,7 @@ internal object AndroidStructureTreeReader {
                         headerDistancePt = furnishings.headerDistancePt,
                         footerDistancePt = furnishings.footerDistancePt,
                         firstPageNumber = furnishings.firstPageNumber,
+                        differentFirstPage = furnishings.differentFirstPage,
                     ),
                     header = furnishings.header,
                     footer = furnishings.footer,
