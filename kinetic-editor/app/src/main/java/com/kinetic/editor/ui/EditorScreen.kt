@@ -35,7 +35,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -403,10 +402,8 @@ private fun ToolBar(
         ToolButton("+ Music") { musicPicker.launch(arrayOf("audio/*")) }
         ToolButton("+ PiP") { pipPicker.launch(arrayOf("video/*")) }
         ToolButton("+ Text") { vm.addText(viewport.playheadMs) }
-        var stickerIndex by remember { mutableIntStateOf(0) }
         ToolButton("+ Sticker") {
-            vm.addSticker(viewport.playheadMs, STICKER_ASSETS[stickerIndex % STICKER_ASSETS.size])
-            stickerIndex++
+            vm.addSticker(viewport.playheadMs, STICKER_ASSETS.first().second)
         }
         ToolButton(if (recording) "■ Stop" else "● Rec") {
             if (recording) {
@@ -590,6 +587,24 @@ private fun ClipInspector(
 
         // Sticker placement: the same numbers the export overlay consumes.
         clip.sticker?.let { spec ->
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                for ((label, asset) in STICKER_ASSETS) {
+                    val active = spec.assetPath == asset
+                    TextButton(onClick = {
+                        dispatch(EditorIntent.SetSticker(clip.id, spec.copy(assetPath = asset)))
+                    }) {
+                        Text(
+                            label,
+                            fontSize = 12.sp,
+                            color = if (active) Color(0xFF35C4B5) else Color(0xFF9A9AA5),
+                        )
+                    }
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 InspectorSlider("Size", spec.scale, 0.05f..0.8f) {
                     dispatch(EditorIntent.SetSticker(clip.id, spec.copy(scale = it)))
@@ -879,10 +894,15 @@ private const val NOTICE_MS = 4_000L
 private const val FILM_LUT_ASSET = "luts/teal_orange.png"
 
 /** Bundled sticker assets; the "+ Sticker" button cycles through them. */
+/** The sticker set, labelled for the inspector's picker. */
 private val STICKER_ASSETS = listOf(
-    "stickers/star.png",
-    "stickers/heart.png",
-    "stickers/arrow.png",
+    "Star" to "stickers/star.png",
+    "Heart" to "stickers/heart.png",
+    "Arrow" to "stickers/arrow.png",
+    "Sparkle" to "stickers/sparkle.png",
+    "Ring" to "stickers/ring.png",
+    "Bolt" to "stickers/bolt.png",
+    "Bubble" to "stickers/bubble.png",
 )
 
 private fun formatMs(ms: Long): String {

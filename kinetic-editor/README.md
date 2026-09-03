@@ -315,7 +315,7 @@ the exporter — the model, the preview and the export path agree on all three.
 | Transitions | dip-to-black, wipe, zoom-punch on any clip boundary |
 | Audio | music and voiceover lanes, per-clip volume, fade in/out, track mute |
 | Text | editable content (multi-line), four type faces, bold, italic, eight colours, size, position, and five entrance animations (cut, fade, pop, rise, type-on) |
-| Stickers | size, position, rotation, and the same animations text uses |
+| Stickers | seven shapes, swappable from the inspector, with size, position, rotation and the same animations text uses |
 | Overlays | picture-in-picture (size, position, rotation, opacity) — every control is the number the export consumes |
 | Looks | eight one-tap filters that set the same grade/LUT fields the sliders edit, so a preset is a starting point rather than a mode |
 | Canvas | 9:16, 16:9, 1:1 and 4:5 presets, each fitted, filled (cropped) or stretched — applied by the same `Presentation` in preview and export |
@@ -438,7 +438,7 @@ kinetic-editor/
     ├── AndroidManifest.xml
     ├── res/                     strings, colors, dark theme, adaptive icon
     ├── assets/luts/             64-cube film LUT (matches the shader layout)
-    ├── assets/stickers/         sticker art
+    ├── assets/stickers/         sticker art (hand-encoded PNGs, see below)
     └── java/com/kinetic/editor/
         ├── MainActivity.kt · KineticApp.kt   entry point, onStop -> background
         ├── core/
@@ -468,6 +468,15 @@ kinetic-editor/
             ├── VolumeEnvelopeAudioProcessor.kt
             └── VoiceRecorder.kt         WAV voiceover capture + level meter
 ```
+
+### About the sticker art
+
+The shapes are defined as inside/outside predicates in normalised coordinates
+and rasterised 4x supersampled straight into PNG bytes — no imaging library was
+available where they were authored, and `zlib` plus `struct` turn out to be
+enough. Replacing them with real artwork means dropping files into
+`assets/stickers/` and adding a line to `STICKER_ASSETS`; nothing else knows
+how they were made.
 
 ## API drift notes
 
