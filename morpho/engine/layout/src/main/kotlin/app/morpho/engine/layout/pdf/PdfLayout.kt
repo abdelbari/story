@@ -29,10 +29,9 @@ import kotlin.math.min
  * [PARAGRAPH_GAP_FACTOR] times the page's median line pitch, on a marked
  * font-size change, or on a marked left-edge indentation shift; every other
  * line break is treated as a soft wrap and unwrapped by [LineJoiner].
- * The indent check reads the left edge, which for right-to-left lines is the
- * ragged side, so it is skipped when either neighbouring line starts with a
- * right-to-left character; it also cannot tell a first-line indent from a
- * block indent yet.
+ * The indent check reads the edge a line starts at — its left on a
+ * left-to-right page, its right on a right-to-left one — and cannot yet
+ * tell a first-line indent from a block indent.
  *
  * Headings: the body size is the median font size over the non-table lines,
  * and a cluster of at most [MAX_HEADING_LINES] lines that [HeadingSizes]
@@ -49,6 +48,23 @@ import kotlin.math.min
 object PdfLayout {
 
     private const val PARAGRAPH_GAP_FACTOR = 1.6f
+
+    /**
+     * The space a producer must have put between two paragraphs, over and
+     * above the page's own line pitch, in type sizes.
+     *
+     * A multiple of the pitch alone will not do. The space a document sets
+     * between its paragraphs is a share of its type size — Word's default
+     * eight points, a browser's one em — while the pitch is a share of the
+     * type size too, so the *ratio* of the two falls as a document is set
+     * more openly. Set at a line and a half, a page's paragraphs stand out
+     * by two thirds of their pitch; set at one and seven tenths, by less
+     * than six tenths — under any fixed multiple that admitted the first.
+     * The same page in English split into its paragraphs and in Arabic did
+     * not, missing by a seventh of a point, because Arabic is set with the
+     * leading its ascenders and its marks need.
+     */
+    private const val PARAGRAPH_SPACE_SHARE = 0.6f
     private const val FONT_CHANGE_FACTOR = 1.2f
     private const val INDENT_SHIFT_PT = 18f
     private const val MAX_HEADING_LINES = 2
@@ -801,10 +817,14 @@ object PdfLayout {
         // rule about gaps alone reads a page of items as one paragraph,
         // and a converted checklist comes back as a wall of prose.
         if (ListLabels.opensWithLabel(line.text)) return true
-        val pitch =
-            if (medianPitch > 0f) medianPitch
-            else FALLBACK_PITCH_FACTOR * max(previous.maxFontSize, line.maxFontSize)
-        if (pitch > 0f && line.baselineY - previous.baselineY > PARAGRAPH_GAP_FACTOR * pitch) {
+        val size = max(previous.maxFontSize, line.maxFontSize)
+        val pitch = if (medianPitch > 0f) medianPitch else FALLBACK_PITCH_FACTOR * size
+        // Either reading of "further apart than the lines of a paragraph":
+        // half again the pitch, or the pitch and a space a producer chose
+        // to add. Whichever is the smaller, since a page that shows either
+        // has shown its paragraphs apart.
+        val apart = min(PARAGRAPH_GAP_FACTOR * pitch, pitch + PARAGRAPH_SPACE_SHARE * size)
+        if (pitch > 0f && line.baselineY - previous.baselineY > apart) {
             return true
         }
         val smaller = min(previous.maxFontSize, line.maxFontSize)
@@ -826,9 +846,23 @@ object PdfLayout {
             if (LineJoiner.breaksAWord(previous.text)) return false
             return endGap(previous, block, rtl) > PARAGRAPH_END_SHARE * (block.second - block.first)
         }
-        val anyRtl = Bidi.firstStrongDirection(previous.text) == TextDirection.RTL ||
-            Bidi.firstStrongDirection(line.text) == TextDirection.RTL
-        return !anyRtl && abs(line.x - previous.x) > INDENT_SHIFT_PT
+        // A line set in from the edge its block starts at, under one that
+        // was not, is the first line of a paragraph — which is how a book
+        // marks its paragraphs where it leaves no space between them.
+        //
+        // Two things had to be right for that to work. The edge a line
+        // starts at is its left on a left-to-right page and its right on a
+        // right-to-left one: read as the left on both, this asked where an
+        // Arabic line *ended*, which is its ragged side and says nothing.
+        // And the indent is measured against the block, not against the
+        // line above: measured against the line above it fires twice per
+        // paragraph — once going in and once coming back out — and cuts
+        // every paragraph after its first line.
+        if (block == null) return false
+        fun startsIn(held: PdfLine): Float =
+            if (Bidi.firstStrongDirection(held.text) == TextDirection.RTL) block.second - held.xEnd
+            else held.x - block.first
+        return startsIn(line) > INDENT_SHIFT_PT && startsIn(previous) <= INDENT_SHIFT_PT
     }
 
     private fun headingKinds(
