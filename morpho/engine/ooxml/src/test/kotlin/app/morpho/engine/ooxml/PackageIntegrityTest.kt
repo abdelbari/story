@@ -36,7 +36,11 @@ import javax.xml.parsers.DocumentBuilderFactory
  *
  * So the packages we write are checked here as a package: every part
  * typed, every reference resolving to something the package holds, every
- * list and every style named actually defined.
+ * list and every style named actually defined, and the children of every
+ * properties element in the order the schema puts them — that last is a
+ * sequence rather than a set, and Word reads it in order and stops at the
+ * first child out of place, so one written early is not untidiness but a
+ * file that opens repaired with what came after it gone.
  *
  * This is the same reading that found a blank line under every table —
  * done by somebody else's parser then, and kept here so it stays done.
@@ -83,6 +87,75 @@ class PackageIntegrityTest {
         descendants(root).filter { it.namespaceURI == w && it.localName == localName }
             .mapNotNull { it.getAttributeNS(w, "val").ifEmpty { null } }
 
+    /**
+     * The order WordprocessingML gives the children of each properties
+     * element. The schema is a sequence, not a set: Word reads the
+     * children in order and stops at the first one out of place, so a
+     * `w:jc` written before a `w:spacing` is not merely untidy — the file
+     * opens repaired, with what came after quietly dropped. Nothing in a
+     * round trip shows it, because our own reader looks each child up by
+     * name and does not care what order they came in.
+     */
+    private val childOrder: Map<String, List<String>> = mapOf(
+        "rPr" to (
+            "rStyle rFonts b bCs i iCs caps smallCaps strike dstrike outline shadow emboss imprint " +
+                "noProof snapToGrid vanish webHidden color spacing w kern position sz szCs highlight u " +
+                "effect bdr shd fitText vertAlign rtl cs em lang eastAsianLayout specVanish oMath"
+            ).split(" "),
+        "pPr" to (
+            "pStyle keepNext keepLines pageBreakBefore framePr widowControl numPr suppressLineNumbers " +
+                "pBdr shd tabs suppressAutoHyphens kinsoku wordWrap overflowPunct topLinePunct autoSpaceDE " +
+                "autoSpaceDN bidi adjustRightInd snapToGrid spacing ind contextualSpacing mirrorIndents " +
+                "suppressOverlap jc textDirection textAlignment textboxTightWrap outlineLvl divId cnfStyle " +
+                "rPr sectPr pPrChange"
+            ).split(" "),
+        "tcPr" to (
+            "cnfStyle tcW gridSpan hMerge vMerge tcBorders shd noWrap tcMar textDirection tcFitText " +
+                "vAlign hideMark headers cellIns cellDel cellMerge tcPrChange"
+            ).split(" "),
+        "tblPr" to (
+            "tblStyle tblpPr tblOverlap bidiVisual tblStyleRowBandSize tblStyleColBandSize tblW jc " +
+                "tblCellSpacing tblInd tblBorders shd tblLayout tblCellMar tblLook tblCaption " +
+                "tblDescription tblPrChange"
+            ).split(" "),
+        "trPr" to (
+            "cnfStyle divId gridBefore gridAfter wBefore wAfter cantSplit trHeight tblHeader " +
+                "tblCellSpacing jc hidden ins del trPrChange"
+            ).split(" "),
+        "sectPr" to (
+            "headerReference footerReference footnotePr endnotePr type pgSz pgMar paperSrc pgBorders " +
+                "lnNumType pgNumType cols formProt vAlign noEndnote titlePg textDirection bidi rtlGutter " +
+                "docGrid printerSettings sectPrChange"
+            ).split(" "),
+    )
+
+    /** Everything out of order, or unknown, in the properties elements of [root]. */
+    private fun disordered(part: String, root: Element): List<String> {
+        val faults = mutableListOf<String>()
+        for (element in descendants(root)) {
+            if (element.namespaceURI != w) continue
+            val order = childOrder[element.localName] ?: continue
+            var furthest = -1
+            var child = element.firstChild
+            while (child != null) {
+                val here = child
+                child = child.nextSibling
+                if (here !is Element || here.namespaceURI != w) continue
+                val at = order.indexOf(here.localName)
+                if (at < 0) {
+                    faults += "$part: <w:${element.localName}> holds <w:${here.localName}>, which does not belong to it"
+                    continue
+                }
+                if (at < furthest) {
+                    faults += "$part: <w:${element.localName}> has <w:${here.localName}> " +
+                        "after <w:${order[furthest]}>, and Word reads them in order"
+                }
+                furthest = maxOf(furthest, at)
+            }
+        }
+        return faults
+    }
+
     /** Everything wrong with [docx] as a package, in the words a reader would use. */
     private fun faults(docx: ByteArray): List<String> {
         val parts = partsOf(docx)
@@ -101,6 +174,7 @@ class PackageIntegrityTest {
 
         for ((name, bytes) in parts) {
             if (!name.endsWith(".xml") || name.endsWith(".rels")) continue
+            runCatching { faults += disordered(name, parse(bytes)) }
             val folder = name.substringBeforeLast('/', "")
             val relsName = if (folder.isEmpty()) "_rels/${name}.rels"
             else "$folder/_rels/${name.substringAfterLast('/')}.rels"
@@ -282,6 +356,23 @@ class PackageIntegrityTest {
         assertTrue(
             styled.any { it.contains("NoSuchStyle") },
             "a style that is not defined went unnoticed: $styled",
+        )
+    }
+
+    @Test
+    fun `the reading finds properties written out of the order Word reads them in`() {
+        val good = DocxWriter.toByteArray(rich())
+        // A paragraph's style comes first in its properties, so one
+        // written last is after everything.
+        val late = faults(edited(good, "</w:pPr>", "<w:pStyle w:val=\"Normal\"/></w:pPr>"))
+        assertTrue(
+            late.any { it.contains("reads them in order") },
+            "a property out of order went unnoticed: $late",
+        )
+        val strange = faults(edited(good, "</w:pPr>", "<w:notAProperty/></w:pPr>"))
+        assertTrue(
+            strange.any { it.contains("notAProperty") },
+            "a property that belongs nowhere went unnoticed: $strange",
         )
     }
 }
