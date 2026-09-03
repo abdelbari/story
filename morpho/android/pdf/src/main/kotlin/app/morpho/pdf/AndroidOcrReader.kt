@@ -126,6 +126,14 @@ class AndroidOcrReader(private val context: Context) {
                     val bitmap = renderer.renderImageWithDPI(index, dpi)
                     try {
                         tess.setImage(bitmap)
+                        // What the page was rendered at, which recognition
+                        // otherwise has to guess from the image: its own
+                        // default for this is nothing, and a wrong guess
+                        // moves every threshold it works out a text line
+                        // from. This reader knows the number exactly — it
+                        // just chose it — so it is the same value the
+                        // bitmap was made with and not a second opinion.
+                        tess.setVariable(SOURCE_DPI, dpi.toInt().toString())
                         words += Hocr.wordsOf(tess.getHOCRText(index).orEmpty(), ordinal + 1, dpi)
                         // Recognition's plain text, kept only while its
                         // hOCR has yielded nothing at all: a build whose
@@ -213,6 +221,14 @@ class AndroidOcrReader(private val context: Context) {
      * pages are rendered at whatever resolution fits the budget instead:
      * degraded recognition beats an out-of-memory crash, and ordinary
      * page sizes are far below the cap and unaffected.
+     *
+     * What the cap actually costs, worked out over the paper sizes a page
+     * this large really comes in: A3 and everything under it renders at
+     * the full [RENDER_DPI]; A2 falls to 143, A1 to 101, and A0 — a poster
+     * — to 72, which is the lowest resolution recognition itself will work
+     * at and the one it substitutes when it is told nothing. So the budget
+     * and recognition's own floor very nearly meet, and only a page no
+     * printer makes falls below.
      */
     private fun dpiFor(doc: PDDocument, index: Int): Float {
         val box = boxOf(doc, index) ?: return RENDER_DPI
@@ -302,6 +318,9 @@ class AndroidOcrReader(private val context: Context) {
 
         /** Tesseract's name for "tell me the font of each word too". */
         private const val FONT_INFO = "hocr_font_info"
+
+        /** And its name for "the image you are reading was made at this". */
+        private const val SOURCE_DPI = "user_defined_dpi"
 
         /**
          * How much of a page recognition is asked to work out.
