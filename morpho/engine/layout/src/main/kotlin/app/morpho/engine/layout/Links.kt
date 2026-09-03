@@ -100,15 +100,37 @@ object Links {
 
     private const val MIN_LENGTH = 5
 
-    /** [document] with every address in its text carried as a link on the run that holds it. */
+    /**
+     * [document] with every address in its text carried as a link on the
+     * run that holds it.
+     *
+     * Every part of it. The left-hand pages of a book carry their own head
+     * and foot, and those two were left out — so an address printed in the
+     * running head of a book was a link on one side of the opening and
+     * plain text on the other.
+     */
     fun refine(document: DocumentModel): DocumentModel = document.copy(
         blocks = document.blocks.map(::refineBlock),
         header = document.header.map(::refineBlock),
         footer = document.footer.map(::refineBlock),
+        evenHeader = document.evenHeader.map(::refineBlock),
+        evenFooter = document.evenFooter.map(::refineBlock),
     )
 
     private fun refineBlock(block: Block): Block = when (block) {
-        is Paragraph -> block.copy(runs = refineRuns(block.runs))
+        // A note's own words are refined too, and not by luck. On the
+        // reading of a PDF this pass runs before the notes are gathered,
+        // so a note's words are still ordinary paragraphs when they come
+        // past — but a reading that gathers them first would hand over a
+        // footnote full of web addresses and none of them a link, which is
+        // where an academic paper keeps most of its addresses.
+        is Paragraph -> block.copy(
+            runs = refineRuns(block.runs).map { run ->
+                run.note?.takeIf { it.isNotEmpty() }
+                    ?.let { note -> run.copy(note = note.map(::refineBlock)) }
+                    ?: run
+            }
+        )
         // Copied, never rebuilt: a row knows whether it is the head of
         // its table and a cell knows how many columns and rows it covers
         // and what colour it is filled with, and a fresh one knows none of

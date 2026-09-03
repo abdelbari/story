@@ -8,6 +8,7 @@ import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.DocumentProperties
 import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.ListLabels
+import app.morpho.engine.layout.Links
 import app.morpho.engine.layout.ListMarker
 import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
@@ -180,36 +181,46 @@ object DocxReader {
                 sections = sectionShapes(body),
                 anchors = commentAnchors(body, remarks),
             )
-            return DocumentModel(
-                blocks = blocks,
-                defaultLanguage = styles.language,
-                // Which way the document runs, as its section says. Word
-                // marks a right-to-left document with one element in its
-                // section properties, and a reader that never asked hands
-                // back an Arabic document laid out from the left: its
-                // tables read backwards, its running head sits at the
-                // wrong margin, and every paragraph that did not say so
-                // for itself is turned round.
-                //
-                // Where the section says nothing — which is most files, a
-                // real Arabic paper among them, since Word writes the mark
-                // on the paragraphs and leaves the section bare — the
-                // document's own words decide, as they do for a page with
-                // no tags and for a plain text file.
-                defaultDirection = firstChild(sectPr, "bidi")?.let {
-                    if (isOn(it)) TextDirection.RTL else TextDirection.LTR
-                } ?: Bidi.dominantDirection(wordsOf(blocks)) ?: TextDirection.LTR,
-                pageSetup = sectPr?.let(::parsePageSetup),
-                header = sectPr?.let { furniture(it, "headerReference", parts, media, numbering, styles, at) }.orEmpty(),
-                footer = sectPr?.let { furniture(it, "footerReference", parts, media, numbering, styles, at) }.orEmpty(),
-                evenHeader = sectPr?.let {
-                    furniture(it, "headerReference", parts, media, numbering, styles, at, side = "even")
-                }.orEmpty(),
-                evenFooter = sectPr?.let {
-                    furniture(it, "footerReference", parts, media, numbering, styles, at, side = "even")
-                }.orEmpty(),
-                properties = said(parts),
-                comments = remarks,
+            // An address a document merely writes out is made a link, the
+            // way it is for a PDF and for a plain text file. The same
+            // sentence in the same document was clickable when it arrived
+            // as a PDF and plain when it arrived as a .docx, and an author
+            // who typed an address without making a link of it did not mean
+            // it to be uncopyable — which is the whole argument for finding
+            // them in the first place. A run that carries a link already is
+            // left alone, so nothing the file itself said is overruled.
+            return Links.refine(
+                DocumentModel(
+                    blocks = blocks,
+                    defaultLanguage = styles.language,
+                    // Which way the document runs, as its section says. Word
+                    // marks a right-to-left document with one element in its
+                    // section properties, and a reader that never asked hands
+                    // back an Arabic document laid out from the left: its
+                    // tables read backwards, its running head sits at the
+                    // wrong margin, and every paragraph that did not say so
+                    // for itself is turned round.
+                    //
+                    // Where the section says nothing — which is most files, a
+                    // real Arabic paper among them, since Word writes the mark
+                    // on the paragraphs and leaves the section bare — the
+                    // document's own words decide, as they do for a page with
+                    // no tags and for a plain text file.
+                    defaultDirection = firstChild(sectPr, "bidi")?.let {
+                        if (isOn(it)) TextDirection.RTL else TextDirection.LTR
+                    } ?: Bidi.dominantDirection(wordsOf(blocks)) ?: TextDirection.LTR,
+                    pageSetup = sectPr?.let(::parsePageSetup),
+                    header = sectPr?.let { furniture(it, "headerReference", parts, media, numbering, styles, at) }.orEmpty(),
+                    footer = sectPr?.let { furniture(it, "footerReference", parts, media, numbering, styles, at) }.orEmpty(),
+                    evenHeader = sectPr?.let {
+                        furniture(it, "headerReference", parts, media, numbering, styles, at, side = "even")
+                    }.orEmpty(),
+                    evenFooter = sectPr?.let {
+                        furniture(it, "footerReference", parts, media, numbering, styles, at, side = "even")
+                    }.orEmpty(),
+                    properties = said(parts),
+                    comments = remarks,
+                )
             )
         } catch (e: IllegalArgumentException) {
             throw e
