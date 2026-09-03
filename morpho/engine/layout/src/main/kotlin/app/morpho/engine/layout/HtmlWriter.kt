@@ -82,6 +82,18 @@ object HtmlWriter {
             // set: 1. then a) then i., and a bullet that changes with it.
             "ol ol{list-style-type:lower-alpha;}ol ol ol{list-style-type:lower-roman;}" +
             "ul ul{list-style-type:circle;}ul ul ul{list-style-type:square;}" +
+            // An Arabic list counts in Arabic letters, in the alphabet's own
+            // order or the older abjad one, which no browser knows by name.
+            "@counter-style morpho-arabic-alpha{system:alphabetic;" +
+            "symbols:'\u0623' '\u0628' '\u062a' '\u062b' '\u062c' '\u062d' '\u062e' '\u062f' " +
+            "'\u0630' '\u0631' '\u0632' '\u0633' '\u0634' '\u0635' '\u0636' '\u0637' " +
+            "'\u0638' '\u0639' '\u063a' '\u0641' '\u0642' '\u0643' '\u0644' '\u0645' " +
+            "'\u0646' '\u0647' '\u0648' '\u064a';suffix:'- ';}" +
+            "@counter-style morpho-arabic-abjad{system:alphabetic;" +
+            "symbols:'\u0623' '\u0628' '\u062c' '\u062f' '\u0647' '\u0648' '\u0632' '\u062d' " +
+            "'\u0637' '\u064a' '\u0643' '\u0644' '\u0645' '\u0646' '\u0633' '\u0639' " +
+            "'\u0641' '\u0635' '\u0642' '\u0631' '\u0634' '\u062a' '\u062b' '\u062e' " +
+            "'\u0630' '\u0636' '\u0638' '\u063a';suffix:'- ';}" +
             "li{margin:0 0 3pt;}" +
             "table{border-collapse:collapse;margin:0 0 9pt;table-layout:fixed;}" +
             "section.footnotes{border-top:0.75pt solid;margin-top:12pt;padding-top:4pt;font-size:0.85em;}" +
@@ -122,7 +134,13 @@ object HtmlWriter {
                             sb.append("</" + tagOf(open.removeLast()) + ">\n")
                         }
                         while (open.size < depth) {
-                            sb.append("<" + tagOf(marker) + ">\n")
+                            // The way the list counts, where the document
+                            // said: a browser numbers a list its own way
+                            // unless it is told which way this one counts.
+                            val counting = listStyleOf(block.style.listFormat)
+                                ?.takeIf { marker == ListMarker.NUMBERED && open.size + 1 == depth }
+                            val style = counting?.let { """ style="list-style-type:$it"""" }.orEmpty()
+                            sb.append("<" + tagOf(marker) + style + ">\n")
                             open.addLast(marker)
                         }
                     }
@@ -139,6 +157,23 @@ object HtmlWriter {
             }
         }
         closeList()
+    }
+
+    /**
+     * The CSS name for the way a list counts, or null where the browser's
+     * own way is right. The Arabic ones are counter styles this page
+     * defines for itself, since no browser knows them by name.
+     */
+    private fun listStyleOf(format: String?): String? = when (format) {
+        "decimal" -> "decimal"
+        "decimalZero" -> "decimal-leading-zero"
+        "lowerLetter" -> "lower-alpha"
+        "upperLetter" -> "upper-alpha"
+        "lowerRoman" -> "lower-roman"
+        "upperRoman" -> "upper-roman"
+        "arabicAlpha" -> "morpho-arabic-alpha"
+        "arabicAbjad" -> "morpho-arabic-abjad"
+        else -> null
     }
 
     private fun appendParagraph(

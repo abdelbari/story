@@ -116,4 +116,35 @@ class ListLevelsTest {
             shape,
         )
     }
+
+    @Test
+    fun `the preview counts a list the way the document counts it`() {
+        val document = DocumentModel(
+            blocks = listOf(
+                Paragraph(
+                    runs = listOf(TextRun("\u0627\u0644\u0628\u0646\u062f")),
+                    style = ParagraphStyle(listMarker = ListMarker.NUMBERED, listFormat = "arabicAlpha"),
+                )
+            )
+        )
+        val html = HtmlWriter.write(document, "list")
+        assertTrue(html.contains("@counter-style morpho-arabic-alpha"), "the counter was never defined")
+        assertTrue(
+            html.contains("""<ol style="list-style-type:morpho-arabic-alpha">"""),
+            "the list was left to be counted the browser's way",
+        )
+    }
+
+    @Test
+    fun `a list that counts the ordinary way is left to the browser`() {
+        val document = DocumentModel(
+            blocks = listOf(
+                Paragraph(
+                    runs = listOf(TextRun("one")),
+                    style = ParagraphStyle(listMarker = ListMarker.NUMBERED),
+                )
+            )
+        )
+        assertTrue(HtmlWriter.write(document, "list").contains("<ol>"))
+    }
 }
