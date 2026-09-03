@@ -15,6 +15,13 @@ import org.apache.pdfbox.pdmodel.documentinterchange.markedcontent.PDPropertyLis
 import org.apache.pdfbox.pdmodel.documentinterchange.taggedpdf.StandardStructureTypes
 import org.apache.pdfbox.pdmodel.font.PDFont
 import org.apache.pdfbox.pdmodel.font.PDType0Font
+import org.apache.pdfbox.pdmodel.font.PDType1Font
+import org.apache.pdfbox.pdmodel.graphics.color.PDColor
+import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceRGB
+import org.apache.pdfbox.pdmodel.interactive.action.PDActionURI
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationTextMarkup
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageFitWidthDestination
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -192,6 +199,163 @@ class BothPathsAgreeTest {
     /** A line's step down the page, and a paragraph's, as a page of prose sets them. */
     private val LINE_PITCH_PT = 22f
     private val PARAGRAPH_GAP_PT = 34f
+
+    @Test
+    fun `both readers say the same things about the same words`() {
+        // The words were compared here and nothing else, and that is how a
+        // whole reading path came to be shipping dead links: the tagged
+        // reading never turned a link-to-a-page into a place, and every
+        // check that would have noticed was run on the untagged one. So
+        // what each reader says *about* a word is compared too — where it
+        // leads, what was marked over it, what somebody wrote about it —
+        // since those come from separate bodies of code on each path and
+        // are exactly what can drift apart unseen.
+        val fromTags = said(PdfReader().extract(annotated(tagged = true)))
+        val fromPositions = said(PdfReader().extract(annotated(tagged = false)))
+        assertTrue(fromTags.isNotEmpty(), "the tagged reader read nothing")
+        // Word by word in the order each read them, so a reader that
+        // splits its runs differently is not counted as having lost
+        // anything and a word appearing twice is two words. Only what
+        // differs is reported: the whole of both readings is hundreds of
+        // lines, and a failure nobody can read is a failure nobody fixes.
+        val differing = (0 until maxOf(fromTags.size, fromPositions.size)).mapNotNull { at ->
+            val tags = fromTags.getOrNull(at)
+            val positions = fromPositions.getOrNull(at)
+            if (tags == positions) null else "  [$at] tags: $tags\n       positions: $positions"
+        }
+        assertEquals(
+            emptyList<String>(),
+            differing,
+            "the two readers disagree about the words themselves",
+        )
+    }
+
+    /**
+     * What a reading says about each word of the annotated fixture, in the
+     * order it read them: where the word leads, what a reader marked over
+     * it, and what they wrote about it.
+     *
+     * Word by word rather than run by run, because the two readings are
+     * free to split their runs differently and neither has lost anything
+     * by doing so. A note is named by what it says: each reading numbers
+     * the notes it finds for itself.
+     */
+    private fun said(model: app.morpho.engine.layout.DocumentModel): List<String> {
+        val notes = model.comments.associate { it.id to it.text }
+        val out = mutableListOf<String>()
+        for (paragraph in model.blocks.filterIsInstance<Paragraph>()) {
+            for (run in paragraph.runs) {
+                for (word in run.text.split(Regex("\\s+")).filter { it.isNotBlank() }) {
+                    out += "$word link=${run.link} mark=${run.highlightRgb} " +
+                        "u=${run.underline} s=${run.strikethrough} " +
+                        "notes=${run.commentIds.mapNotNull { notes[it] }.sorted()}"
+                }
+            }
+        }
+        return out
+    }
+
+    /**
+     * Two pages carrying everything an annotation can say about the words
+     * under it: an address that leaves the file, a link to a page of the
+     * file itself, a highlight with a remark typed against it, a highlight
+     * with nothing said, a line drawn under some words and a line struck
+     * through others.
+     *
+     * Latin and plainly set, on purpose: how an Arabic page is read is
+     * settled above, and what is asked here is whether the two readings
+     * agree about the annotations, which have nothing to do with script.
+     */
+    private fun annotated(tagged: Boolean): ByteArray {
+        val prose = listOf(
+            "The linked words lead somewhere.",
+            "The noted words carry a remark.",
+            "The marked words carry no remark.",
+            "The underlined words are underlined.",
+            "The struck words are struck out.",
+            "The plain words are plain.",
+        )
+        val bytes = ByteArrayOutputStream()
+        PDDocument().use { document ->
+            val first = PDPage(PDRectangle.A4)
+            val second = PDPage(PDRectangle.A4)
+            document.addPage(first)
+            document.addPage(second)
+            val root = PDStructureTreeRoot()
+            val holder = if (tagged) {
+                document.documentCatalog.structureTreeRoot = root
+                PDStructureElement(StandardStructureTypes.DOCUMENT, root).also { root.appendKid(it) }
+            } else {
+                null
+            }
+            var mcid = 0
+            fun write(page: PDPage, lines: List<String>): List<Float> {
+                holder?.page = page
+                val tops = mutableListOf<Float>()
+                PDPageContentStream(document, page).use { content ->
+                    for ((index, line) in lines.withIndex()) {
+                        val y = PDRectangle.A4.height - (120f + index * 30f)
+                        tops += y
+                        val element = holder?.let {
+                            PDStructureElement(StandardStructureTypes.P, it).apply {
+                                this.page = page
+                                it.appendKid(this)
+                            }
+                        }
+                        val properties = COSDictionary().apply { setInt(COSName.MCID, mcid) }
+                        if (tagged) content.beginMarkedContent(COSName.P, PDPropertyList.create(properties))
+                        content.beginText()
+                        content.setFont(PDType1Font.HELVETICA, 12f)
+                        content.newLineAtOffset(72f, y)
+                        content.showText(line)
+                        content.endText()
+                        if (tagged) {
+                            content.endMarkedContent()
+                            element?.appendKid(PDMarkedContent(COSName.P, properties))
+                        }
+                        mcid++
+                    }
+                }
+                return tops
+            }
+            val tops = write(first, prose)
+            write(second, listOf("The second page holds the place a link leads to."))
+
+            /** A rectangle over the line whose baseline is [y]. */
+            fun over(y: Float) = PDRectangle(70f, y - 3f, 260f, 16f)
+            fun quads(y: Float) = floatArrayOf(70f, y + 13f, 330f, y + 13f, 70f, y - 3f, 330f, y - 3f)
+
+            val address = PDAnnotationLink()
+            address.rectangle = over(tops[0])
+            address.action = PDActionURI().also { it.uri = "https://example.org/paper" }
+            first.annotations.add(address)
+
+            val inward = PDAnnotationLink()
+            inward.rectangle = over(tops[5])
+            inward.destination = PDPageFitWidthDestination().apply { page = second }
+            first.annotations.add(inward)
+
+            fun marking(subtype: String, y: Float, remark: String?): PDAnnotationTextMarkup {
+                val markup = PDAnnotationTextMarkup(subtype)
+                markup.color = PDColor(floatArrayOf(1f, 1f, 0f), PDDeviceRGB.INSTANCE)
+                markup.rectangle = over(y)
+                markup.quadPoints = quads(y)
+                if (remark != null) {
+                    markup.contents = remark
+                    markup.titlePopup = "A Reader"
+                }
+                return markup
+            }
+            first.annotations.add(
+                marking(PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT, tops[1], "Where is this from?")
+            )
+            first.annotations.add(marking(PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT, tops[2], null))
+            first.annotations.add(marking(PDAnnotationTextMarkup.SUB_TYPE_UNDERLINE, tops[3], null))
+            first.annotations.add(marking(PDAnnotationTextMarkup.SUB_TYPE_STRIKEOUT, tops[4], null))
+            document.save(bytes)
+        }
+        return bytes.toByteArray()
+    }
 
     private fun words(model: app.morpho.engine.layout.DocumentModel): List<String> =
         model.blocks.filterIsInstance<Paragraph>()
