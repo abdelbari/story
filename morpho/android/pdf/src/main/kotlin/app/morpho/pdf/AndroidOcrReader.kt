@@ -52,6 +52,7 @@ class AndroidOcrReader(private val context: Context) {
         bytes: ByteArray,
         languages: String = DEFAULT_LANGUAGES,
         password: String = "",
+        pages: IntRange? = null,
         onPage: (page: Int, pageCount: Int) -> Unit = { _, _ -> },
         shouldContinue: () -> Boolean = { true },
     ): DocumentModel {
@@ -64,9 +65,15 @@ class AndroidOcrReader(private val context: Context) {
                 check(tess.init(dataParent.absolutePath, languages)) {
                     "Tesseract failed to initialize for $languages"
                 }
-                for (index in 0 until doc.numberOfPages) {
+                // Reading a page takes seconds, so a reader who asked for
+                // one chapter waits for that chapter and no longer.
+                val wanted = (pages ?: 1..doc.numberOfPages)
+                    .filter { it in 1..doc.numberOfPages }
+                    .ifEmpty { listOf(1) }
+                for ((ordinal, number) in wanted.withIndex()) {
+                    val index = number - 1
                     if (!shouldContinue()) throw Cancelled()
-                    onPage(index + 1, doc.numberOfPages)
+                    onPage(ordinal + 1, wanted.size)
                     val bitmap = renderer.renderImageWithDPI(index, dpiFor(doc, index))
                     try {
                         tess.setImage(bitmap)

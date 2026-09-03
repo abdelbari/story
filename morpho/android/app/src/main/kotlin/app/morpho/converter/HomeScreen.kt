@@ -146,6 +146,19 @@ fun HomeScreen(viewModel: ConvertViewModel) {
         return
     }
 
+    // Local state again: which pages to convert is a question asked of one
+    // document, not something worth surviving process death.
+    var askingPages by remember(state) { mutableStateOf(false) }
+    if (askingPages) {
+        PagesDialog(
+            onConvert = { pages ->
+                askingPages = false
+                viewModel.convertPages(pages)
+            },
+            onDismiss = { askingPages = false },
+        )
+    }
+
     val locked = state as? ConvertUiState.NeedsPassword
     if (locked != null) {
         PasswordDialog(
@@ -194,6 +207,7 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                         onCancel = viewModel::cancelOcr,
                         onSave = viewModel::requestSave,
                         onPreview = { showPreview = true },
+                        onChoosePages = { askingPages = true },
                     )
                 }
             }
@@ -323,6 +337,7 @@ private fun StateActions(
     onCancel: () -> Unit,
     onSave: () -> Unit,
     onPreview: () -> Unit,
+    onChoosePages: () -> Unit,
 ) {
     when (state) {
         is ConvertUiState.Idle ->
@@ -348,7 +363,11 @@ private fun StateActions(
                     )
                 )
             }
-            if (!state.isPdf) {
+            if (state.isPdf) {
+                TextButton(onClick = onChoosePages, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.pages_choose))
+                }
+            } else {
                 TextButton(onClick = onExportPdf, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.convert_to_pdf))
                 }
@@ -389,6 +408,13 @@ private fun StateActions(
             if (state.reason == FailReason.SCANNED_PDF) {
                 Button(onClick = onOcr, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.convert_with_ocr))
+                }
+            }
+            // A document too large for this phone is not a document that
+            // cannot be converted: part of it can.
+            if (state.reason == FailReason.TOO_LARGE) {
+                Button(onClick = onChoosePages, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.pages_choose))
                 }
             }
             Button(onClick = onPick, modifier = Modifier.fillMaxWidth()) {
@@ -466,6 +492,51 @@ private fun PasswordDialog(
                 enabled = password.isNotEmpty(),
             ) {
                 Text(stringResource(R.string.password_open))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel))
+            }
+        },
+    )
+}
+
+/**
+ * Asks which pages to convert. A reader who wants one chapter of a book,
+ * or one part of a document too large for the phone to hold whole, says
+ * so here; an empty box is the whole document, which is what converting a
+ * file means.
+ */
+@Composable
+private fun PagesDialog(
+    onConvert: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var pages by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.pages_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.pages_body))
+                OutlinedTextField(
+                    value = pages,
+                    onValueChange = { pages = it },
+                    label = { Text(stringResource(R.string.pages_label)) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { onConvert(pages) }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConvert(pages) }) {
+                Text(stringResource(R.string.pages_convert))
             }
         },
         dismissButton = {

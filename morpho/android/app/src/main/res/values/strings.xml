@@ -70,4 +70,9 @@
     <string name="preview_open">Show the document</string>
     <string name="preview_page">Page %1$d of %2$d</string>
     <string name="preview_unavailable">The pages could not be drawn. The file can still be saved.</string>
+    <string name="pages_choose">Convert only some pages…</string>
+    <string name="pages_title">Which pages?</string>
+    <string name="pages_body">Type a range, like 5-20, or a single page. Leave it empty to convert the whole document.</string>
+    <string name="pages_label">Pages</string>
+    <string name="pages_convert">Convert</string>
 </resources>

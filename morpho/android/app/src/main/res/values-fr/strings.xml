@@ -69,4 +69,9 @@
     <string name="preview_open">Afficher le document</string>
     <string name="preview_page">Page %1$d sur %2$d</string>
     <string name="preview_unavailable">Les pages n\'ont pas pu être dessinées. Le fichier peut quand même être enregistré.</string>
+    <string name="pages_choose">Convertir certaines pages…</string>
+    <string name="pages_title">Quelles pages ?</string>
+    <string name="pages_body">Indiquez un intervalle, par exemple 5-20, ou une seule page. Laissez vide pour convertir tout le document.</string>
+    <string name="pages_label">Pages</string>
+    <string name="pages_convert">Convertir</string>
 </resources>

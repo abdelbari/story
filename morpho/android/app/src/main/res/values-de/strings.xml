@@ -69,4 +69,9 @@
     <string name="preview_open">Dokument anzeigen</string>
     <string name="preview_page">Seite %1$d von %2$d</string>
     <string name="preview_unavailable">Die Seiten konnten nicht gezeichnet werden. Die Datei kann trotzdem gespeichert werden.</string>
+    <string name="pages_choose">Nur bestimmte Seiten umwandeln…</string>
+    <string name="pages_title">Welche Seiten?</string>
+    <string name="pages_body">Geben Sie einen Bereich an, etwa 5-20, oder eine einzelne Seite. Leer lassen, um das ganze Dokument umzuwandeln.</string>
+    <string name="pages_label">Seiten</string>
+    <string name="pages_convert">Umwandeln</string>
 </resources>

@@ -52,8 +52,42 @@ class PdfReader {
             )
         }
 
-    fun extract(bytes: ByteArray, password: String = ""): DocumentModel =
-        load(bytes, password).use { doc ->
+    /**
+     * The document [bytes] hold, or the part of it [pages] names.
+     *
+     * [pages] is a range of 1-based page numbers: a reader who wants one
+     * chapter of a book, or one part of a document too big for the phone
+     * to hold whole, converts what they need instead of all of it. Null
+     * reads the document entire, which is what it means to convert a file.
+     */
+    fun extract(bytes: ByteArray, password: String = "", pages: IntRange? = null): DocumentModel =
+        load(bytes, password).use { whole ->
+            if (pages == null) return extractFrom(whole)
+            // The pages asked for, as a document of their own: read that way
+            // everything else here — the tags, the pictures, the outline —
+            // sees the part as the whole it now is, and nothing has to be
+            // taught to count from the middle.
+            partOf(whole, pages).use { part -> return extractFrom(part) }
+        }
+
+    /**
+     * The pages of [document] that [pages] names, as a document of their
+     * own. It shares its pages with [document], which must outlive it.
+     */
+    private fun partOf(document: PDDocument, pages: IntRange): PDDocument {
+        val part = PDDocument()
+        val last = document.numberOfPages
+        for (number in pages) {
+            if (number in 1..last) part.addPage(document.getPage(number - 1))
+        }
+        // Asking for pages a document does not have is asking for nothing;
+        // reading its first page beats handing back an empty document.
+        if (part.numberOfPages == 0 && last > 0) part.addPage(document.getPage(0))
+        return part
+    }
+
+    private fun extractFrom(doc: PDDocument): DocumentModel =
+        run {
             // A document somebody filled in is read from its pages: the
             // answers are drawn onto them here, and a structure tree knows
             // nothing about what was drawn after it was written.

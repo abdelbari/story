@@ -69,4 +69,9 @@
     <string name="preview_open">عرض المستند</string>
     <string name="preview_page">صفحة %1$d من %2$d</string>
     <string name="preview_unavailable">تعذّر رسم الصفحات. لا يزال بإمكانك حفظ الملف.</string>
+    <string name="pages_choose">تحويل صفحات معينة…</string>
+    <string name="pages_title">أي صفحات؟</string>
+    <string name="pages_body">اكتب نطاقا مثل ٥-٢٠، أو رقم صفحة واحدة. اتركه فارغا لتحويل الملف كاملا.</string>
+    <string name="pages_label">الصفحات</string>
+    <string name="pages_convert">تحويل</string>
 </resources>

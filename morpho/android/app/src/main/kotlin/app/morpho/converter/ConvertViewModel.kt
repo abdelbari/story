@@ -11,6 +11,7 @@ import app.morpho.engine.layout.FidelityReport
 import app.morpho.engine.layout.HtmlWriter
 import app.morpho.engine.layout.MarkdownWriter
 import app.morpho.engine.layout.PlainTextImporter
+import app.morpho.engine.layout.pdf.PageRanges
 import app.morpho.engine.ooxml.DocxReader
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
@@ -130,6 +131,14 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
      * and never written anywhere.
      */
     private var pdfPassword: String = ""
+
+    /**
+     * Which pages of the picked document to convert, or null for all of
+     * them. A reader who wants one chapter of a book, or one part of a
+     * document too big for the phone to hold whole, says so and waits for
+     * that much rather than for the lot.
+     */
+    private var pdfPages: IntRange? = null
 
     /** Whichever conversion ran last — "Try again" repeats it, not convert(). */
     private var lastOperation: (() -> Unit)? = null
@@ -278,6 +287,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         lastPreviewPdf = ByteArray(0)
         lastWriter = null
         pdfPassword = ""
+        pdfPages = null
         editedBlocks.clear()
         _review.value = null
 
@@ -322,7 +332,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                 source.isPdf -> convertPicked(
                     epoch, uri, source, "docx", DocxWriter.MIME_TYPE,
                     read = { bytes ->
-                        val model = AndroidPdfReader(getApplication()).extract(bytes, pdfPassword)
+                        val model =
+                            AndroidPdfReader(getApplication()).extract(bytes, pdfPassword, pdfPages)
                         val hasText = model.blocks.filterIsInstance<Paragraph>()
                             .any { it.text.isNotBlank() }
                         if (!hasText) throw UnconvertibleContent(FailReason.SCANNED_PDF)
@@ -456,6 +467,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                         bytes = bytes,
                         languages = ocrLanguages(),
                         password = pdfPassword,
+                        pages = pdfPages,
                         onPage = { page, pageCount ->
                             publish(epoch, ConvertUiState.Converting(page, pageCount))
                         },
@@ -555,6 +567,17 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         if (_state.value !is ConvertUiState.NeedsPassword) return
         pdfPassword = ""
         _state.value = pickedFile?.meta ?: ConvertUiState.Idle
+    }
+
+    /**
+     * Converts the pages [pages] names — "5-20", "7", "5-", or anything
+     * that names none of them, which is the whole document. What is chosen
+     * holds until another document is picked, so a second attempt after a
+     * document proved too large converts the part that was asked for.
+     */
+    fun convertPages(pages: String) {
+        pdfPages = PageRanges.parse(pages)
+        convert()
     }
 
     /** Re-runs whichever conversion just failed. */
