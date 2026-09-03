@@ -1096,8 +1096,11 @@ object DocxReader {
             colorRgb = color,
             highlightRgb = highlight,
             // A note that carries its mark as text says it once, on the
-            // run that refers to it, not again at its own head.
-            note = note?.let { notes.withoutMark(it, text) },
+            // run that refers to it, not again at its own head. A note
+            // Word numbers itself carries no mark as text at all — it
+            // opens with the element that draws the number — so nothing
+            // of its own words is taken from it, however they begin.
+            note = note?.let { if (drawnMark == null) notes.withoutMark(it, text) else it },
         )
     }
 

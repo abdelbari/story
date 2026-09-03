@@ -131,6 +131,24 @@ class NotesTest {
         assertEquals("*starred and said in full.", (mark.note!!.single() as Paragraph).text)
     }
 
+    @Test
+    fun `a note Word numbers itself keeps words that begin like its number`() {
+        // Word draws such a note's number itself, so the number is not in
+        // the note's words and nothing of them may be taken for it — not
+        // even a note that opens with the same digit.
+        val doc = read(
+            body = """<w:p><w:r><w:t>As recorded</w:t></w:r>
+                <w:r><w:footnoteReference w:id="2"/></w:r></w:p>""",
+            footnotes = """<w:footnote w:id="2"><w:p>
+                <w:r><w:footnoteRef/></w:r>
+                <w:r><w:t>1</w:t></w:r><w:r><w:t xml:space="preserve"> January 1999, p. 4.</w:t></w:r>
+                </w:p></w:footnote>""",
+        )
+        val mark = doc.blocks.filterIsInstance<Paragraph>().first().runs.first { it.note != null }
+        assertEquals("1", mark.text, "Word's own number is drawn by the reader")
+        assertEquals("1 January 1999, p. 4.", (mark.note!!.single() as Paragraph).text)
+    }
+
     private fun read(body: String, footnotes: String = "", endnotes: String = ""): DocumentModel {
         val declaration = """<?xml version="1.0" encoding="UTF-8"?>"""
         val parts = mutableListOf(
