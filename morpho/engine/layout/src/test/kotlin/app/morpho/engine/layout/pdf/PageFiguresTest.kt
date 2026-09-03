@@ -89,4 +89,41 @@ class PageFiguresTest {
     fun `a page that draws nothing has no figures`() {
         assertTrue(PageFigures.of(emptyList(), listOf(line("Only words.", 100f)), sheets).isEmpty())
     }
+
+    @Test
+    fun `a chart keeps its own labels`() {
+        // The years under the bars and the counts up the axis stand inside
+        // the figure, and a chart that loses them for it is a chart lost.
+        val bars = (0 until 5).map { path(120f + it * 60f, 300f - it * 20f, 160f + it * 60f, 400f) }
+        val axis = listOf(path(110f, 200f, 111f, 400f), path(110f, 399f, 440f, 400f))
+        val labels = listOf(
+            line("2019", 415f, x = 125f, xEnd = 155f),
+            line("2020", 415f, x = 185f, xEnd = 215f),
+            line("40", 250f, x = 90f, xEnd = 108f),
+        )
+        assertEquals(1, PageFigures.of(bars + axis, labels, sheets).size)
+    }
+
+    @Test
+    fun `a box drawn round a paragraph is not a figure`() {
+        // Four strokes rather than one, so it is not caught for being a
+        // single shape — but what stands in it reads across it, which is
+        // prose and not a label.
+        val callout = listOf(
+            path(60f, 200f, 540f, 201f), path(60f, 340f, 540f, 341f),
+            path(60f, 200f, 61f, 341f), path(539f, 200f, 540f, 341f),
+        )
+        val prose = listOf(
+            line("A warning that runs the width of the box it is drawn in.", 240f, x = 70f, xEnd = 520f),
+            line("And a second line of it, just as wide as the first one.", 268f, x = 70f, xEnd = 520f),
+        )
+        assertTrue(PageFigures.of(callout, prose, sheets).isEmpty())
+    }
+
+    @Test
+    fun `a drawing holding a page of prose is not a figure`() {
+        val many = (0 until 6).map { path(60f + it, 200f, 540f - it, 600f) }
+        val prose = (0 until 12).map { line("Line $it of the page.", 220f + it * 28f, x = 70f, xEnd = 300f) }
+        assertTrue(PageFigures.of(many, prose, sheets).isEmpty())
+    }
 }

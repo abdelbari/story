@@ -86,6 +86,13 @@ data class PdfDrawing(
     val top: Float,
     val right: Float,
     val bottom: Float,
+    /**
+     * How many painted paths this box is the reach of. One filled
+     * rectangle is shading, a highlight or a box round a paragraph; a
+     * chart is dozens of strokes, and the difference is what says whether
+     * words standing inside it were drawn behind or merely labelled.
+     */
+    val paths: Int = 1,
 ) {
     val widthPt: Float get() = right - left
     val heightPt: Float get() = bottom - top
@@ -97,6 +104,7 @@ data class PdfDrawing(
         top = minOf(top, other.top),
         right = maxOf(right, other.right),
         bottom = maxOf(bottom, other.bottom),
+        paths = paths + other.paths,
     )
 
     /** Whether [other] overlaps this box, or comes within [gap] of it. */

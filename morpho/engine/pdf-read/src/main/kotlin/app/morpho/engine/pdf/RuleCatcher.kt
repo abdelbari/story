@@ -166,7 +166,7 @@ internal class RuleCatcher(private val page: () -> PDPage?, private val pageNumb
         // any of it was a rule. A path merely closed off — the "n" that
         // sets a clip and draws nothing — covered nothing.
         reach?.takeIf { strokes || fills }?.let {
-            drawings += PdfDrawing(pageNumber(), it[0], it[1], it[2], it[3])
+            drawings += PdfDrawing(pageNumber(), it[0], it[1], it[2], it[3], paths = 1)
         }
         reach = null
         pendingSegments.clear()

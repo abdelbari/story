@@ -65,6 +65,13 @@ class DrawnFigureTest {
                         content.moveTo(110f, height - 480f)
                         content.lineTo(440f, height - 480f)
                         content.stroke()
+                        content.setNonStrokingColor(Color.BLACK)
+                        // A count over each bar, standing inside the figure
+                        // as a chart's own labels do. A chart that loses
+                        // them for standing in it is a chart lost.
+                        for (bar in 0 until 5) {
+                            show(content, 128f + bar * 60f, 476f - (30f + bar * 40f), "${bar * 4 + 3}")
+                        }
                     }
                     y = 560f
                     for (piece in 1..4) {
@@ -117,12 +124,30 @@ class DrawnFigureTest {
 
     @Test
     fun `finding a figure takes nothing away from the text`() {
+        // The chart's own labels are text of the page too, and adding
+        // them changes where the reader draws paragraph boundaries — a
+        // page with more lines on it clusters differently. What must not
+        // change is a sentence of the report: every one that was there
+        // without the chart is still there, word for word, with it.
         val withChart = PdfReader().extract(report(withChart = true))
-        val without = PdfReader().extract(report(withChart = false))
-        assertEquals(
-            without.blocks.filterIsInstance<Paragraph>().map { it.text },
-            withChart.blocks.filterIsInstance<Paragraph>().map { it.text },
-        )
+            .blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }
+        val sentences = PdfReader().extract(report(withChart = false))
+            .blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }
+            .split(". ")
+            .map { it.trim() }
+            .filter { it.contains("the figure") }
+        assertTrue(sentences.size >= 20, "the report has its paragraphs: ${sentences.size}")
+        for (sentence in sentences) {
+            assertTrue(sentence in withChart, "the chart swallowed \"$sentence\"")
+        }
+    }
+
+    @Test
+    fun `a chart keeps its own labels and is still a figure`() {
+        val model = PdfReader().extract(report(withChart = true))
+        assertEquals(1, model.blocks.filterIsInstance<ImageBlock>().size, "the chart is a figure")
+        val text = model.blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }
+        assertTrue(text.contains("3"), "and its labels are still text of the page: $text")
     }
 
     /**

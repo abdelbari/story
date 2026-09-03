@@ -59,7 +59,7 @@ object PageFigures {
             gathered(onPage)
                 .filter { it.widthPt >= LEAST_SIDE_PT && it.heightPt >= LEAST_SIDE_PT }
                 .filter { figure -> sheet == null || !coversThePage(figure, sheet) }
-                .filterNot { figure -> holdsAWord(figure, linesByPage[page].orEmpty()) }
+                .filterNot { figure -> drawnBehindWords(figure, linesByPage[page].orEmpty()) }
                 .map {
                     PdfDrawing(
                         page = it.page,
@@ -96,17 +96,44 @@ object PageFigures {
     }
 
     /**
-     * Whether the document's own words stand inside [figure]. A rule under
-     * a heading holds none and is thrown out for its thinness; shading
-     * behind a table's head holds the head; a border round a page holds
-     * the page. What holds words was drawn to sit behind or beside them,
-     * and photographing it would put the words in the document twice.
+     * Whether [figure] was drawn behind the document's own words rather
+     * than as a thing of its own — in which case photographing it would
+     * put those words in the document twice, once as text and once inside
+     * a picture of them.
+     *
+     * A chart holds words too: the years under its bars, the counts up its
+     * axis, the names in its key. What tells the two apart is what the
+     * words are doing there. Shading behind a table's head, a highlight
+     * over a phrase and a box round a paragraph are each a single painted
+     * shape with the document's prose lying across them, line by line,
+     * each line as wide as the shape. A chart is dozens of strokes with a
+     * few short labels among them.
+     *
+     * So: a single shape holding any word at all was drawn behind it. A
+     * drawing of many strokes is a figure unless what stands in it reads
+     * as prose — a line reaching across it, or more lines than a figure
+     * labels itself with.
      */
-    private fun holdsAWord(figure: PdfDrawing, lines: List<PdfLine>): Boolean = lines.any { line ->
-        val middle = line.baselineY
-        val centre = (line.x + line.xEnd) / 2
-        middle > figure.top && middle < figure.bottom && centre > figure.left && centre < figure.right
+    private fun drawnBehindWords(figure: PdfDrawing, lines: List<PdfLine>): Boolean {
+        val held = lines.filter { line ->
+            val centre = (line.x + line.xEnd) / 2
+            line.baselineY > figure.top && line.baselineY < figure.bottom &&
+                centre > figure.left && centre < figure.right
+        }
+        if (held.isEmpty()) return false
+        if (figure.paths < STROKES_OF_A_FIGURE) return true
+        if (held.size > LABELS_OF_A_FIGURE) return true
+        return held.any { it.xEnd - it.x > LABEL_SHARE * figure.widthPt }
     }
+
+    /** Fewer painted shapes than this and a drawing holding words is a backdrop to them. */
+    private const val STROKES_OF_A_FIGURE = 4
+
+    /** More lines than this inside a drawing and they are its subject, not its labels. */
+    private const val LABELS_OF_A_FIGURE = 8
+
+    /** A line reaching more of a drawing's width than this is prose across it, not a label in it. */
+    private const val LABEL_SHARE = 0.55f
 
     private fun coversThePage(figure: PdfDrawing, sheet: PdfPageSheet): Boolean =
         figure.widthPt > MOST_OF_THE_PAGE * sheet.widthPt &&
