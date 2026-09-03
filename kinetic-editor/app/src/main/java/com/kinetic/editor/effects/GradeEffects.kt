@@ -235,6 +235,36 @@ class PreviewFxProvider : GradeUniformsProvider {
     }
 }
 
+/** Immutable uniform snapshot for one clip. */
+class ClipFx(
+    val grade: ColorGradeSpec,
+    val lutBitmap: Bitmap?,
+    val lutIntensity: Float,
+)
+
+/**
+ * Preview-side provider for a picture-in-picture player.
+ *
+ * A PiP carries no transitions — a transition is a cut between neighbours on
+ * one track, and a PiP has no cut to sit on — so its uniforms are constant
+ * across a clip. There is nothing to look up by timestamp, only one snapshot to
+ * swap when the playing clip changes. A single volatile reference, so the GL
+ * thread can never read a new grade paired with the previous clip's LUT.
+ */
+class ClipSnapshotFxProvider : GradeUniformsProvider {
+
+    @Volatile
+    var snapshot: ClipFx? = null
+
+    override fun fill(presentationTimeUs: Long, out: GradeUniformsBuffer) {
+        out.reset()
+        val s = snapshot ?: return
+        out.setGrade(s.grade)
+        out.lutBitmap = s.lutBitmap
+        out.lutIntensity = s.lutIntensity
+    }
+}
+
 /** Immutable per-clip FX segment in preview-µs. Plain fields, binary-searchable. */
 class FxSegment(
     val startUs: Long,

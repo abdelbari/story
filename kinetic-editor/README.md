@@ -198,9 +198,14 @@ during pinch-zoom. Instead:
   the current playhead behind a `derivedStateOf`, so the box only re-lays out
   when a clip's framing actually changes. `PipSpec.scale` is the fraction of
   the picture's width; height follows the source's own proportions; between
-  clips the box is hidden rather than left frozen on a stale frame. One known
-  preview-only gap: grade/LUT on a PiP clip is exported but not previewed,
-  because the slave players carry no GL effects.
+  clips the box is hidden rather than left frozen on a stale frame.
+- A PiP is **graded by the same shader as everything else**: its player carries
+  `GradeGlEffect` too, fed by a one-snapshot provider rather than a timeline,
+  because a PiP has no transitions and its uniforms are therefore constant
+  across a clip. The snapshot is swapped on `onMediaItemTransition` (immediate
+  at a clip boundary, rather than waiting for the 10Hz tick) and on every
+  cosmetic commit. The clip is chosen by the player's own item index — what the
+  decoder is actually reading — not by the playhead.
 - **Playback errors are surfaced, not swallowed.** A source that vanishes after
   being added (a persisted project whose file was deleted, a revoked URI) would
   otherwise be a silently black preview; `onPlayerError` on the master and every

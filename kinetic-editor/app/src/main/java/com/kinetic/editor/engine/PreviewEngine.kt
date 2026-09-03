@@ -22,6 +22,8 @@ import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.transitionWindowsUs
 import com.kinetic.editor.core.model.gainAt
+import com.kinetic.editor.effects.ClipFx
+import com.kinetic.editor.effects.ClipSnapshotFxProvider
 import com.kinetic.editor.effects.FxSegment
 import com.kinetic.editor.effects.GradeGlEffect
 import com.kinetic.editor.effects.PreviewFxProvider
@@ -195,9 +197,11 @@ class PreviewEngine(
     fun updateCosmetics(state: TimelineState) {
         latestState = state
         rebuildSegments(state)
-        rebuildFx(state)
         publishOverlays(state)
+        // Slaves first: rebuildFx pushes each PiP's uniforms from the placements
+        // they hold, so those must already be the new ones.
         for (slave in slaves.values) slave.refresh(state)
+        rebuildFx(state)
     }
 
     /** Slave-structural change (audio or PiP): rebuild those playlists only. */
@@ -356,10 +360,16 @@ class PreviewEngine(
     /* ----------------------------- fx snapshot ----------------------------- */
 
     private fun rebuildFx(state: TimelineState) {
-        val neededLuts = state.mainTrack.clips.mapNotNull { it.lut?.assetPath }.distinct()
+        // Overlay tracks included: a PiP is graded by the same shader, from the
+        // same LUT cache, as the main track.
+        val neededLuts = state.tracks
+            .filter { it.type == TrackType.VIDEO_MAIN || it.type == TrackType.VIDEO_OVERLAY }
+            .flatMap { t -> t.clips.mapNotNull { c -> c.lut?.assetPath } }
+            .distinct()
         val missing = neededLuts.filter { it !in lutCache }
         if (missing.isEmpty()) {
             fxProvider.timeline = buildFxTimeline(state)
+            applySlaveFx()
             return
         }
         scope.launch {
@@ -371,7 +381,13 @@ class PreviewEngine(
                 }
             }
             fxProvider.timeline = buildFxTimeline(latestState)
+            applySlaveFx()
         }
+    }
+
+    /** Pushes each PiP player's current-clip uniforms; safe to call at any time. */
+    private fun applySlaveFx() {
+        for (slave in slaves.values) slave.applyFx()
     }
 
     private fun buildFxTimeline(state: TimelineState): PreviewFxTimeline {
@@ -444,6 +460,7 @@ class PreviewEngine(
             slave.rebuild(state, track)
         }
         publishOverlays(state)
+        applySlaveFx()
     }
 
     /**
@@ -473,6 +490,9 @@ class PreviewEngine(
         private var track: Track? = null
         private var placements: List<PlacedClip> = emptyList()
 
+        /** Non-null once this slave carries video, i.e. it is a PiP track. */
+        private var fx: ClipSnapshotFxProvider? = null
+
         init {
             player.addListener(object : Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
@@ -482,23 +502,53 @@ class PreviewEngine(
                     }
                     _error.value = describe(label, error)
                 }
+
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    // Immediate at a clip boundary, rather than waiting for the
+                    // 10Hz tick to notice the grade should have changed.
+                    applyFx()
+                }
             })
         }
 
         fun rebuild(state: TimelineState, newTrack: Track) {
             track = newTrack
             placements = state.placements(newTrack)
+            // Same shader as the main track and the export, so a PiP's grade and
+            // LUT are previewed rather than only rendered. Attached once, before
+            // the first prepare, as setVideoEffects requires.
+            if (newTrack.type == TrackType.VIDEO_OVERLAY && fx == null) {
+                val provider = ClipSnapshotFxProvider()
+                fx = provider
+                player.setVideoEffects(listOf(GradeGlEffect(provider)))
+            }
             player.pause()
             player.setMediaItems(placements.map { clippedItem(it) })
             player.prepare()
+            applyFx()
         }
 
-        /** Cosmetic refresh: new envelopes/mute, same playlist. */
+        /** Cosmetic refresh: new envelopes/mute/grade, same playlist. */
         fun refresh(state: TimelineState) {
             val id = track?.id ?: return
             val t = state.tracks.firstOrNull { it.id == id } ?: return
             track = t
             placements = state.placements(t)
+        }
+
+        /**
+         * Swaps in the uniforms of the clip whose frames are being decoded. The
+         * player's own item index is the authority: it is what the decoder is
+         * reading, whatever the playhead has since been dragged to.
+         */
+        fun applyFx() {
+            val provider = fx ?: return
+            val clip = placements.getOrNull(player.currentMediaItemIndex)?.clip ?: return
+            provider.snapshot = ClipFx(
+                grade = clip.grade,
+                lutBitmap = clip.lut?.let { lutCache[it.assetPath] },
+                lutIntensity = clip.lut?.intensity ?: 0f,
+            )
         }
 
         fun sync(timelineMs: Long, playing: Boolean) {
