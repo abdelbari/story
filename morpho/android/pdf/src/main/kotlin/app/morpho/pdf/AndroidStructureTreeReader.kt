@@ -20,6 +20,7 @@ import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
 import app.morpho.engine.layout.pdf.HeadingSizes
 import app.morpho.engine.layout.pdf.InternalLinks
+import app.morpho.engine.layout.pdf.PageFurniture
 import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLook
 import app.morpho.engine.layout.pdf.PdfRuns
@@ -1032,59 +1033,41 @@ internal object AndroidStructureTreeReader {
                 val number = pageNumber(byPage, reference)
                 val left = minOf(marginLeft, box[0])
                 val right = maxOf(marginRight, box[2])
-                val top = box[1]
-                val bottom = box[3]
-                if (number == null) {
-                    val crop = AndroidPageImages.crop(doc, reference, left, top, right, bottom) ?: return emptyList<Block>() to null
-                    return listOf<Block>(crop) to distance
+                val drawn = PageFurniture.Crop { page, l, t, r, b, masks, trim ->
+                    AndroidPageImages.crop(doc, page, l, t, r, b, masks, trim)
                 }
-                firstPageNumber = number.value - reference
-                val numberBox = number.box
-                val numberLook = number.positions.firstOrNull()?.let { lookOf(it, 0) }
-                val field = TextRun(
-                    text = firstPageNumber.toString(),
-                    field = RunField.PAGE_NUMBER,
-                    bold = numberLook?.bold ?: false,
-                    italic = numberLook?.italic ?: false,
-                    fontFamily = numberLook?.fontFamily,
-                    fontSizePt = numberLook?.fontSizePt?.takeIf { it > 0f },
+                val numbered = number?.let {
+                    firstPageNumber = it.value - reference
+                    val look = it.positions.firstOrNull()?.let { position -> lookOf(position, 0) }
+                    PageFurniture.Numbered(
+                        field = TextRun(
+                            text = firstPageNumber.toString(),
+                            field = RunField.PAGE_NUMBER,
+                            bold = look?.bold ?: false,
+                            italic = look?.italic ?: false,
+                            fontFamily = look?.fontFamily,
+                            fontSizePt = look?.fontSizePt?.takeIf { size -> size > 0f },
+                        ),
+                        box = it.box,
+                    )
+                }
+                val blocks = PageFurniture.drawn(
+                    crop = drawn,
+                    page = reference,
+                    box = floatArrayOf(left, box[1], right, box[3]),
+                    pageWidth = width,
+                    // The edges of the band, not of the text: the picture is
+                    // set at the paragraph's own start, so the tab that puts
+                    // the number beside it is measured in the same frame or
+                    // the clear space between the two is eaten.
+                    left = left,
+                    right = right,
+                    number = numbered,
+                    rtl = rtl,
                 )
-                val centre = (numberBox[0] + numberBox[2]) / 2
-                val atLeft = centre < width / 3
-                val atRight = centre > width * 2 / 3
-                if (!atLeft && !atRight) {
-                    // A number in the middle: the picture with the number
-                    // masked, and the field on a line of its own beneath.
-                    val crop = AndroidPageImages.crop(doc, reference, left, top, right, bottom, listOf(numberBox))
-                        ?: return listOf<Block>(Paragraph(listOf(field), ParagraphStyle(alignment = Alignment.CENTER))) to distance
-                    val centred = Paragraph(listOf(field), ParagraphStyle(alignment = Alignment.CENTER, spaceBeforePt = 0f, spaceAfterPt = 0f))
-                    return listOf(crop, centred) to distance
-                }
-                // The number at one end: the rest of the furniture as a
-                // picture in the line, a tab to where the number sat, and
-                // the field — all on the one line, as on the page.
-                val cropLeft = if (atLeft) numberBox[2] + FURNITURE_GAP_PT else left
-                val cropRight = if (atRight) numberBox[0] - FURNITURE_GAP_PT else right
-                val crop = AndroidPageImages.crop(doc, reference, cropLeft, top, cropRight, bottom)
-                val picture = crop?.let { TextRun("", image = it) }
-                val direction = if (rtl) TextDirection.RTL else TextDirection.LTR
-                val numberFirst = if (rtl) atRight else atLeft
-                val stop = when {
-                    numberFirst -> if (rtl) right - cropRight else cropLeft - left
-                    rtl -> right - numberBox[2]
-                    else -> numberBox[0] - left
-                }
-                val runs = if (numberFirst) listOfNotNull(field, TextRun("\t"), picture) else listOfNotNull(picture, TextRun("\t"), field)
-                val startIndent = if (numberFirst) 0f else if (rtl) right - cropRight else cropLeft - left
-                val style = ParagraphStyle(
-                    direction = direction,
-                    startIndentPt = startIndent.takeIf { it > 0.5f },
-                    tabStopsPt = listOf(stop).filter { it > 0f },
-                    spaceBeforePt = 0f,
-                    spaceAfterPt = 0f,
-                )
-                return listOf<Block>(Paragraph(runs, style)) to distance
+                return if (blocks.isEmpty()) emptyList<Block>() to null else blocks to distance
             }
+
             val (header, headerDistance) = side(atTop = true)
             val (footer, footerDistance) = side(atTop = false)
             return Furnishings(header, footer, headerDistance, footerDistance, firstPageNumber)

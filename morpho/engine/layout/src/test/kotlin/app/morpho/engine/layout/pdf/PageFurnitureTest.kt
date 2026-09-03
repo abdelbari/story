@@ -1,5 +1,6 @@
 package app.morpho.engine.layout.pdf
 
+import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.RunField
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -105,5 +106,133 @@ class PageFurnitureTest {
         val split = PageFurniture.of(lines, sheets(4))
         assertEquals(lines, split.body)
         assertNull(split.headerDistancePt)
+    }
+
+    /**
+     * A head no reader can read: a fake page whose top band holds a rule
+     * and no text at all, which is what a running head set in a font the
+     * file will not name leaves behind.
+     */
+    private fun ruledPaper(): List<PdfLine> = (1..4).flatMap { page ->
+        listOf(
+            line("The words of page $page.", page, 400f),
+            line("${page + 47}", page, 770f, x = 290f, xEnd = 310f),
+        )
+    }
+
+    private fun headRules() = (1..4).map { PdfRule(page = it, y = 46f, left = 60f, right = 540f) }
+
+    /** A crop seam that draws nothing but records what it was asked for. */
+    private class Asked : PageFurniture.Crop {
+        val calls = mutableListOf<FloatArray>()
+        var answer: (FloatArray) -> PageFurniture.Cropped? = { box ->
+            PageFurniture.Cropped(
+                image = ImageBlock(
+                    bytes = byteArrayOf(1),
+                    mimeType = "image/png",
+                    widthPx = 10,
+                    heightPx = 10,
+                    widthPt = box[2] - box[0],
+                    heightPt = box[3] - box[1],
+                ),
+                left = box[0],
+                top = box[1],
+                right = box[2],
+                bottom = box[3],
+            )
+        }
+
+        override fun of(
+            page: Int,
+            left: Float,
+            top: Float,
+            right: Float,
+            bottom: Float,
+            masks: List<FloatArray>,
+            trim: Boolean,
+        ): PageFurniture.Cropped? {
+            val box = floatArrayOf(left, top, right, bottom)
+            calls += box
+            return answer(box)
+        }
+    }
+
+    @Test
+    fun `a head with no text a reader can read is photographed`() {
+        val crop = Asked()
+        val split = PageFurniture.of(ruledPaper(), sheets(4), headRules(), crop)
+        assertEquals(1, split.header.size, "the head is there even though not one word of it read")
+        assertTrue(split.header.single() is ImageBlock, "and it is the page itself, not a guess at it")
+        assertEquals(
+            listOf("The words of page 1.", "The words of page 2.", "The words of page 3.", "The words of page 4."),
+            split.body.map { it.text },
+        )
+    }
+
+    @Test
+    fun `the band asked for reaches the page's edge and stops at its text`() {
+        val crop = Asked()
+        PageFurniture.of(ruledPaper(), sheets(4), headRules(), crop)
+        val head = crop.calls.first()
+        assertEquals(0f, head[1], "nothing in the file says where an unreadable head begins")
+        assertTrue(head[3] < 400f, "and it may not reach the page's own first line")
+    }
+
+    @Test
+    fun `a rule inside the page's text is not a head`() {
+        val crop = Asked()
+        // The rule is where a page ruled all round would draw one, below
+        // the first line of the text rather than above it.
+        val inside = (1..4).map { PdfRule(page = it, y = 402f, left = 60f, right = 540f) }
+        val split = PageFurniture.of(ruledPaper(), sheets(4), inside, crop)
+        assertTrue(split.header.isEmpty(), "photographing past it would take the page's text with it")
+        assertEquals(4, split.body.size)
+    }
+
+    @Test
+    fun `a page that will not draw keeps whatever text was read`() {
+        val crop = Asked()
+        crop.answer = { null }
+        val split = PageFurniture.of(paper(), sheets(4), headRules(), crop)
+        assertEquals(
+            listOf("The Journal of Something"),
+            split.header.filterIsInstance<Paragraph>().map { it.text },
+            "a head that could not be photographed still had words of its own",
+        )
+    }
+
+    @Test
+    fun `the number is cut out of the photograph and written as a field`() {
+        val crop = Asked()
+        val numbered = (1..4).flatMap { page ->
+            listOf(
+                line("The words of page $page.", page, 400f),
+                PdfLine(
+                    text = "${page + 47} Some Journal",
+                    x = 60f,
+                    baselineY = 770f,
+                    maxFontSize = 10f,
+                    page = page,
+                    xEnd = 300f,
+                    segments = listOf(
+                        PdfSegment("${page + 47}", 60f, 80f),
+                        PdfSegment("Some Journal", 90f, 300f),
+                    ),
+                ),
+            )
+        }
+        val footRules = (1..4).map { PdfRule(page = it, y = 754f, left = 60f, right = 540f) }
+        val split = PageFurniture.of(numbered, sheets(4), footRules, crop)
+        val runs = split.footer.filterIsInstance<Paragraph>().single().runs
+        assertEquals(
+            listOf(RunField.PAGE_NUMBER),
+            runs.mapNotNull { it.field },
+            "every page must go on numbering itself",
+        )
+        assertTrue(runs.any { it.image != null }, "and the rest of the foot is the page as it was printed")
+        assertEquals(48, split.firstPageNumber)
+        // The photograph is cut beside where the digits sat, so the number
+        // is not printed into it as well as written beside it.
+        assertTrue(crop.calls.any { it[0] > 80f }, "the picture starts past the digits")
     }
 }

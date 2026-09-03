@@ -137,6 +137,11 @@ class PdfReader {
             val model = if (lines.isNotEmpty()) {
                 PdfLayout.reconstruct(
                     lines, confidence, images, stripper.pages(), stripper.rules(), chapters,
+                    // Page numbers count from one; the renderer counts from
+                    // zero, and the two have been confused before.
+                    crop = { page, left, top, right, bottom, masks, trim ->
+                        PageImages.crop(doc, page - 1, left, top, right, bottom, masks, trim)
+                    },
                 )
             } else {
                 plainTextFallback(doc, confidence, images)

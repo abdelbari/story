@@ -142,11 +142,14 @@ object PdfLayout {
         sheets: List<PdfPageSheet> = emptyList(),
         rules: List<PdfRule> = emptyList(),
         outline: List<PdfOutlineEntry> = emptyList(),
+        crop: PageFurniture.Crop? = null,
     ): DocumentModel {
         // What every page repeats at its head and its foot is the page's
         // own furniture, not text of the document: taken out of the
-        // reading, and put back where a document keeps it.
-        val split = PageFurniture.of(lines, sheets)
+        // reading, and put back where a document keeps it. Some of it can
+        // only be photographed — a head the file will not spell — which is
+        // what a reader that holds the pages hands over [crop] for.
+        val split = PageFurniture.of(lines, sheets, rules, crop)
         val model = reconstructBody(split.body, confidence, images, sheets, rules, outline)
         if (split.header.isEmpty() && split.footer.isEmpty()) return model
         val page = model.pageSetup

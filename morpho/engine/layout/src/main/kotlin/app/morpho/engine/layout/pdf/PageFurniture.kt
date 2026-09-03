@@ -1,10 +1,13 @@
 package app.morpho.engine.layout.pdf
 
 import app.morpho.engine.layout.Alignment
+import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Block
+import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphStyle
 import app.morpho.engine.layout.RunField
+import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
 
 /**
@@ -63,8 +66,152 @@ object PageFurniture {
         val firstPageNumber: Int? = null,
     )
 
-    /** [lines] with the pages' furniture taken out of the text and made into blocks. */
-    fun of(lines: List<PdfLine>, sheets: List<PdfPageSheet>): Split {
+    /**
+     * How a reader that holds the pages makes a picture of part of one.
+     *
+     * These heuristics never see the PDF — they work on the lines and the
+     * rules a reader hands them — so the reader that does hands them this
+     * as well.
+     */
+    fun interface Crop {
+        /**
+         * The region of [page] between [left]..[right] and [top]..[bottom],
+         * in top-down page points, as a picture, with [masks] painted out.
+         * Null where there is nothing to crop, the page could not be drawn,
+         * or the region came back blank — a page that drew nothing there is
+         * a page that has no picture to give.
+         *
+         * With [trim], the blank around the ink is taken off and the result
+         * says where what is left actually sits. A band asked for generously
+         * — everything above the rule under a running head, since nothing in
+         * the file says where its words begin — comes back as the words.
+         */
+        fun of(
+            page: Int,
+            left: Float,
+            top: Float,
+            right: Float,
+            bottom: Float,
+            masks: List<FloatArray>,
+            trim: Boolean,
+        ): Cropped?
+    }
+
+    /** A picture of part of a page, and the part of the page it turned out to cover. */
+    class Cropped(
+        val image: ImageBlock,
+        val left: Float,
+        val top: Float,
+        val right: Float,
+        val bottom: Float,
+    )
+
+    /** A page's own number where it stands in the furniture: what to write, and where it stood. */
+    class Numbered(val field: TextRun, val box: FloatArray)
+
+    /** Clear space kept between a page number and the picture of the rest of its line. */
+    private const val FURNITURE_GAP_PT = 4f
+
+    /**
+     * A page's furniture as the page itself drew it: a picture of the band
+     * it occupies, with the page's number masked out of that picture and
+     * written as a field where the number stood, so every page goes on
+     * numbering itself.
+     *
+     * [box] is the band in top-down page points; [left] and [right] are the
+     * edges the text is set between, which is what a tab stop and an indent
+     * are measured from. Empty when the page could not be drawn.
+     *
+     * Both readers ask this, because a head is a head whether the producer
+     * marked it as one or the pages were compared to find it, and a walk
+     * written twice is a walk that goes wrong once.
+     */
+    fun drawn(
+        crop: Crop,
+        page: Int,
+        box: FloatArray,
+        pageWidth: Float,
+        left: Float,
+        right: Float,
+        number: Numbered?,
+        rtl: Boolean,
+    ): List<Block> {
+        if (number == null) {
+            return listOfNotNull(crop.of(page, box[0], box[1], box[2], box[3], emptyList(), false)?.image)
+        }
+        val numberBox = number.box
+        val centre = (numberBox[0] + numberBox[2]) / 2
+        val atLeft = centre < pageWidth / 3
+        val atRight = centre > pageWidth * 2 / 3
+        if (!atLeft && !atRight) {
+            // A number in the middle: the picture with the number masked,
+            // and the field on a line of its own beneath.
+            val centred = Paragraph(
+                listOf(number.field),
+                ParagraphStyle(alignment = Alignment.CENTER, spaceBeforePt = 0f, spaceAfterPt = 0f),
+            )
+            val picture = crop.of(page, box[0], box[1], box[2], box[3], listOf(numberBox), false)
+                ?: return listOf(centred)
+            return listOf(picture.image, centred)
+        }
+        // The number at one end: the rest of the furniture as a picture in
+        // the line, a tab to where the number sat, and the field — all on
+        // the one line, as on the page.
+        val cropLeft = if (atLeft) numberBox[2] + FURNITURE_GAP_PT else box[0]
+        val cropRight = if (atRight) numberBox[0] - FURNITURE_GAP_PT else box[2]
+        val picture = crop.of(page, cropLeft, box[1], cropRight, box[3], emptyList(), false)
+            ?.let { TextRun("", image = it.image) }
+        val numberFirst = if (rtl) atRight else atLeft
+        val stop = when {
+            numberFirst -> if (rtl) right - cropRight else cropLeft - left
+            rtl -> right - numberBox[2]
+            else -> numberBox[0] - left
+        }
+        val runs = if (numberFirst) {
+            listOfNotNull(number.field, TextRun("\t"), picture)
+        } else {
+            listOfNotNull(picture, TextRun("\t"), number.field)
+        }
+        val startIndent = if (numberFirst) 0f else if (rtl) right - cropRight else cropLeft - left
+        return listOf(
+            Paragraph(
+                runs,
+                ParagraphStyle(
+                    direction = if (rtl) TextDirection.RTL else TextDirection.LTR,
+                    startIndentPt = startIndent.takeIf { it > 0.5f },
+                    tabStopsPt = listOf(stop).filter { it > 0f },
+                    spaceBeforePt = 0f,
+                    spaceAfterPt = 0f,
+                ),
+            )
+        )
+    }
+
+    /** Clear space left around a rule when the band it belongs to is photographed. */
+    private const val RULE_MARGIN_PT = 2f
+
+    /** Rules this far apart, in the same place across pages, are the same rule. */
+    private const val SAME_RULE_PT = 1.5f
+
+    /**
+     * [lines] with the pages' furniture taken out of the text and made into
+     * blocks.
+     *
+     * [rules] and [crop] are what a head no reader can read is recovered
+     * with. A running head set in a font the file does not name paints
+     * letters that a person reads and that PDFBox never reports: there is
+     * no line there to find, and a converter working from lines alone drops
+     * the head without ever knowing it existed. What such a head does leave
+     * behind is the rule drawn beside it, in the same place on page after
+     * page — and where that repeats, the page itself is photographed, which
+     * is the only honest account of what the head says.
+     */
+    fun of(
+        lines: List<PdfLine>,
+        sheets: List<PdfPageSheet>,
+        rules: List<PdfRule> = emptyList(),
+        crop: Crop? = null,
+    ): Split {
         val heightByPage = sheets.associate { it.page to it.heightPt }
         val widthByPage = sheets.associate { it.page to it.widthPt }
         if (lines.map { it.page }.distinct().size < REPEATS_TO_BE_RUNNING) return Split(lines)
@@ -84,22 +231,53 @@ object PageFurniture {
             .filterValues { group -> group.map { it.page }.distinct().size >= REPEATS_TO_BE_RUNNING }
             .values.flatten()
             .toCollection(java.util.Collections.newSetFromMap(java.util.IdentityHashMap()))
-        if (running.isEmpty()) return Split(lines)
+
+        // A rule drawn in the same place in the margin of page after page
+        // is furniture too, and it is all that is left of a head whose
+        // words the file will not name.
+        val ruled = if (crop == null) emptyList() else rules
+            .filter { rule ->
+                val height = heightByPage[rule.page]?.takeIf { it > 0f } ?: return@filter false
+                rule.y < MARGIN_BAND_SHARE * height || rule.y > (1f - MARGIN_BAND_SHARE) * height
+            }
+            .groupBy { (it.y / SAME_RULE_PT).toInt() }
+            .filterValues { group -> group.map { it.page }.distinct().size >= REPEATS_TO_BE_RUNNING }
+            .values.flatten()
+        if (running.isEmpty() && ruled.isEmpty()) return Split(lines)
         val body = lines.filterNot { it in running }
-        if (body.isEmpty()) return Split(lines)
+        if (body.isEmpty() && running.isNotEmpty()) return Split(lines)
 
         // One page's furniture stands for every page's. The first page is
         // used when it carries any, since that is the page a reader opens.
-        val byPage = running.groupBy { it.page }
-        val reference = if (byPage.containsKey(1)) 1 else byPage.keys.min()
+        val furnished = (running.map { it.page } + ruled.map { it.page }).toSortedSet()
+        val reference = if (1 in furnished) 1 else furnished.firstOrNull() ?: return Split(body)
         val height = heightByPage[reference]?.takeIf { it > 0f } ?: return Split(body)
         val width = widthByPage[reference]?.takeIf { it > 0f } ?: return Split(body)
         val counted = pageNumber(running)
+        val byPage = running.groupBy { it.page }
 
         fun side(atTop: Boolean): Pair<List<Block>, Float?> {
-            val own = byPage.getValue(reference)
+            val own = byPage[reference].orEmpty()
                 .filter { (it.baselineY < height / 2) == atTop }
                 .sortedBy { it.baselineY }
+            val ownRules = ruled.filter { it.page == reference && (it.y < height / 2) == atTop }
+            if (own.isEmpty() && ownRules.isEmpty()) return emptyList<Block>() to null
+            if (crop != null && ownRules.isNotEmpty()) {
+                val rtl = Bidi.dominantDirection(body.joinToString(" ") { it.text }) == TextDirection.RTL
+                // The band stops where the page's own text starts. A rule
+                // in the margin is usually a head's; a page ruled all round
+                // draws one there too, and photographing past it would put
+                // the first line of the page in the header and leave it in
+                // the body as well.
+                val onPage = body.filter { it.page == reference }
+                val stopAt = if (atTop) {
+                    onPage.minOfOrNull { it.baselineY - ASCENT_SHARE * it.maxFontSize }
+                } else {
+                    onPage.maxOfOrNull { it.baselineY + DESCENT_SHARE * it.maxFontSize }
+                }
+                photographed(crop, reference, own, ownRules, atTop, width, height, stopAt, counted, rtl)
+                    ?.let { return it }
+            }
             if (own.isEmpty()) return emptyList<Block>() to null
             val distance = if (atTop) {
                 own.minOf { it.baselineY - ASCENT_SHARE * it.maxFontSize }
@@ -119,6 +297,115 @@ object PageFurniture {
             footerDistancePt = footerDistance,
             firstPageNumber = counted?.let { it.offset + 1 },
         )
+    }
+
+    /**
+     * One side's furniture as a photograph of the page, for a band that
+     * carries a rule: the rule itself, the words beside it whether or not
+     * they could be read, and nothing of the page's text.
+     *
+     * The band is asked for generously — from the page's edge to just past
+     * the rule — because nothing in the file says where an unreadable head
+     * begins, and it comes back trimmed to the ink, which does. Where the
+     * page's own number sits in the band it is masked out and written as a
+     * field, so the converted document goes on numbering itself.
+     *
+     * Null when the page could not be drawn, and the caller falls back to
+     * whatever text it did manage to read.
+     */
+    private fun photographed(
+        crop: Crop,
+        page: Int,
+        own: List<PdfLine>,
+        ownRules: List<PdfRule>,
+        atTop: Boolean,
+        pageWidth: Float,
+        pageHeight: Float,
+        /** Where the page's own text begins, which the band may not reach. */
+        stopAt: Float?,
+        counted: Counted?,
+        rtl: Boolean,
+    ): Pair<List<Block>, Float?>? {
+        val left = minOf(
+            ownRules.minOf { it.left },
+            own.minOfOrNull { it.x } ?: Float.MAX_VALUE,
+        )
+        val right = maxOf(
+            ownRules.maxOf { it.right },
+            own.maxOfOrNull { it.xEnd } ?: 0f,
+        )
+        val top = if (atTop) {
+            0f
+        } else {
+            minOf(
+                ownRules.minOf { it.y } - RULE_MARGIN_PT,
+                own.minOfOrNull { it.baselineY - ASCENT_SHARE * it.maxFontSize } ?: Float.MAX_VALUE,
+            ).coerceAtLeast(stopAt ?: 0f)
+        }
+        val bottom = if (atTop) {
+            maxOf(
+                ownRules.maxOf { it.y } + RULE_MARGIN_PT,
+                own.maxOfOrNull { it.baselineY + DESCENT_SHARE * it.maxFontSize } ?: 0f,
+            ).coerceAtMost(stopAt ?: pageHeight)
+        } else {
+            pageHeight
+        }
+        if (bottom - top < 1f) return null
+        val number = numberIn(own, counted, page)
+        // The generous band, trimmed: what comes back is where the ink is,
+        // which is what the band should have been asked for and what the
+        // rest of the work is measured against.
+        val band = crop.of(page, left, top, right, bottom, listOfNotNull(number?.box), true)
+            ?: return null
+        val distance = if (atTop) band.top else pageHeight - band.bottom
+        // With no number in it the trimmed band is already the picture. With
+        // one, the band is cut again either side of where the number sat, so
+        // the number can be written as a field beside it rather than printed
+        // into the picture as the digits one page happened to show.
+        val blocks = if (number == null) {
+            listOf(band.image)
+        } else {
+            drawn(
+                crop = crop,
+                page = page,
+                box = floatArrayOf(band.left, band.top, band.right, band.bottom),
+                pageWidth = pageWidth,
+                left = band.left,
+                right = band.right,
+                number = number,
+                rtl = rtl,
+            )
+        }
+        return if (blocks.isEmpty()) null else blocks to distance.coerceAtLeast(0f)
+    }
+
+    /**
+     * The page's own number where it is written in [own], as the field to
+     * write in its place and the space to paint out of the photograph.
+     *
+     * The digits are found by their extent rather than by what they say:
+     * the number is the one chunk of a running line that is not the same on
+     * every page, and a chunk of an unreadable line says nothing reliable
+     * about which digits it holds even when it does report some.
+     */
+    private fun numberIn(own: List<PdfLine>, counted: Counted?, page: Int): Numbered? {
+        if (counted == null) return null
+        val wanted = page + counted.offset
+        for (line in own) {
+            val segment = line.segments.firstOrNull { value(it.text) == wanted }
+                ?: line.segments.firstOrNull { DIGIT_RUN.matches(it.text) && it.text.length == wanted.toString().length }
+                ?: continue
+            return Numbered(
+                field = TextRun(wanted.toString(), field = RunField.PAGE_NUMBER),
+                box = floatArrayOf(
+                    segment.xStart,
+                    line.baselineY - ASCENT_SHARE * line.maxFontSize,
+                    segment.xEnd,
+                    line.baselineY + DESCENT_SHARE * line.maxFontSize,
+                ),
+            )
+        }
+        return null
     }
 
     /**

@@ -7,5 +7,6 @@ public class Bitmap {
     public int getWidth() { return 0; }
     public int getHeight() { return 0; }
     public boolean compress(CompressFormat f, int q, java.io.OutputStream s) { return false; }
+    public void getPixels(int[] pixels, int offset, int stride, int x, int y, int width, int height) {}
     public void recycle() {}
 }
