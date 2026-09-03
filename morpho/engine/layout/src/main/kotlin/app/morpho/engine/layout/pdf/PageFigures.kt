@@ -23,8 +23,14 @@ object PageFigures {
     /** Paths this close together are one drawing: a chart is many strokes, not one. */
     private const val SAME_FIGURE_PT = 12f
 
-    /** Smaller than this in either direction and a mark is an ornament, not a figure. */
-    private const val LEAST_SIDE_PT = 24f
+    /**
+     * Smaller than this in either direction and a mark is not a figure: a
+     * rule, a tick, a bullet, the underline of a heading. A page draws a
+     * great many of those and none of them is a picture — the paper this
+     * was measured on tags the rule under its dates as a Figure, and
+     * photographed it came out as a strip of ink one point tall.
+     */
+    const val LEAST_SIDE_PT = 24f
 
     /** A drawing covering more of the sheet than this is the page itself, not a figure on it. */
     private const val MOST_OF_THE_PAGE = 0.7f

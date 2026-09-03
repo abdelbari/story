@@ -18,6 +18,7 @@ import app.morpho.engine.layout.TableCell
 import app.morpho.engine.layout.TableRow
 import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
+import app.morpho.engine.layout.pdf.PageFigures
 import app.morpho.engine.layout.pdf.PageFurniture
 import app.morpho.engine.layout.pdf.HeadingSizes
 import app.morpho.engine.layout.pdf.InternalLinks
@@ -229,6 +230,9 @@ internal object StructureTreeReader {
     private const val DEFAULT_SIZE_PT = 12f
     private const val CONFIDENCE = 0.9f
 
+    /** Clear space kept round a drawn figure, so no stroke of it is cut. */
+    private const val FIGURE_PAD_PT = 2f
+
     fun read(doc: PDDocument, images: List<PdfImage> = emptyList()): DocumentModel? {
         val root = doc.documentCatalog.structureTreeRoot ?: return null
         val texts = MarkedContentIndex(doc)
@@ -276,6 +280,30 @@ internal object StructureTreeReader {
          */
         val artifactBoxes = HashMap<Int, MutableList<FloatArray>>()
         val artifactPlaces = HashMap<Int, String?>()
+
+        /**
+         * The box every painted path covered, by the marked content it was
+         * painted under. A Figure the producer tagged as one but drew with
+         * paths — which is how a spreadsheet and a word processor export a
+         * chart — holds no picture the file can be asked for, and this is
+         * the only record of where on the page it stands.
+         */
+        val drawnByMcid = HashMap<Int, FloatArray>()
+        private val openMcids = ArrayDeque<Int>()
+        private var reach: FloatArray? = null
+
+        private fun reaches(point: FloatArray) {
+            val box = reach
+            if (box == null) {
+                reach = floatArrayOf(point[0], point[1], point[0], point[1])
+                return
+            }
+            box[0] = minOf(box[0], point[0])
+            box[1] = minOf(box[1], point[1])
+            box[2] = maxOf(box[2], point[0])
+            box[3] = maxOf(box[3], point[1])
+        }
+
         private var artifactsOpened = 0
         private var currentArtifact: Int? = null
         private val openTags = ArrayDeque<String>()
@@ -310,6 +338,7 @@ internal object StructureTreeReader {
                     }
                     openArtifact(tag, properties)
                     openTags.addLast(tag.name)
+                    openMcids.addLast(properties?.getInt(COSName.getPDFName("MCID"), -1) ?: -1)
                     context.beginMarkedContentSequence(tag, properties)
                 }
             })
@@ -320,6 +349,7 @@ internal object StructureTreeReader {
                     val tag = operands.firstOrNull() as? COSName ?: return
                     openArtifact(tag, null)
                     openTags.addLast(tag.name)
+                    openMcids.addLast(-1)
                     context.beginMarkedContentSequence(tag, null)
                 }
             })
@@ -328,6 +358,7 @@ internal object StructureTreeReader {
 
                 override fun process(operator: Operator, operands: List<COSBase>) {
                     openTags.removeLastOrNull()
+                    openMcids.removeLastOrNull()
                     if (openTags.isEmpty()) currentArtifact = null
                     context.endMarkedContentSequence()
                 }
@@ -363,12 +394,14 @@ internal object StructureTreeReader {
             // thin rectangle. Curves and anything else end the subpath.
             addOperator(pathOperator("m") { operands ->
                 val point = point(operands, 0) ?: return@pathOperator
+                reaches(point)
                 subpathStart = point
                 current = point
             })
             addOperator(pathOperator("l") { operands ->
                 val from = current
                 val to = point(operands, 0) ?: return@pathOperator
+                reaches(to)
                 if (from != null) segment(from, to)
                 current = to
             })
@@ -378,6 +411,20 @@ internal object StructureTreeReader {
                 if (from != null && to != null) segment(from, to)
                 current = to
             })
+            // A curve reaches wherever its points do. Its control points
+            // are not on the curve, so the box is a little generous —
+            // which is the right way to be wrong about where a figure ends.
+            for (name in listOf("c", "v", "y")) {
+                addOperator(
+                    pathOperator(name) { operands ->
+                        var at = 0
+                        while (at + 1 < operands.size) {
+                            point(operands, at)?.let { reaches(it); current = it }
+                            at += 2
+                        }
+                    },
+                )
+            }
             addOperator(pathOperator("re") { operands ->
                 if (operands.size < 4) return@pathOperator
                 val x = number(operands[0]) ?: return@pathOperator
@@ -386,6 +433,8 @@ internal object StructureTreeReader {
                 val h = number(operands[3]) ?: return@pathOperator
                 val a = transform(x, y)
                 val b = transform(x + w, y + h)
+                reaches(a)
+                reaches(b)
                 val top = minOf(a[1], b[1])
                 val bottom = maxOf(a[1], b[1])
                 if (bottom - top <= RULE_MAX_THICKNESS_PT) {
@@ -472,6 +521,15 @@ internal object StructureTreeReader {
                     }
                 }
             }
+            // What a Figure drew rather than placed, kept against the
+            // marked content it drew it under.
+            val mcid = openMcids.lastOrNull { it >= 0 }
+            reach?.takeIf { (strokes || fills) && mcid != null }?.let { box ->
+                drawnByMcid.merge(mcid!!, box) { a, b ->
+                    floatArrayOf(minOf(a[0], b[0]), minOf(a[1], b[1]), maxOf(a[2], b[2]), maxOf(a[3], b[3]))
+                }
+            }
+            reach = null
             pendingSegments.clear()
             pendingSlivers.clear()
             current = null
@@ -494,6 +552,14 @@ internal object StructureTreeReader {
         private val inkByPageIndex = HashMap<Int, InkBox>()
         /** The rules drawn on each page, outside its running header and footer. */
         private val rulesByPageIndex = HashMap<Int, List<Rule>>()
+        /**
+         * The box each marked content drew rather than placed. A Figure
+         * the producer tagged as one but drew with paths — how a
+         * spreadsheet and a word processor export a chart — holds no
+         * picture the file can be asked for, and this says where on the
+         * page it stands, which is enough to photograph it.
+         */
+        private val drawnByPageAndMcid = HashMap<Long, FloatArray>()
         /** The colour each glyph was painted in, gathered from every page's extractor before it is let go. */
         private val colorByPosition = IdentityHashMap<TextPosition, Int>()
         /** Where each glyph points, for the few a link annotation covers. */
@@ -540,6 +606,9 @@ internal object StructureTreeReader {
                     }
                 }
                 rulesByPageIndex[index] = extractor.rules.toList()
+                for ((mcid, box) in extractor.drawnByMcid) {
+                    drawnByPageAndMcid[key(index, mcid)] = box
+                }
                 colorByPosition.putAll(extractor.colors)
                 linkByPosition.putAll(extractor.links)
                 highlightByPosition.putAll(extractor.highlights)
@@ -1227,6 +1296,39 @@ internal object StructureTreeReader {
             return glyphsByPageAndMcid[key(pageIndex, mcid)]?.map { pageIndex to it }.orEmpty()
         }
 
+        /**
+         * A photograph of whatever the marked contents [ids] drew, at the
+         * size they drew it, with a hair of clear space so no stroke of it
+         * sits on the edge. Null when they drew nothing, or when the page
+         * will not draw.
+         */
+        fun drawnUnder(ids: List<Pair<PDPage?, Int>>): ImageBlock? {
+            var pageIndex: Int? = null
+            var box: FloatArray? = null
+            for ((page, mcid) in ids) {
+                val index = pageIndexByPage[page?.cosObject] ?: continue
+                val drawn = drawnByPageAndMcid[key(index, mcid)] ?: continue
+                pageIndex = index
+                box = box?.let {
+                    floatArrayOf(
+                        minOf(it[0], drawn[0]), minOf(it[1], drawn[1]),
+                        maxOf(it[2], drawn[2]), maxOf(it[3], drawn[3]),
+                    )
+                } ?: drawn.copyOf()
+            }
+            val at = pageIndex ?: return null
+            val reach = box ?: return null
+            // A rule is not a figure, however the tree labels it.
+            if (reach[2] - reach[0] < PageFigures.LEAST_SIDE_PT) return null
+            if (reach[3] - reach[1] < PageFigures.LEAST_SIDE_PT) return null
+            return PageImages.crop(
+                doc, at,
+                reach[0] - FIGURE_PAD_PT, reach[1] - FIGURE_PAD_PT,
+                reach[2] + FIGURE_PAD_PT, reach[3] + FIGURE_PAD_PT,
+                trim = true,
+            )?.image
+        }
+
         /** Largest type size drawn under [mcid], or 0 when it drew no text. */
         fun sizeFor(page: PDPage?, mcid: Int): Float {
             val pageIndex = page?.cosObject?.let(pageIndexByPage::get) ?: return 0f
@@ -1605,7 +1707,7 @@ internal object StructureTreeReader {
 
         /** A Figure resolves to its image through the marked-content ids. */
         private fun emitFigure(element: PDStructureElement) {
-            val image = figureImage(element) ?: return
+            val image = figureImage(element) ?: return emitDrawnFigure(element)
             usedImages += image
             sawText = true
             blocks += ImageBlock(
@@ -1617,7 +1719,22 @@ internal object StructureTreeReader {
             )
         }
 
-        private fun figureImage(element: PDStructureElement): PdfImage? {
+        /**
+         * A Figure the producer drew rather than placed: a chart, a
+         * diagram, a signature, exported as paths by every drawing tool
+         * there is. There is no picture in the file to ask for, so the
+         * page is photographed where the Figure drew — the only account of
+         * it there can be. Nothing is emitted for a Figure that drew
+         * nothing, or for a page that will not draw.
+         */
+        private fun emitDrawnFigure(element: PDStructureElement) {
+            val picture = texts.drawnUnder(markedContentIds(element)) ?: return
+            sawText = true
+            blocks += picture
+        }
+
+        /** Every marked content the tree hangs under [element], with its page. */
+        private fun markedContentIds(element: PDStructureElement): List<Pair<PDPage?, Int>> {
             val ids = mutableListOf<Pair<PDPage?, Int>>()
             fun gather(node: PDStructureElement, depth: Int) {
                 if (depth > MAX_DEPTH) throw TooDeepException()
@@ -1632,7 +1749,11 @@ internal object StructureTreeReader {
                 }
             }
             gather(element, 0)
-            for ((page, mcid) in ids) {
+            return ids
+        }
+
+        private fun figureImage(element: PDStructureElement): PdfImage? {
+            for ((page, mcid) in markedContentIds(element)) {
                 val pageNumber = texts.pageNumberOf(page) ?: continue
                 imageByPageAndMcid[imageKey(pageNumber, mcid)]?.let { return it }
             }

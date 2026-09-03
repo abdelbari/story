@@ -6,6 +6,13 @@ import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.PDPageContentStream
 import org.apache.pdfbox.pdmodel.common.PDRectangle
+import org.apache.pdfbox.cos.COSDictionary
+import org.apache.pdfbox.cos.COSName
+import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureElement
+import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureTreeRoot
+import org.apache.pdfbox.pdmodel.documentinterchange.markedcontent.PDMarkedContent
+import org.apache.pdfbox.pdmodel.documentinterchange.markedcontent.PDPropertyList
+import org.apache.pdfbox.pdmodel.documentinterchange.taggedpdf.StandardStructureTypes
 import org.apache.pdfbox.pdmodel.font.PDType1Font
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -115,6 +122,112 @@ class DrawnFigureTest {
         assertEquals(
             without.blocks.filterIsInstance<Paragraph>().map { it.text },
             withChart.blocks.filterIsInstance<Paragraph>().map { it.text },
+        )
+    }
+
+    /**
+     * A tagged report whose Figure is drawn rather than placed — which is
+     * what a word processor exports when the figure is a chart it made
+     * itself. The tags say plainly that it is a figure; there is simply no
+     * picture in the file to be had.
+     */
+    private fun taggedReport(): ByteArray {
+        PDDocument().use { doc ->
+            val root = PDStructureTreeRoot()
+            doc.documentCatalog.structureTreeRoot = root
+            val document = PDStructureElement(StandardStructureTypes.DOCUMENT, root)
+            root.appendKid(document)
+            val page = PDPage(PDRectangle.A4)
+            doc.addPage(page)
+            document.page = page
+            var mcid = 0
+            PDPageContentStream(doc, page).use { content ->
+                fun paragraph(text: String, topY: Float) {
+                    val element = PDStructureElement(StandardStructureTypes.P, document)
+                    element.page = page
+                    document.appendKid(element)
+                    val properties = COSDictionary().apply { setInt(COSName.MCID, mcid) }
+                    content.beginMarkedContent(COSName.P, PDPropertyList.create(properties))
+                    content.beginText()
+                    content.setFont(PDType1Font.HELVETICA, 11f)
+                    content.newLineAtOffset(72f, height - topY)
+                    content.showText(text)
+                    content.endText()
+                    content.endMarkedContent()
+                    element.appendKid(PDMarkedContent(COSName.P, properties))
+                    mcid++
+                }
+                paragraph("The paragraph above the figure.", 100f)
+
+                val figure = PDStructureElement(StandardStructureTypes.Figure, document)
+                figure.page = page
+                document.appendKid(figure)
+                val properties = COSDictionary().apply { setInt(COSName.MCID, mcid) }
+                content.beginMarkedContent(COSName.getPDFName("Figure"), PDPropertyList.create(properties))
+                content.setNonStrokingColor(Color(40, 80, 160))
+                for (bar in 0 until 4) {
+                    content.addRect(120f + bar * 60f, height - 400f, 40f, 40f + bar * 30f)
+                    content.fill()
+                }
+                content.endMarkedContent()
+                figure.appendKid(PDMarkedContent(COSName.getPDFName("Figure"), properties))
+                mcid++
+
+                // A rule, tagged as a Figure — which the paper this was
+                // measured on does with the rule under its dates.
+                val ruled = PDStructureElement(StandardStructureTypes.Figure, document)
+                ruled.page = page
+                document.appendKid(ruled)
+                val ruleProperties = COSDictionary().apply { setInt(COSName.MCID, mcid) }
+                content.beginMarkedContent(COSName.getPDFName("Figure"), PDPropertyList.create(ruleProperties))
+                content.setNonStrokingColor(Color.BLACK)
+                content.addRect(72f, height - 460f, 400f, 0.7f)
+                content.fill()
+                content.endMarkedContent()
+                ruled.appendKid(PDMarkedContent(COSName.getPDFName("Figure"), ruleProperties))
+                mcid++
+
+                paragraph("The paragraph below the figure.", 500f)
+            }
+            val out = ByteArrayOutputStream()
+            doc.save(out)
+            return out.toByteArray()
+        }
+    }
+
+    @Test
+    fun `a tagged Figure with no picture in the file is photographed`() {
+        val model = PdfReader().extract(taggedReport())
+        val pictures = model.blocks.filterIsInstance<ImageBlock>()
+        assertEquals(1, pictures.size, "the Figure the tags name: ${model.blocks.map { it::class.simpleName }}")
+        val drawn = ImageIO.read(ByteArrayInputStream(pictures.single().bytes))
+        var blue = 0
+        for (y in 0 until drawn.height) for (x in 0 until drawn.width) {
+            val rgb = drawn.getRGB(x, y)
+            if ((rgb and 0xFF) > ((rgb shr 16) and 0xFF) + 60) blue++
+        }
+        assertTrue(blue > 500, "the bars are in it: $blue blue pixels")
+    }
+
+    @Test
+    fun `a tagged Figure stands between the paragraphs it stood between`() {
+        val model = PdfReader().extract(taggedReport())
+        val texts = model.blocks.map { (it as? Paragraph)?.text }
+        assertEquals(
+            listOf("The paragraph above the figure.", null, "The paragraph below the figure."),
+            texts,
+        )
+    }
+
+    @Test
+    fun `a rule the tree calls a Figure is still a rule`() {
+        // Photographed, it comes out as a strip of ink one point tall,
+        // which is a picture of nothing anybody wanted.
+        val model = PdfReader().extract(taggedReport())
+        assertEquals(
+            1,
+            model.blocks.filterIsInstance<ImageBlock>().size,
+            "the chart is a figure and the rule is not",
         )
     }
 }
