@@ -8,8 +8,14 @@ import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.layout.Table
+import app.morpho.engine.layout.pdf.Hocr
+import app.morpho.engine.layout.pdf.PdfLayout
+import app.morpho.engine.layout.pdf.PdfPageSheet
+import app.morpho.engine.layout.pdf.RecognizedText
+import app.morpho.engine.layout.pdf.RecognizedWord
 import com.googlecode.tesseract.android.TessBaseAPI
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import com.tom_roush.pdfbox.rendering.PDFRenderer
 import java.io.File
 import kotlin.math.sqrt
@@ -22,11 +28,21 @@ import kotlin.math.sqrt
  * Tesseract needs real files, so the requested ones are copied once into
  * the app's files directory before first use.
  *
- * Recognized text flows through [PlainTextImporter], so paragraph splitting,
- * list detection and the UAX #9 direction pass all apply. Every block scores
- * [OCR_CONFIDENCE]: OCR output is a guess by construction, and the Fidelity
- * Report should say so. Rendering is 200 dpi — a memory/accuracy balance to
- * revisit with device testing.
+ * What recognition finds goes through the same reading an untagged PDF
+ * gets: headings from type size, paragraphs from spacing, columns from
+ * gutters, tables from the alignment of words. None of that machinery was
+ * ever specific to PDFs — it takes positioned lines — and recognition can
+ * say where every word sits, if asked for hOCR instead of a string. Asked
+ * for a string, it throws all of that away at the call, and the importer
+ * on the other end, built for text files, can only find structure in the
+ * Markdown conventions recognised text never has: a scanned paper came
+ * back as one long paragraph, no headings, no columns, no tables.
+ *
+ * The base score is [OCR_CONFIDENCE], because OCR output is a guess by
+ * construction and the Fidelity Report should say so; the reading moves
+ * it from there, so a table it worked out from the alignment of words
+ * reads as less sure than a paragraph. Rendering is 200 dpi — a
+ * memory/accuracy balance to revisit with device testing.
  */
 class AndroidOcrReader(private val context: Context) {
 
@@ -59,6 +75,8 @@ class AndroidOcrReader(private val context: Context) {
         shouldContinue: () -> Boolean = { true },
     ): DocumentModel {
         val dataParent = ensureTrainedData(languages)
+        val words = mutableListOf<RecognizedWord>()
+        val sheets = mutableListOf<PdfPageSheet>()
         val pageTexts = mutableListOf<String>()
         var sheet: PageSetup? = null
         AndroidPdfReader.load(bytes, password).use { doc ->
@@ -68,6 +86,13 @@ class AndroidOcrReader(private val context: Context) {
                 check(tess.init(dataParent.absolutePath, languages)) {
                     "Tesseract failed to initialize for $languages"
                 }
+                // Ask for the font of every word as well as its box. The
+                // fast models this app ships answer nothing — the newer
+                // recogniser reports no font at all — but it is one call,
+                // it cannot fail, and a model that does answer is the
+                // difference between finding a paper's bold headings and
+                // missing them.
+                tess.setVariable(FONT_INFO, "1")
                 // Reading a page takes seconds, so a reader who asked for
                 // one chapter waits for that chapter and no longer.
                 val wanted = (pages ?: 1..doc.numberOfPages)
@@ -77,14 +102,26 @@ class AndroidOcrReader(private val context: Context) {
                     val index = number - 1
                     if (!shouldContinue()) throw Cancelled()
                     onPage(ordinal + 1, wanted.size)
-                    // The sheet these pages were rendered from. Without it
-                    // a converted scan is laid out on whatever Word opens
-                    // with, and a page numbered from 47 starts again at 1.
+                    // The sheet each page was rendered from. Without it a
+                    // converted scan is laid out on whatever Word opens
+                    // with, its running heads cannot be told from its text
+                    // — nothing knows where the foot of the page is — and
+                    // a page numbered from 47 starts again at 1. Pages are
+                    // numbered as the reader asked for them, so a chapter
+                    // converted on its own is a document of its own.
                     if (sheet == null) sheet = sheetOf(doc, index)
-                    val bitmap = renderer.renderImageWithDPI(index, dpiFor(doc, index))
+                    boxOf(doc, index)?.let { sheets += PdfPageSheet(ordinal + 1, it.width, it.height) }
+                    val dpi = dpiFor(doc, index)
+                    val bitmap = renderer.renderImageWithDPI(index, dpi)
                     try {
                         tess.setImage(bitmap)
-                        pageTexts += tess.getUTF8Text().orEmpty()
+                        words += Hocr.wordsOf(tess.getHOCRText(index).orEmpty(), ordinal + 1, dpi)
+                        // Recognition's plain text, kept only while its
+                        // hOCR has yielded nothing at all: a build whose
+                        // hOCR this cannot read must still convert the
+                        // scan the way it always did, and one whose hOCR
+                        // it can read need not carry every page twice.
+                        if (words.isEmpty()) pageTexts += tess.getUTF8Text().orEmpty()
                     } finally {
                         bitmap.recycle()
                     }
@@ -97,10 +134,6 @@ class AndroidOcrReader(private val context: Context) {
                 tess.recycle()
             }
         }
-        // Read as the pages they are, not as one long text: what every
-        // page repeats at its head or foot is the page's own, and a
-        // paragraph that carried on over a turn is joined back up.
-        val model = PlainTextImporter.importPages(pageTexts, sheet)
         fun scored(blocks: List<Block>) = blocks.map { block ->
             when (block) {
                 is Paragraph -> block.copy(confidence = OCR_CONFIDENCE)
@@ -108,12 +141,32 @@ class AndroidOcrReader(private val context: Context) {
                 is ImageBlock -> block
             }
         }
+        if (words.isEmpty()) {
+            // Read as the pages they are, not as one long text: what every
+            // page repeats at its head or foot is the page's own, and a
+            // paragraph that carried on over a turn is joined back up.
+            val model = PlainTextImporter.importPages(pageTexts, sheet)
+            return model.copy(
+                blocks = scored(model.blocks),
+                header = scored(model.header),
+                footer = scored(model.footer),
+            )
+        }
+        val model = PdfLayout.reconstruct(
+            lines = RecognizedText.linesOf(words),
+            confidence = OCR_CONFIDENCE,
+            sheets = sheets,
+        )
+        // The body is left as the reading scored it: it knows more about
+        // each block than this does, and moved every score up or down
+        // from [OCR_CONFIDENCE] for a reason. A running head is not scored
+        // there, because a PDF that spells one out is certain of it — and
+        // a scan is a guess like everything else recognition hands back.
         return model.copy(
-            blocks = scored(model.blocks),
-            // A recognised running head is a guess like everything else
-            // recognition hands back, and the Fidelity Report should say so.
             header = scored(model.header),
             footer = scored(model.footer),
+            evenHeader = scored(model.evenHeader),
+            evenFooter = scored(model.evenFooter),
         )
     }
 
@@ -125,8 +178,7 @@ class AndroidOcrReader(private val context: Context) {
      * document out to the wrong width, which is worse than none at all.
      */
     private fun sheetOf(doc: PDDocument, index: Int): PageSetup? {
-        val box = runCatching { doc.getPage(index).cropBox }.getOrNull() ?: return null
-        if (box.width <= 0f || box.height <= 0f) return null
+        val box = boxOf(doc, index) ?: return null
         return PageSetup(
             widthPt = box.width,
             heightPt = box.height,
@@ -135,6 +187,12 @@ class AndroidOcrReader(private val context: Context) {
             marginLeftPt = 0f,
             marginRightPt = 0f,
         )
+    }
+
+    /** The page at [index] as the file measures it, where it measures it at all. */
+    private fun boxOf(doc: PDDocument, index: Int): PDRectangle? {
+        val box = runCatching { doc.getPage(index).cropBox }.getOrNull() ?: return null
+        return if (box.width <= 0f || box.height <= 0f) null else box
     }
 
     /**
@@ -146,10 +204,9 @@ class AndroidOcrReader(private val context: Context) {
      * page sizes are far below the cap and unaffected.
      */
     private fun dpiFor(doc: PDDocument, index: Int): Float {
-        val box = runCatching { doc.getPage(index).cropBox }.getOrNull() ?: return RENDER_DPI
+        val box = boxOf(doc, index) ?: return RENDER_DPI
         val widthInches = box.width / POINTS_PER_INCH
         val heightInches = box.height / POINTS_PER_INCH
-        if (widthInches <= 0f || heightInches <= 0f) return RENDER_DPI
         val pixels = widthInches * heightInches * RENDER_DPI * RENDER_DPI
         if (pixels <= MAX_PAGE_PIXELS) return RENDER_DPI
         return RENDER_DPI * sqrt(MAX_PAGE_PIXELS / pixels)
@@ -231,6 +288,9 @@ class AndroidOcrReader(private val context: Context) {
 
         /** OCR output is a guess by construction; the heatmap should show it. */
         const val OCR_CONFIDENCE = 0.5f
+
+        /** Tesseract's name for "tell me the font of each word too". */
+        private const val FONT_INFO = "hocr_font_info"
 
         private const val RENDER_DPI = 200f
 
