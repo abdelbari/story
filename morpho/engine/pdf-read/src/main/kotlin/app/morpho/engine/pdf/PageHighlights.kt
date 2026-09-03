@@ -19,20 +19,33 @@ import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationTextMarkup
  */
 internal class PageHighlights(document: PDDocument) {
 
+    /** What the reader did to the words under the area: painted, underlined, struck out. */
+    enum class Kind { HIGHLIGHT, UNDERLINE, STRIKE }
+
     internal class Area(
         val left: Float,
         val top: Float,
         val right: Float,
         val bottom: Float,
         val rgb: Int,
+        val kind: Kind = Kind.HIGHLIGHT,
     ) {
         fun holds(x: Float, y: Float): Boolean = x in left..right && y in top..bottom
     }
 
-    /** The highlights of one page, ready to be asked about a glyph. */
+    /** The markings of one page, ready to be asked about a glyph. */
     class Page internal constructor(private val areas: List<Area>) {
         /** The colour over the glyph at ([x], [y]) in top-down page points, or null. */
-        fun at(x: Float, y: Float): Int? = areas.firstOrNull { it.holds(x, y) }?.rgb
+        fun at(x: Float, y: Float): Int? =
+            areas.firstOrNull { it.kind == Kind.HIGHLIGHT && it.holds(x, y) }?.rgb
+
+        /** Whether a reader drew a line under the glyph at ([x], [y]). */
+        fun underlined(x: Float, y: Float): Boolean =
+            areas.any { it.kind == Kind.UNDERLINE && it.holds(x, y) }
+
+        /** Whether a reader struck the glyph at ([x], [y]) out. */
+        fun struck(x: Float, y: Float): Boolean =
+            areas.any { it.kind == Kind.STRIKE && it.holds(x, y) }
     }
 
     private val byPage = HashMap<Int, Page>()
@@ -58,8 +71,22 @@ internal class PageHighlights(document: PDDocument) {
         val areas = mutableListOf<Area>()
         for (annotation in page.annotations.orEmpty()) {
             val markup = annotation as? PDAnnotationTextMarkup ?: continue
-            if (markup.subtype != PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT) continue
-            val rgb = runCatching { markup.color?.toRGB() }.getOrNull() ?: continue
+            // What the reader did, of the three things a marking can be.
+            // The first was kept and the other two thrown away, though a
+            // line drawn under a term and a clause struck out are the two
+            // that change what the document says.
+            val kind = when (markup.subtype) {
+                PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT -> Kind.HIGHLIGHT
+                PDAnnotationTextMarkup.SUB_TYPE_UNDERLINE,
+                PDAnnotationTextMarkup.SUB_TYPE_SQUIGGLY -> Kind.UNDERLINE
+                PDAnnotationTextMarkup.SUB_TYPE_STRIKEOUT -> Kind.STRIKE
+                else -> continue
+            }
+            // A highlight without a colour is nothing to draw; an
+            // underline without one is drawn in the reader's own colour
+            // and is a marking still.
+            val rgb = runCatching { markup.color?.toRGB() }.getOrNull()
+                ?: if (kind == Kind.HIGHLIGHT) continue else 0
             // A highlight covers a quadrilateral per line of text it was
             // drawn over; a marking that lost them still has its rectangle.
             val quads = runCatching { markup.quadPoints }.getOrNull()
@@ -90,6 +117,7 @@ internal class PageHighlights(document: PDDocument) {
                     right = drawn[2] - box.lowerLeftX,
                     bottom = box.upperRightY - drawn[1],
                     rgb = rgb and 0xFFFFFF,
+                    kind = kind,
                 )
             }
         }

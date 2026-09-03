@@ -18,8 +18,12 @@ import java.io.ByteArrayOutputStream
 /**
  * A marked-up PDF is the one people most want kept: the highlighting is
  * the reader's own reading of the document, and every converter throws it
- * away. A highlight is an annotation with a colour and the quadrilaterals
+ * away. A marking is an annotation with a colour and the quadrilaterals
  * it covers, joined to the words underneath by geometry.
+ *
+ * There are three kinds and only the first was kept: a highlight painted
+ * over the words, a line drawn under them, and a line struck through
+ * them — the last two being the ones that change what the document says.
  */
 class HighlightTest {
 
@@ -54,12 +58,68 @@ class HighlightTest {
         assertNull(runs.firstOrNull { it.highlightRgb != null })
     }
 
+    @Test
+    fun `words a reader underlined come back underlined`() {
+        val runs = runsOf(markedPdf(subtype = PDAnnotationTextMarkup.SUB_TYPE_UNDERLINE))
+        val marked = runs.filter { it.underline }
+        assertTrue(
+            marked.any { it.text.contains("important") },
+            "the underlined words were: " + marked.map { it.text },
+        )
+        assertTrue(runs.none { it.strikethrough }, "an underline was read as a strike")
+        assertTrue(
+            runs.filter { it.text.contains("ordinary") }.none { it.underline },
+            "the words beside the marking were underlined too",
+        )
+    }
+
+    @Test
+    fun `words a reader struck out come back struck out`() {
+        val runs = runsOf(markedPdf(subtype = PDAnnotationTextMarkup.SUB_TYPE_STRIKEOUT))
+        val marked = runs.filter { it.strikethrough }
+        assertTrue(
+            marked.any { it.text.contains("important") },
+            "the struck words were: " + marked.map { it.text },
+        )
+        assertTrue(runs.none { it.underline }, "a strike was read as an underline")
+    }
+
+    @Test
+    fun `a wavy line under the words is a line under the words`() {
+        val runs = runsOf(markedPdf(subtype = PDAnnotationTextMarkup.SUB_TYPE_SQUIGGLY))
+        assertTrue(runs.filter { it.underline }.any { it.text.contains("important") })
+    }
+
+    @Test
+    fun `a marking with no colour of its own is a marking still`() {
+        // A highlight has to be some colour to be seen; a line drawn under
+        // the words is drawn in whatever colour the reader was using, and
+        // a file that does not say which has still marked the words.
+        val runs = runsOf(
+            markedPdf(subtype = PDAnnotationTextMarkup.SUB_TYPE_UNDERLINE, coloured = false)
+        )
+        assertTrue(runs.filter { it.underline }.any { it.text.contains("important") })
+    }
+
+    @Test
+    fun `a document nobody marked has nothing underlined or struck`() {
+        val runs = runsOf(markedPdf(marked = false))
+        assertTrue(runs.none { it.underline || it.strikethrough })
+    }
+
+    private fun runsOf(pdf: ByteArray) =
+        PdfReader().extract(pdf).blocks.filterIsInstance<Paragraph>().flatMap { it.runs }
+
     /**
      * One line of text with the middle words marked in yellow, drawn the
      * way a PDF reader writes a highlight: an annotation with the quads it
      * covers, over text that knows nothing about it.
      */
-    private fun markedPdf(marked: Boolean = true): ByteArray {
+    private fun markedPdf(
+        marked: Boolean = true,
+        subtype: String = PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT,
+        coloured: Boolean = true,
+    ): ByteArray {
         PDDocument().use { doc ->
             val page = PDPage(PDRectangle.A4)
             doc.addPage(page)
@@ -76,8 +136,8 @@ class HighlightTest {
                 content.endText()
             }
             if (marked) {
-                val highlight = PDAnnotationTextMarkup(PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT)
-                highlight.color = PDColor(floatArrayOf(1f, 1f, 0f), PDDeviceRGB.INSTANCE)
+                val highlight = PDAnnotationTextMarkup(subtype)
+                if (coloured) highlight.color = PDColor(floatArrayOf(1f, 1f, 0f), PDDeviceRGB.INSTANCE)
                 highlight.rectangle = PDRectangle(70f, 696f, 200f, 16f)
                 // Upper-left, upper-right, lower-left, lower-right, as a
                 // reader's highlight is written.

@@ -302,6 +302,10 @@ internal object StructureTreeReader {
 
         /** The glyphs the page thickened by stroking round them, which is a bold nothing names. */
         val stroked = IdentityHashMap<TextPosition, Boolean>()
+
+        /** The glyphs a reader drew a line under, and the ones struck out. */
+        val underlined = IdentityHashMap<TextPosition, Boolean>()
+        val struck = IdentityHashMap<TextPosition, Boolean>()
         /** Where each glyph points, for the few a link annotation covers. */
         val links = IdentityHashMap<TextPosition, String>()
         /** The colour marked over each glyph a highlight annotation covers. */
@@ -506,8 +510,14 @@ internal object StructureTreeReader {
             if (thickened()) stroked[text] = true
             pageLinks?.at(text.xDirAdj + text.widthDirAdj / 2, text.yDirAdj - text.heightDir / 2)
                 ?.let { links[text] = it }
-            pageHighlights?.at(text.xDirAdj + text.widthDirAdj / 2, text.yDirAdj - text.heightDir / 2)
-                ?.let { highlights[text] = it }
+            val middleX = text.xDirAdj + text.widthDirAdj / 2
+            val middleY = text.yDirAdj - text.heightDir / 2
+            pageHighlights?.at(middleX, middleY)?.let { highlights[text] = it }
+            // The lines a reader drew under the words, or through them: a
+            // marking is the reader's own reading of the document, and
+            // these two are the ones that change what it says.
+            if (pageHighlights?.underlined(middleX, middleY) == true) underlined[text] = true
+            if (pageHighlights?.struck(middleX, middleY) == true) struck[text] = true
             super.processTextPosition(text)
         }
 
@@ -650,6 +660,10 @@ internal object StructureTreeReader {
 
         /** The glyphs the pages thickened by stroking round them, gathered page by page. */
         private val strokedByPosition = IdentityHashMap<TextPosition, Boolean>()
+
+        /** What a reader marked, gathered page by page: a line under the words, or through them. */
+        private val underlinedByPosition = IdentityHashMap<TextPosition, Boolean>()
+        private val struckByPosition = IdentityHashMap<TextPosition, Boolean>()
         /** Where each glyph points, for the few a link annotation covers. */
         private val linkByPosition = IdentityHashMap<TextPosition, String>()
         private val highlightByPosition = IdentityHashMap<TextPosition, Int>()
@@ -700,6 +714,8 @@ internal object StructureTreeReader {
                 }
                 colorByPosition.putAll(extractor.colors)
                 strokedByPosition.putAll(extractor.stroked)
+                underlinedByPosition.putAll(extractor.underlined)
+                struckByPosition.putAll(extractor.struck)
                 linkByPosition.putAll(extractor.links)
                 highlightByPosition.putAll(extractor.highlights)
             }
@@ -1060,6 +1076,8 @@ internal object StructureTreeReader {
             raised = raised,
             colorRgb = colorByPosition[position],
             highlightRgb = highlightByPosition[position],
+            underline = underlinedByPosition[position] == true,
+            struck = struckByPosition[position] == true,
             link = linkByPosition[position],
         )
 

@@ -530,8 +530,25 @@ internal class PositionTextStripper : PDFTextStripper() {
             raised = raised,
             colorRgb = colors[position],
             highlightRgb = highlightAt(position),
+            underline = markedAt(position, under = true),
+            struck = markedAt(position, under = false),
             link = linkAt(position),
         )
+    }
+
+    /**
+     * Whether a reader drew a line under [position], or through it.
+     *
+     * A marking is the reader's own reading of the document, and the two
+     * kinds that are not a highlight are the two that change what it
+     * says. The lines a page itself draws are read elsewhere, from the
+     * rules; these are the ones somebody added afterwards.
+     */
+    private fun markedAt(position: TextPosition, under: Boolean): Boolean {
+        val page = highlights?.page(currentPageNo - 1) ?: return false
+        val x = position.xDirAdj + position.widthDirAdj / 2
+        val y = position.yDirAdj - position.heightDir / 2
+        return if (under) page.underlined(x, y) else page.struck(x, y)
     }
 
     /**
