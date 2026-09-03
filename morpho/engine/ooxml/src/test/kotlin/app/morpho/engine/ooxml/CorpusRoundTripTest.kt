@@ -41,19 +41,36 @@ class CorpusRoundTripTest {
         CorpusRoundTripTest::class.java.getResourceAsStream("/corpus/$name")!!
             .readBytes().toString(Charsets.UTF_8)
 
-    private fun documentXml(docx: ByteArray): Document {
+    private fun documentXml(docx: ByteArray): Document =
+        partXml(docx, "word/document.xml") ?: error("word/document.xml missing")
+
+    /**
+     * A named part of the package, or null where the package has none. A
+     * document without notes carries no notes part, and asking for one is
+     * not the same as needing one.
+     */
+    private fun partXml(docx: ByteArray, name: String): Document? {
         ZipInputStream(ByteArrayInputStream(docx)).use { zip ->
             while (true) {
-                val entry = zip.nextEntry ?: return@use
-                if (entry.name == "word/document.xml") {
+                val entry = zip.nextEntry ?: return null
+                if (entry.name == name) {
                     val factory = DocumentBuilderFactory.newInstance()
                     factory.isNamespaceAware = true
                     return factory.newDocumentBuilder().parse(ByteArrayInputStream(zip.readBytes()))
                 }
             }
         }
-        error("word/document.xml missing")
+        return null
     }
+
+    /**
+     * Text of each non-empty paragraph of the notes parts. Word's own
+     * separator notes carry no words and drop out with the blank ones.
+     */
+    private fun notePartTexts(docx: ByteArray): List<String> =
+        listOf("word/footnotes.xml", "word/endnotes.xml")
+            .mapNotNull { partXml(docx, it) }
+            .flatMap { paragraphTexts(it) }
 
     /** Text of each non-empty w:p, in document order. */
     private fun paragraphTexts(doc: Document): List<String> {
@@ -82,6 +99,23 @@ class CorpusRoundTripTest {
             }
         }
         walk(blocks)
+        // A note's words are the document's words, and Word keeps them in
+        // a part of their own — so a gate that reads the body part alone
+        // would let a writer drop every note in the file and still pass.
+        // Each note is counted as Word writes it: the mark at its head,
+        // then its words.
+        fun notes(list: List<app.morpho.engine.layout.Block>) {
+            for (block in list) when (block) {
+                is Paragraph -> for (run in block.runs) run.note?.let { note ->
+                    out += run.text
+                    for (held in note) if (held is Paragraph) out += held.text
+                }
+                is app.morpho.engine.layout.Table ->
+                    for (row in block.rows) for (cell in row.cells) notes(cell.blocks)
+                else -> {}
+            }
+        }
+        notes(blocks)
         return out.joinToString(" ")
     }
 
@@ -112,10 +146,11 @@ class CorpusRoundTripTest {
     @MethodSource("corpusFiles")
     fun `written docx preserves the model text almost exactly`(name: String) {
         val model = PlainTextImporter.import(corpusText(name))
-        val doc = documentXml(DocxWriter.toByteArray(model))
+        val docx = DocxWriter.toByteArray(model)
+        val doc = documentXml(docx)
 
         val expected = textOf(model.blocks)
-        val actual = paragraphTexts(doc).joinToString(" ")
+        val actual = (paragraphTexts(doc) + notePartTexts(docx)).joinToString(" ")
         val similarity = FidelityScorer.textSimilarity(expected, actual)
         assertTrue(similarity >= 0.999, "$name text similarity: $similarity")
         assertTrue(

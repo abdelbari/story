@@ -9,9 +9,11 @@ package app.morpho.engine.layout
  * - Only asterisk and double-tilde markers are recognized. Underscore
  *   emphasis (`_text_`) is out of scope and left verbatim, and a single
  *   tilde is a tilde.
- * - `\*`, `\~`, `\\` and `\|` are literal `*`, `~`, `\` and `|` — exactly the
- *   set [MarkdownWriter] escapes, so write→import round-trips; a backslash
- *   before any other character stays a literal backslash.
+ * - `\*`, `\~`, `\\`, `\|`, `\[` and `\]` are literal `*`, `~`, `\`, `|`, `[`
+ *   and `]` — exactly the set [MarkdownWriter] escapes, so write→import
+ *   round-trips; a backslash before any other character stays a literal
+ *   backslash. Brackets are among them because a bracket that opens
+ *   nothing must not be read as the link or the note's mark it resembles.
  * - A marker opens only when immediately followed by non-whitespace and closes
  *   only when immediately preceded by non-whitespace (a simplified flanking
  *   rule), so `a * b` and `2 * 3 * 4` stay literal.
@@ -72,7 +74,7 @@ internal object InlineEmphasisParser {
         var i = 0
         while (i < text.length) {
             when {
-                text[i] == '\\' && i + 1 < text.length && text[i + 1] in "*~\\|" -> {
+                text[i] == '\\' && i + 1 < text.length && text[i + 1] in "*~\\|[]" -> {
                     literal.append(text[i + 1])
                     i += 2
                 }

@@ -17,6 +17,12 @@ package app.morpho.engine.layout
  * repeats it. Lines that look like a table but carry no row of dashes are
  * left as the text they are.
  *
+ * A link — `[the site](https://example.org)` — and a note's mark — `[^1]`,
+ * with `[^1]: the words` defining it — are read by [InlineMarkdown], which
+ * is the other half of what [MarkdownWriter] writes: without it a document
+ * converted to Markdown and back arrived with the syntax of its own links
+ * showing in its sentences and its notes as stray lines at the end.
+ *
  * Inline Markdown emphasis — `**bold**`, `*italic*`, `***bold italic***` — is
  * parsed by [InlineEmphasisParser] into styled [TextRun]s inside body
  * paragraphs, headings and list items, with each run's direction detected from
@@ -31,14 +37,18 @@ object PlainTextImporter {
     private val numberedItem = Regex("""^[0-9\u0660-\u0669\u06F0-\u06F9]{1,2}[.)]\s+""")
 
     fun import(text: String): DocumentModel {
-        val lines = text.replace("\r\n", "\n").replace('\r', '\n').split("\n")
+        val written = text.replace("\r\n", "\n").replace('\r', '\n').split("\n")
+        // The notes come out first: a mark in the middle of a sentence
+        // refers to words defined at the end of the document, which a walk
+        // that reads one line at a time has not reached yet.
+        val (lines, notes) = InlineMarkdown.notesOf(written)
         val blocks = mutableListOf<Block>()
         val buffer = mutableListOf<String>()
         val tableLines = mutableListOf<String>()
 
         fun flush() {
             if (buffer.isEmpty()) return
-            blocks += paragraph(LineJoiner.join(buffer), ParagraphKind.BODY, listMarker = null)
+            blocks += paragraph(LineJoiner.join(buffer), ParagraphKind.BODY, listMarker = null, notes = notes)
             buffer.clear()
         }
 
@@ -47,7 +57,7 @@ object PlainTextImporter {
             if (tableLines.isEmpty()) return
             val gathered = tableLines.toList()
             tableLines.clear()
-            val table = tableOf(gathered)
+            val table = tableOf(gathered, notes)
             if (table != null) {
                 blocks += table
             } else {
@@ -87,17 +97,17 @@ object PlainTextImporter {
                 trimmed.startsWith("### ") -> {
                     flush()
                     indents.clear()
-                    blocks += paragraph(trimmed.removePrefix("### ").trim(), ParagraphKind.HEADING_3, null)
+                    blocks += paragraph(trimmed.removePrefix("### ").trim(), ParagraphKind.HEADING_3, null, notes = notes)
                 }
                 trimmed.startsWith("## ") -> {
                     flush()
                     indents.clear()
-                    blocks += paragraph(trimmed.removePrefix("## ").trim(), ParagraphKind.HEADING_2, null)
+                    blocks += paragraph(trimmed.removePrefix("## ").trim(), ParagraphKind.HEADING_2, null, notes = notes)
                 }
                 trimmed.startsWith("# ") -> {
                     flush()
                     indents.clear()
-                    blocks += paragraph(trimmed.removePrefix("# ").trim(), ParagraphKind.HEADING_1, null)
+                    blocks += paragraph(trimmed.removePrefix("# ").trim(), ParagraphKind.HEADING_1, null, notes = notes)
                 }
 
                 trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("• ") -> {
@@ -107,13 +117,14 @@ object PlainTextImporter {
                         ParagraphKind.BODY,
                         ListMarker.BULLET,
                         levelOf(line),
+                        notes,
                     )
                 }
 
                 numberedItem.containsMatchIn(trimmed) -> {
                     flush()
                     val body = trimmed.replaceFirst(numberedItem, "").trim()
-                    blocks += paragraph(body, ParagraphKind.BODY, ListMarker.NUMBERED, levelOf(line))
+                    blocks += paragraph(body, ParagraphKind.BODY, ListMarker.NUMBERED, levelOf(line), notes)
                 }
 
                 else -> {
@@ -144,7 +155,7 @@ object PlainTextImporter {
      * is a head, a row of dashes saying how many columns it has, and the
      * rows themselves.
      */
-    private fun tableOf(lines: List<String>): Table? {
+    private fun tableOf(lines: List<String>, notes: Map<String, List<Block>>): Table? {
         if (lines.size < 2) return null
         val head = cellsOf(lines[0])
         val dashes = cellsOf(lines[1])
@@ -157,7 +168,7 @@ object PlainTextImporter {
         val rows = (listOf(head) + lines.drop(2).map(::cellsOf)).mapIndexed { index, cells ->
             TableRow(
                 cells = cells.mapIndexed { column, text ->
-                    TableCell(listOf(cell(text, alignments.getOrNull(column))))
+                    TableCell(listOf(cell(text, alignments.getOrNull(column), notes)))
                 },
                 // A Markdown table's first row is its head, by construction.
                 repeatsAsHeader = index == 0,
@@ -202,8 +213,8 @@ object PlainTextImporter {
         return cells
     }
 
-    private fun cell(text: String, alignment: Alignment?): Paragraph {
-        val paragraph = paragraph(text, ParagraphKind.BODY, listMarker = null)
+    private fun cell(text: String, alignment: Alignment?, notes: Map<String, List<Block>>): Paragraph {
+        val paragraph = paragraph(text, ParagraphKind.BODY, listMarker = null, notes = notes)
         return if (alignment == null) paragraph
         else paragraph.copy(style = paragraph.style.copy(alignment = alignment))
     }
@@ -228,10 +239,11 @@ object PlainTextImporter {
         kind: ParagraphKind,
         listMarker: ListMarker?,
         listLevel: Int = 0,
+        notes: Map<String, List<Block>> = emptyMap(),
     ): Paragraph {
         val direction = Bidi.firstStrongDirection(text)
         return Paragraph(
-            runs = InlineEmphasisParser.parse(text),
+            runs = InlineMarkdown.parse(text, notes),
             style = ParagraphStyle(
                 kind = kind,
                 direction = direction,

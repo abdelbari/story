@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 593 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 638 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -75,6 +75,14 @@ Work through, in this order — each exercises a path nothing else covers:
       first row as the header. A table with a merged cell — a heading over
       two columns — must still cover two, and a coloured header row must
       keep its colour.
+- [ ] **A paper with footnotes and links, converted to Markdown and then
+      that Markdown converted to Word.** The app's own output is one of
+      its inputs, and this is the path a reader takes when they want a
+      plain-text copy first. In the Word file the links must be links, the
+      notes must be notes at the foot of their pages, and no line may show
+      the characters `[^1]` or `](http` as words. A sentence whose own
+      words carry brackets — a citation, "see [note 3] below" — must keep
+      them and must not have become a link.
 - [ ] **A report with one page turned sideways** — a portrait document
       with a landscape appendix or a wide table. In Word that page must be
       landscape and the rest portrait, and the preview's pages must turn

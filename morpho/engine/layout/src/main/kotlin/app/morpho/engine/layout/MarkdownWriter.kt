@@ -9,7 +9,7 @@ package app.morpho.engine.layout
  * bullet items become `- `, numbered items are renumbered sequentially per
  * contiguous list; bold/italic runs become `**`/`*` spans (bold-italic
  * `***`); tables become pipe tables with the first row as header. Literal
- * `*`, `\` and `|` characters are escaped so the output re-imports cleanly.
+ * `*`, `\`, `|`, `[` and `]` characters are escaped so the output re-imports cleanly.
  *
  * A note goes where Markdown puts one: a reference where its mark stood
  * and the note itself at the end of the document, in the syntax every
@@ -201,8 +201,12 @@ object MarkdownWriter {
     private fun linksToItself(text: String, link: String): Boolean =
         link == text || link == "mailto:$text" || link == "https://$text" || link == "http://$text"
 
+    // Brackets among them: a document's own words hold "see [note 3]" and
+    // "[Ibn Khaldun 1377]", and a reader that has learnt what a link and a
+    // note's mark look like would read those as one.
     private fun escape(text: String): String =
         text.replace("\\", "\\\\").replace("*", "\\*").replace("~", "\\~").replace("|", "\\|")
+            .replace("[", "\\[").replace("]", "\\]")
 
     private fun appendTable(out: StringBuilder, table: Table, notes: Notes) {
         if (table.rows.isEmpty()) return

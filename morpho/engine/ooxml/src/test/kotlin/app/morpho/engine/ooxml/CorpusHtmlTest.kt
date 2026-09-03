@@ -54,6 +54,34 @@ class CorpusHtmlTest {
             }
         }
         walk(blocks)
+        // A note's words are the document's words. The preview gathers
+        // them under a rule at the end, which is where a page puts them,
+        // so they are counted last here too — and a walk that skipped
+        // them would let every note go missing unnoticed.
+        out += notesOf(blocks)
         return out.joinToString(" ")
+    }
+
+    /**
+     * Each note as a page sets it at its foot: the mark, then the words.
+     * A document with notes says each mark twice — once where it stands
+     * in the sentence and once at the head of the note it calls — and the
+     * preview says it twice for the same reason.
+     */
+    private fun notesOf(blocks: List<app.morpho.engine.layout.Block>): List<String> {
+        val out = mutableListOf<String>()
+        fun collect(list: List<app.morpho.engine.layout.Block>) {
+            for (block in list) when (block) {
+                is Paragraph -> for (run in block.runs) run.note?.let { note ->
+                    out += run.text
+                    for (held in note) if (held is Paragraph) out += held.text
+                }
+                is app.morpho.engine.layout.Table ->
+                    for (row in block.rows) for (cell in row.cells) collect(cell.blocks)
+                else -> {}
+            }
+        }
+        collect(blocks)
+        return out
     }
 }
