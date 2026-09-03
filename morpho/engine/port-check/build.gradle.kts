@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.PathSensitivity
+
 // Runs the app's Android PDF readers against the real PDFBox-Android port
 // on the JVM. See README.md in this directory for why.
 plugins {
@@ -71,4 +73,24 @@ dependencies {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+
+    // Several of these tests read files rather than call code: the engine
+    // readers each Android twin is compared against, the language packs
+    // recognition can be asked for, and the exporter that must name no
+    // type size of its own. None of those is a source of this module or a
+    // dependency of it, so without saying so here the build calls this
+    // task up to date and skips it — which it did, silently, the first
+    // time a guard was written this way and then deliberately broken to
+    // check it bites. It bit only after a clean. In CI every run starts
+    // from an empty checkout and so always runs; on the machine where the
+    // change is actually being made, it would not have.
+    inputs.dir("../pdf-read/src/main/kotlin")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+        .withPropertyName("engineReaders")
+    inputs.dir("../../android/pdf/src/main/assets/tessdata")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+        .withPropertyName("languagePacks")
+    inputs.file("../../android/app/src/main/kotlin/app/morpho/converter/PdfFileExporter.kt")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+        .withPropertyName("pdfExporter")
 }

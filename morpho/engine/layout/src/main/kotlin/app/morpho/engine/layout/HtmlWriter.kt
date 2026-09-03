@@ -173,14 +173,28 @@ object HtmlWriter {
         return sb.toString()
     }
 
-    private const val CSS =
+    /**
+     * The sizes and the air, off the scale the drawn page uses too. The
+     * preview is what the reader looks at before saving, and the print
+     * sheet prints this very stylesheet, so a scale of its own here is a
+     * preview that shows one document and saves another.
+     */
+    private val SCALE: String = with(TypeScale) {
+        val over = pt(spaceBeforePt(ParagraphKind.HEADING_1))
+        val under = pt(spaceAfterPt(ParagraphKind.HEADING_1))
+        "font-size:${pt(sizePt(ParagraphKind.BODY))};line-height:1.6;margin:48px;}" +
+            "h1,h2,h3{line-height:1.25;margin:$over 0 $under;}" +
+            "h1{font-size:${pt(sizePt(ParagraphKind.HEADING_1))};}" +
+            "h2{font-size:${pt(sizePt(ParagraphKind.HEADING_2))};}" +
+            "h3{font-size:${pt(sizePt(ParagraphKind.HEADING_3))};}" +
+            "h1.doc-title{font-size:${pt(sizePt(ParagraphKind.TITLE))};font-weight:normal;}" +
+            "p{margin:0 0 ${pt(spaceAfterPt(ParagraphKind.BODY))};}" +
+            "ul,ol{margin:0 0 ${pt(spaceAfterPt(ParagraphKind.BODY))};padding-inline-start:24pt;}"
+    }
+
+    private val CSS: String =
         "body{font-family:'Noto Naskh Arabic','Times New Roman',serif;" +
-            "font-size:12pt;line-height:1.6;margin:48px;}" +
-            "h1,h2,h3{line-height:1.25;margin:18pt 0 6pt;}" +
-            "h1{font-size:20pt;}h2{font-size:16pt;}h3{font-size:13.5pt;}" +
-            "h1.doc-title{font-size:26pt;font-weight:normal;}" +
-            "p{margin:0 0 9pt;}" +
-            "ul,ol{margin:0 0 9pt;padding-inline-start:24pt;}" +
+            SCALE +
             // A list inside a list is marked its own way, as an outline is
             // set: 1. then a) then i., and a bullet that changes with it.
             "ol ol{list-style-type:lower-alpha;}ol ol ol{list-style-type:lower-roman;}" +

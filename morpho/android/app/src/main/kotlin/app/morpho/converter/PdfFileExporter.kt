@@ -45,6 +45,7 @@ import app.morpho.engine.layout.TableCell
 import app.morpho.engine.layout.TableGrid
 import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
+import app.morpho.engine.layout.TypeScale
 import app.morpho.engine.layout.TabStops
 import app.morpho.engine.layout.pdf.StackedLines
 import java.io.ByteArrayOutputStream
@@ -1263,31 +1264,22 @@ internal object PdfFileExporter {
         return builder.build()
     }
 
+    /**
+     * The paint a [kind] is set with, off the scale the preview uses too:
+     * a page drawn at one scale and previewed at another is a preview that
+     * shows the reader a different document from the one they save, and
+     * the app makes a PDF both ways — this, and the preview handed to the
+     * system print sheet.
+     */
     private fun paintFor(kind: ParagraphKind): TextPaint {
         val paint = TextPaint(Paint.ANTI_ALIAS_FLAG)
         paint.color = 0xFF000000.toInt()
-        when (kind) {
-            ParagraphKind.TITLE -> {
-                paint.textSize = 26f
-                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            }
-            ParagraphKind.HEADING_1 -> {
-                paint.textSize = 21f
-                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            }
-            ParagraphKind.HEADING_2 -> {
-                paint.textSize = 16f
-                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            }
-            ParagraphKind.HEADING_3 -> {
-                paint.textSize = 13f
-                paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            }
-            ParagraphKind.BODY -> paint.textSize = 12f
+        paint.textSize = TypeScale.sizePt(kind)
+        if (TypeScale.bold(kind)) {
+            paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
         return paint
     }
 
-    private fun spacingAfter(kind: ParagraphKind): Float =
-        if (kind == ParagraphKind.BODY) 6f else 10f
+    private fun spacingAfter(kind: ParagraphKind): Float = TypeScale.spaceAfterPt(kind)
 }
