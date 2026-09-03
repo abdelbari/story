@@ -3,6 +3,7 @@ package app.morpho.engine.layout.pdf
 import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.RunField
+import app.morpho.engine.layout.TextRun
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -234,5 +235,71 @@ class PageFurnitureTest {
         // The photograph is cut beside where the digits sat, so the number
         // is not printed into it as well as written beside it.
         assertTrue(crop.calls.any { it[0] > 80f }, "the picture starts past the digits")
+    }
+
+    /**
+     * A head the reader could read but the renderer could not draw. The
+     * tagged reader hands over both, and what comes back must never be
+     * nothing: a phone out of room to render a page is common, and a
+     * header that disappears without a word is indistinguishable from one
+     * the converter never looked for.
+     */
+    private fun refusing() = PageFurniture.Crop { _, _, _, _, _, _, _ -> null }
+
+    private val head = listOf(TextRun("The Journal of Something"))
+
+    @Test
+    fun `a head that would not draw is written as the words it says`() {
+        val blocks = PageFurniture.drawn(
+            crop = refusing(),
+            page = 1,
+            box = floatArrayOf(72f, 30f, 500f, 50f),
+            pageWidth = width,
+            left = 72f,
+            right = 500f,
+            number = null,
+            rtl = false,
+            words = head,
+        )
+        assertEquals(
+            listOf("The Journal of Something"),
+            blocks.filterIsInstance<Paragraph>().map { it.text },
+        )
+    }
+
+    @Test
+    fun `a numbered head that would not draw keeps both its words and its number`() {
+        val blocks = PageFurniture.drawn(
+            crop = refusing(),
+            page = 1,
+            box = floatArrayOf(72f, 750f, 500f, 780f),
+            pageWidth = width,
+            left = 72f,
+            right = 500f,
+            number = PageFurniture.Numbered(
+                field = TextRun("48", field = RunField.PAGE_NUMBER),
+                box = floatArrayOf(80f, 750f, 100f, 780f),
+            ),
+            rtl = false,
+            words = head,
+        )
+        val runs = blocks.filterIsInstance<Paragraph>().single().runs
+        assertEquals(listOf(RunField.PAGE_NUMBER), runs.mapNotNull { it.field })
+        assertTrue(runs.any { it.text == "The Journal of Something" }, "and the words beside it")
+    }
+
+    @Test
+    fun `a head with neither a picture nor a word is nothing at all`() {
+        val blocks = PageFurniture.drawn(
+            crop = refusing(),
+            page = 1,
+            box = floatArrayOf(72f, 30f, 500f, 50f),
+            pageWidth = width,
+            left = 72f,
+            right = 500f,
+            number = null,
+            rtl = false,
+        )
+        assertTrue(blocks.isEmpty())
     }
 }

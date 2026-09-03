@@ -23,6 +23,7 @@ import app.morpho.engine.layout.pdf.HeadingSizes
 import app.morpho.engine.layout.pdf.InternalLinks
 import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLook
+import app.morpho.engine.layout.pdf.PdfRun
 import app.morpho.engine.layout.pdf.PdfRuns
 import org.apache.pdfbox.contentstream.operator.DrawObject
 import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingColor
@@ -1047,6 +1048,17 @@ internal object StructureTreeReader {
                         box = it.box,
                     )
                 }
+                // What the head says, for a page that will not draw. The
+                // glyphs are already in hand; reading them costs nothing
+                // until the picture fails, and a header that vanished with
+                // no explanation is the worst answer available.
+                val words = PdfRuns.toTextRuns(
+                    readStyled(positioned(pieces.flatMap { it.glyphs }).map { glyph -> reference to glyph })
+                        .logical
+                        .let { styled ->
+                            styled.text.mapIndexed { at, c -> PdfRun(c.toString(), styled.painters[at]) }
+                        },
+                )
                 val blocks = PageFurniture.drawn(
                     crop = drawn,
                     page = reference,
@@ -1060,6 +1072,7 @@ internal object StructureTreeReader {
                     right = right,
                     number = numbered,
                     rtl = rtl,
+                    words = words,
                 )
                 return if (blocks.isEmpty()) emptyList<Block>() to null else blocks to distance
             }

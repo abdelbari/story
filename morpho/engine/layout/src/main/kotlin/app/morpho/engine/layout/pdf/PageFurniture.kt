@@ -120,7 +120,14 @@ object PageFurniture {
      *
      * [box] is the band in top-down page points; [left] and [right] are the
      * edges the text is set between, which is what a tab stop and an indent
-     * are measured from. Empty when the page could not be drawn.
+     * are measured from.
+     *
+     * [words] is what the head says, for a page that will not draw. A phone
+     * that runs out of room to render one, or a renderer that cannot draw
+     * the font the head is set in, must not answer with no head at all:
+     * whatever of it could be read is worth more to a reader than a header
+     * that vanished without explanation. Empty only when there is neither a
+     * picture nor a word to show.
      *
      * Both readers ask this, because a head is a head whether the producer
      * marked it as one or the pages were compared to find it, and a walk
@@ -135,9 +142,17 @@ object PageFurniture {
         right: Float,
         number: Numbered?,
         rtl: Boolean,
+        words: List<TextRun> = emptyList(),
     ): List<Block> {
+        val plain = ParagraphStyle(
+            direction = if (rtl) TextDirection.RTL else TextDirection.LTR,
+            spaceBeforePt = 0f,
+            spaceAfterPt = 0f,
+        )
         if (number == null) {
-            return listOfNotNull(crop.of(page, box[0], box[1], box[2], box[3], emptyList(), false)?.image)
+            val picture = crop.of(page, box[0], box[1], box[2], box[3], emptyList(), false)?.image
+            if (picture != null) return listOf(picture)
+            return if (words.isEmpty()) emptyList() else listOf(Paragraph(words, plain))
         }
         val numberBox = number.box
         val centre = (numberBox[0] + numberBox[2]) / 2
@@ -151,7 +166,7 @@ object PageFurniture {
                 ParagraphStyle(alignment = Alignment.CENTER, spaceBeforePt = 0f, spaceAfterPt = 0f),
             )
             val picture = crop.of(page, box[0], box[1], box[2], box[3], listOf(numberBox), false)
-                ?: return listOf(centred)
+                ?: return if (words.isEmpty()) listOf(centred) else listOf(Paragraph(words, plain), centred)
             return listOf(picture.image, centred)
         }
         // The number at one end: the rest of the furniture as a picture in
@@ -159,8 +174,11 @@ object PageFurniture {
         // the one line, as on the page.
         val cropLeft = if (atLeft) numberBox[2] + FURNITURE_GAP_PT else box[0]
         val cropRight = if (atRight) numberBox[0] - FURNITURE_GAP_PT else box[2]
-        val picture = crop.of(page, cropLeft, box[1], cropRight, box[3], emptyList(), false)
-            ?.let { TextRun("", image = it.image) }
+        // The head beside the number: its picture, or its words where the
+        // page would not draw.
+        val beside = crop.of(page, cropLeft, box[1], cropRight, box[3], emptyList(), false)
+            ?.let { listOf(TextRun("", image = it.image)) }
+            ?: words
         val numberFirst = if (rtl) atRight else atLeft
         val stop = when {
             numberFirst -> if (rtl) right - cropRight else cropLeft - left
@@ -168,9 +186,9 @@ object PageFurniture {
             else -> numberBox[0] - left
         }
         val runs = if (numberFirst) {
-            listOfNotNull(number.field, TextRun("\t"), picture)
+            listOf(number.field, TextRun("\t")) + beside
         } else {
-            listOfNotNull(picture, TextRun("\t"), number.field)
+            beside + listOf(TextRun("\t"), number.field)
         }
         val startIndent = if (numberFirst) 0f else if (rtl) right - cropRight else cropLeft - left
         return listOf(
