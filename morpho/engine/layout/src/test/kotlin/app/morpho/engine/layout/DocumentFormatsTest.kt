@@ -146,6 +146,27 @@ class DocumentFormatsTest {
     }
 
     @Test
+    fun `a name from anywhere still gets an answer and a file name`() {
+        // A display name comes from a provider this app does not control,
+        // and some of them are careless. Whatever it is, the three
+        // questions must answer and the result must have a name and the
+        // extension asked for.
+        val pieces = listOf(".", "..", "/", "\\", " ", "\t", "\n", ".pdf", ".DOCX", ".docm",
+            "الاستمارة", "x", "\u0000", "\uFFFD", "😀", "")
+        val rng = kotlin.random.Random(20260903)
+        repeat(3000) {
+            val name = (0 until rng.nextInt(0, 6)).joinToString("") { pieces.random(rng) }
+            val mime = if (rng.nextBoolean()) null else pieces.random(rng)
+            DocumentFormats.isWord(name, mime)
+            DocumentFormats.isPdf(name, mime)
+            DocumentFormats.isPlainText(name, mime)
+            val out = DocumentFormats.outputName(name, "docx")
+            assertTrue(out.endsWith(".docx"), "\"$name\" became \"$out\"")
+            assertTrue(out.length > ".docx".length, "\"$name\" became a file with no name")
+        }
+    }
+
+    @Test
     fun `a file that is all extension still gets called something`() {
         // A hidden file picked from a folder of them would otherwise be
         // saved as a file named ".docx", which is another hidden file.

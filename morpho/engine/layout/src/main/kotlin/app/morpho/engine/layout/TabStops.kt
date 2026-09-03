@@ -27,6 +27,22 @@ object TabStops {
     const val DEFAULT_PT = 36f
 
     /**
+     * The narrowest a column of tabs may be.
+     *
+     * A document is free to name a default of its own, and one naming a
+     * hundredth of a point would ask for a hundred thousand columns across
+     * an ordinary line — which is not a page of tab stops but a converter
+     * that stops converting: asking for them exhausts the heap, as a fuzz
+     * over this found before any document had the chance to. A column
+     * narrower than a point is not a column.
+     */
+    private const val NARROWEST_PT = 1f
+
+    /** [defaultPt] if it is a column at all, else Word's own. */
+    private fun step(defaultPt: Float): Float =
+        if (defaultPt >= NARROWEST_PT && defaultPt.isFinite()) defaultPt else DEFAULT_PT
+
+    /**
      * Where a tab lands from [at], given the [declared] stops.
      *
      * [at] is measured from the start of the text — the left edge of a
@@ -36,7 +52,7 @@ object TabStops {
     fun next(at: Float, declared: List<Float> = emptyList(), defaultPt: Float = DEFAULT_PT): Float {
         val past = declared.filter { it > 0f }.sorted().firstOrNull { it > at }
         if (past != null) return past
-        val step = if (defaultPt > 0f) defaultPt else DEFAULT_PT
+        val step = step(defaultPt)
         // The next multiple of the default, not the default added on: a
         // tab is a column, and a column does not move because the word
         // before it was long. A tab standing exactly on a stop goes to the
@@ -60,7 +76,7 @@ object TabStops {
     ): List<Float> {
         if (widthPt <= 0f) return emptyList()
         val named = declared.filter { it > 0f && it <= widthPt }.distinct().sorted()
-        val step = if (defaultPt > 0f) defaultPt else DEFAULT_PT
+        val step = step(defaultPt)
         val out = named.toMutableList()
         var at = named.lastOrNull() ?: 0f
         // Bounded by the width, so a wide sheet and a small default cannot

@@ -160,6 +160,30 @@ class FrontMatterTest {
     }
 
     @Test
+    fun `whatever is at the top of a file, the words under it survive`() {
+        // The reader takes lines off the top of every text file the app
+        // imports. Whatever those lines hold — a fence, half a fence, a
+        // colon, a quote, a backslash, Arabic, an emoji — the document
+        // under them has to come back.
+        val pieces = listOf("---", "...", "title:", "a: b", "\"", "\\", "\t", " ",
+            "الاستمارة", "x", ":", "", "\uFFFD", "😀", "::", "a:b:c")
+        val rng = kotlin.random.Random(20260903)
+        repeat(3000) {
+            val lines = List(rng.nextInt(0, 8)) {
+                (0 until rng.nextInt(0, 4)).joinToString("") { pieces.random(rng) }
+            }
+            val model = PlainTextImporter.import(
+                lines.joinToString("\n") + "\n\nA real sentence here.\n"
+            )
+            val text = model.blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }
+            assertTrue(
+                text.contains("A real sentence here."),
+                "the words under $lines were eaten",
+            )
+        }
+    }
+
+    @Test
     fun `a block with no fields at all is still a block`() {
         // An empty fence is not something this writes, but a file may
         // carry one, and its two lines are not the document's first

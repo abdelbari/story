@@ -94,6 +94,49 @@ class TabStopsTest {
     }
 
     @Test
+    fun `a line of any width is given stops that make sense`() {
+        // Widths and declared stops nobody would set, including negative
+        // ones and stops past the end of the line: what comes back must
+        // still be an ordered set of places on the line, and asking one at
+        // a time must always move forward.
+        val rng = kotlin.random.Random(20260903)
+        repeat(3000) {
+            val width = rng.nextFloat() * 2000f - 100f
+            val declared = List(rng.nextInt(0, 5)) { rng.nextFloat() * 900f - 100f }
+            val stops = TabStops.through(width, declared)
+            assertEquals(stops.sorted(), stops, "out of order for $width, $declared")
+            assertEquals(stops.distinct(), stops, "a stop twice for $width, $declared")
+            assertTrue(stops.all { it <= width }, "a stop past the line for $width, $declared")
+            var at = 0f
+            repeat(4) {
+                val next = TabStops.next(at, declared)
+                assertTrue(next > at, "a tab did not move: $at to $next with $declared")
+                at = next
+            }
+        }
+    }
+
+    @Test
+    fun `a column narrower than a point is not a column`() {
+        // A document is free to name a default of its own, and one naming
+        // a thousandth of a point asked for a million columns across an
+        // ordinary line: not a page of tab stops but a converter that
+        // stops converting. A fuzz over this found it before any document
+        // had the chance to.
+        for (tiny in listOf(0.001f, 0.5f, 0f, -12f, Float.NaN, Float.MIN_VALUE)) {
+            val stops = TabStops.through(1000f, emptyList(), defaultPt = tiny)
+            assertTrue(
+                stops.size <= (1000f / TabStops.DEFAULT_PT).toInt() + 1,
+                "a default of $tiny asked for ${stops.size} stops",
+            )
+            assertEquals(TabStops.DEFAULT_PT, TabStops.next(0f, emptyList(), defaultPt = tiny))
+        }
+        // A column wider than the default is one a document may name.
+        assertEquals(96f, TabStops.next(0f, emptyList(), defaultPt = 96f))
+        assertEquals(listOf(96f, 192f), TabStops.through(200f, emptyList(), defaultPt = 96f))
+    }
+
+    @Test
     fun `a default of nothing is the default`() {
         // A document that names a default of zero would otherwise ask for
         // stops forever.
