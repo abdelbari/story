@@ -212,7 +212,16 @@ object PdfLayout {
         // table — carries over the first kind and not the second.
         val filled = filledPages(lines, sheets)
         val deliberate = deliberateBreaks(lines, filled)
-        val regions = joinRunOns(PdfTableDetector.detect(lines), lines, filled)
+        // A table the page ruled says exactly where its cells are, wrapped
+        // ones included, so it is asked first; the alignment of cells is
+        // left to say what it can about every table the page did not rule.
+        val ruledTables = PdfRuledTables.of(lines, drawings)
+        val byAlignment = PdfTableDetector.detect(lines)
+            .filterNot { aligned -> ruledTables.any { it.start < aligned.end && aligned.start < it.end } }
+        val regions = joinRunOns((ruledTables + byAlignment).sortedBy { it.start }, lines, filled)
+        // A table read from the grid the page drew is a ruled table by
+        // construction: the grid is the rules.
+        val ruledStarts = ruledTables.map { it.start }.toSet()
 
         // Text stretches between table regions, each remembering its lines.
         val stretches = mutableListOf<List<PdfLine>>()
@@ -236,8 +245,8 @@ object PdfLayout {
                     region,
                     (confidence - GUESSED_FROM_ALIGNMENT).coerceAtLeast(LEAST_SURE),
                     held.repeatingHead,
-                    ruled = drawn.size >= RULES_OF_A_BORDER,
-                    edges = if (drawn.size < RULES_OF_A_BORDER) null else columnEdges(region, lines, drawings),
+                    ruled = region.start in ruledStarts || drawn.size >= RULES_OF_A_BORDER,
+                    edges = columnEdges(region, lines, drawings),
                 )
             cursor = region.end
         }
