@@ -127,7 +127,10 @@ class PageLookTest {
             )
         }
         val runs = paragraphs(pdf).single().runs
-        assertEquals(listOf("Abstract:", " One condition"), runs.map { it.text })
+        // The space between them belongs to the label's run: a space shows
+        // nothing of the weight it was set in, and set apart from the words
+        // it would break a page into a run for every word.
+        assertEquals(listOf("Abstract: ", "One condition"), runs.map { it.text })
         assertEquals(listOf(true, false), runs.map { it.bold })
         assertEquals("Helvetica-Bold", runs[0].fontFamily)
         assertEquals("Helvetica", runs[1].fontFamily)

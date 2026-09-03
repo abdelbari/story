@@ -97,7 +97,10 @@ class UntaggedLookTest {
                 " the study".map { PdfRun(it.toString(), PdfLook("Times New Roman", 12f)) },
         )
         val paragraph = paragraphs(listOf(mixed) + body(200f, 10)).first()
-        assertEquals(listOf("Abstract:", " the study"), paragraph.runs.map { it.text })
+        // The space between them belongs to the label's run: a space shows
+        // nothing of the weight it was set in, and a page whose spaces are
+        // set apart from its words breaks into a run for every word.
+        assertEquals(listOf("Abstract: ", "the study"), paragraph.runs.map { it.text })
         assertEquals(listOf(true, false), paragraph.runs.map { it.bold })
         assertEquals("Times New Roman", paragraph.runs[0].fontFamily)
         assertEquals(12f, paragraph.runs[0].fontSizePt)

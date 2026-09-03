@@ -1589,24 +1589,10 @@ internal object StructureTreeReader {
          * look. A space no glyph painted — between two lines — belongs to
          * the run before it.
          */
-        private fun runsOf(styled: ExtractedText.Logical<PdfLook>): List<TextRun> {
-            val runs = mutableListOf<TextRun>()
-            val text = StringBuilder()
-            var current: PdfLook? = null
-            fun flush() {
-                if (text.isEmpty()) return
-                runs += PdfRuns.toTextRun(text.toString(), current)
-                text.setLength(0)
-            }
-            for ((index, c) in styled.text.withIndex()) {
-                val look = styled.painters[index]
-                if (look != null && current != null && look != current) flush()
-                if (look != null) current = look
-                text.append(c)
-            }
-            flush()
-            return runs
-        }
+        private fun runsOf(styled: ExtractedText.Logical<PdfLook>): List<TextRun> =
+            PdfRuns.toTextRuns(
+                styled.text.mapIndexed { at, c -> PdfRun(c.toString(), styled.painters[at]) },
+            )
 
         /** [styled] without [prefix] at its head, when it starts with it. */
         private fun withoutPrefix(styled: ExtractedText.Logical<PdfLook>, prefix: String): ExtractedText.Logical<PdfLook> {
