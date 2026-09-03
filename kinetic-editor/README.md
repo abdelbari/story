@@ -499,6 +499,17 @@ Pinned to `media3 = 1.8.0`. If you move:
   or sizes wrongly, check that class against your media3 version first.
 - Most Transformer/effect surfaces are `@UnstableApi`; the module opts in
   globally via `-opt-in` in `app/build.gradle.kts`.
+- `ExoPlayer.setVideoEffects` carries three runtime conditions the preview
+  depends on, none of which the compiler checks. `media3-effect` must be on the
+  runtime classpath (it is declared, and `media3-exoplayer` does not pull it in
+  for you). Effects reach **only** `MediaCodecVideoRenderer` — our
+  `WindowTimeVideoRenderer` subclasses it and inherits the message handling, so
+  it works, but swapping in an extension renderer would silently lose every
+  effect. And effects that change frame timestamps are unsupported *in
+  playback*, which is why speed is applied to the preview through
+  `playbackParameters` rather than the `SpeedChangeEffect` the export uses.
+  Changing effects after `prepare()` is explicitly supported, which is what
+  lets the canvas be re-fitted mid-playback.
 
 ## Known scope cuts (deliberate, documented)
 
@@ -508,6 +519,16 @@ Pinned to `media3 = 1.8.0`. If you move:
   `SpeedChangeEffect` later without touching the model.
 - **True A/B cross-dissolves** need overlapping streams (compositor); the three
   shipped transitions are single-stream by design and export-identical.
+- **Still images as clips** are not supported, and the reason is worth writing
+  down. Transformer handles them well (`ImageAssetLoader`), but ExoPlayer
+  builds its `ImageRenderer` with a NO_OP `ImageOutput`: a still decodes to
+  nothing on screen unless the app supplies an `ImageOutput` and draws the
+  bitmap itself — outside the GL chain, and therefore outside the grade,
+  transform and motion the export would apply to it. Adding images means
+  either accepting that the preview stops telling the truth for them, or
+  routing them through the video graph separately. It is a real piece of work,
+  not a missing call, and everything downstream of it (freeze frame, photo
+  slideshows) waits on the same decision.
 - Trim commits currently snap to whole milliseconds on the source frame grid
   (`snapToFrame`); at 29.97/59.94 fps switch the model to µs if you need
   sub-frame-exact conform. The same millisecond model is what `planSequence`
