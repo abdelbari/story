@@ -39,14 +39,20 @@ val portAssets = files(layout.buildDirectory.dir("port/assets")).builtBy(unpackP
 
 sourceSets {
     main {
-        // The Android readers as they ship, not a copy of them. What is
-        // left out needs the phone itself — a Context to reach the app's
-        // files, a camera-quality image, the OCR engine — and there is
-        // nothing about the PDF port to check in it. Anything else that
-        // stops compiling here is a reader that has grown a dependency on
-        // Android, which is worth knowing about.
+        // The Android readers as they ship, not a copy of them, and all
+        // of them: three used to be left out for needing the phone itself
+        // — a context to reach the app's files, its bundled language
+        // packs, the recognition library — so a change to any of the three
+        // was compiled for the first time by CI's Android job, minutes
+        // after it was pushed. Each of those is one small class, stubbed
+        // here beside Log and Paint, and with them stubbed all three
+        // compile in this build.
+        //
+        // Compile, not run: the stubs have no canvas behind the bitmap, no
+        // assets to open and no Tesseract to ask, so what this catches is
+        // a reader that stopped compiling, which is the mistake that is
+        // easiest to make and cheapest to catch.
         kotlin.srcDir("../../android/pdf/src/main/kotlin")
-        kotlin.exclude("**/AndroidOcrReader.kt", "**/AndroidPdfReader.kt", "**/AndroidImageCapture.kt")
     }
 }
 

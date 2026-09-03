@@ -132,6 +132,19 @@ for.
   stated anywhere a scan can be asked and none are invented — an invented
   margin sets every line of the document to the wrong width, which is
   worse than none.
+
+  Making that change exposed something about the build. The module that
+  runs the app's Android readers against the real PDFBox port left three
+  of them out for needing the phone itself — a context to reach the app's
+  files, its bundled language packs, the recognition library — so a change
+  to the OCR reader was compiled for the first time by CI's Android job,
+  minutes after it was pushed, which is exactly what happened to this one.
+  Each of those Android classes is one small class, stubbed beside the
+  `Log` and `Paint` that were already there, and with them stubbed all
+  three compile in the build. Compile, not run: there is no canvas behind
+  the bitmap, no assets to open and no Tesseract to ask. Checked by
+  breaking the OCR reader on purpose and watching the engine build refuse
+  it.
 - **A word a page broke in half stayed broken:** a justified page fills
   its lines by hyphenating, and the reading kept every hyphen, so a
   converted paper read "admin-istrative" wherever the original had simply

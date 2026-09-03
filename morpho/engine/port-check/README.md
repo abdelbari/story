@@ -18,9 +18,15 @@ How it stands up:
 - the handful of Android classes the port touches — `Log`, `Paint`, `Path`,
   `Matrix`, the geometry — are stubbed here in `src/main/java`, far enough
   to load and run text extraction, which draws nothing;
+- so are the few the app's own readers touch — a `Context`, its
+  `AssetManager`, and `TessBaseAPI` — far enough to compile against and no
+  further;
 - the Android readers themselves are compiled from where they live,
   `../../android/pdf/src/main/kotlin`, so this module tests the shipped
-  sources rather than a copy of them.
+  sources rather than a copy of them — and all of them, since the stubs
+  above are what the three that used to be excluded were waiting for. A
+  change to the OCR reader used to be compiled for the first time by CI's
+  Android job; it is compiled here now.
 
 What it cannot do is draw: the stubs have no canvas behind them, so this
 checks what a reader *reads*, never what a page *looks like*.
