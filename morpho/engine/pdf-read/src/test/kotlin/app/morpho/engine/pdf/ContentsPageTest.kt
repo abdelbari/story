@@ -43,6 +43,7 @@ class ContentsPageTest {
      * it.
      */
     private fun manual(byAction: Boolean, tagged: Boolean = false): ByteArray {
+        mcid = 0
         PDDocument().use { doc ->
             val pages = (1..3).map { PDPage(PDRectangle.A4) }
             pages.forEach(doc::addPage)
@@ -77,7 +78,7 @@ class ContentsPageTest {
         }
     }
 
-    /** Where the next marked paragraph's number comes from, across the whole file. */
+    /** Where the next marked paragraph's number comes from within one file. */
     private var mcid = 0
 
     private fun write(doc: PDDocument, page: PDPage, lines: List<String>, holder: PDStructureElement?) {
@@ -156,12 +157,17 @@ class ContentsPageTest {
     @Test
     fun `a link that leads out of the document is left alone`() {
         // Only the pages of this file become names; the web stays the web.
-        val model = PdfReader().extract(manual(byAction = true))
-        assertNull(
-            model.blocks.filterIsInstance<Paragraph>()
-                .flatMap { it.runs }
-                .firstOrNull { it.text.contains("How it started") }
-                ?.link
-        )
+        // Asked of both readings, since a check run on one of them is how
+        // the tagged path came to be shipping dead links in the first place.
+        for (tagged in listOf(false, true)) {
+            val model = PdfReader().extract(manual(byAction = true, tagged = tagged))
+            assertNull(
+                model.blocks.filterIsInstance<Paragraph>()
+                    .flatMap { it.runs }
+                    .firstOrNull { it.text.contains("How it started") }
+                    ?.link,
+                "tagged=$tagged",
+            )
+        }
     }
 }
