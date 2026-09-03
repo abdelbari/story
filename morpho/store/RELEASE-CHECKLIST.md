@@ -190,6 +190,21 @@ Work through, in this order — each exercises a path nothing else covers:
       sub-clauses, or bullets under bullets. Each level must keep its own
       marker and sit in from the one above, in the preview, in the exported
       PDF and in Word.
+- [ ] **A report with a chart in it** — one made in a spreadsheet or in
+      Word itself, not a photograph of one. Every drawing tool exports a
+      chart as lines and filled shapes rather than as a picture, and the
+      figure must be in the converted Word file, in the preview and in the
+      exported PDF, standing between the same two paragraphs it stood
+      between. Try a document with several — a chart, an organisation
+      tree, a signature, a logo in the body — and one with a diagram whose
+      caption sits under it: the caption is text and must stay text, not
+      be swallowed into the picture.
+- [ ] **A table, a highlighted phrase and a page with a border round it**,
+      converted after the figure check above. None of them may come back
+      as a picture: each is drawn behind or beside the document's own
+      words, and photographing one would put those words in twice — once
+      as text and once inside an image. A table must still be a table you
+      can edit.
 - [ ] **A paper with equations in it.** Nothing can hold an equation as
       an equation, but every formula must still be there, written out in
       the line it stood in, rather than gone.
