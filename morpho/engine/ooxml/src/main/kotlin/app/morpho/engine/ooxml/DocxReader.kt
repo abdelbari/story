@@ -307,10 +307,10 @@ object DocxReader {
                     // than in the body: a poster, a CV, a form laid out in
                     // boxes converts to almost nothing without this.
                     for (box in textBoxesIn(child)) {
-                        blocks += parseBlocks(
+                        parseBlocks(
                             box, numbering, media, depth + 1,
                             inline = inline, notes = notes, styles = styles, fromTable = fromTable,
-                        )
+                        ).forEach(::add)
                     }
                 }
                 "tbl" -> parseTable(child, numbering, media, depth, notes, styles)?.let(::add)
@@ -318,10 +318,10 @@ object DocxReader {
                 // replacing it: a cover page, a table of contents, the
                 // fields of a template. What is inside is the document.
                 "sdt" -> firstChild(child, "sdtContent")?.let { held ->
-                    blocks += parseBlocks(
+                    parseBlocks(
                         held, numbering, media, depth + 1,
                         inline = inline, notes = notes, styles = styles, fromTable = fromTable,
-                    )
+                    ).forEach(::add)
                 }
                 else -> {} // sectPr, bookmarks, anything the reader does not know
             }
@@ -401,15 +401,29 @@ object DocxReader {
      */
     private fun pageBreakBeforeText(p: Element): Boolean? {
         var sawText = false
-        for (run in children(p, "r")) {
-            for (child in children(run)) {
+        var answer: Boolean? = null
+
+        fun walk(parent: Element, depth: Int) {
+            if (depth > MAX_NESTING_DEPTH || answer != null) return
+            for (child in children(parent)) {
                 when (child.localName) {
-                    "t", "tab" -> if (child.textContent.isNotEmpty() || child.localName == "tab") sawText = true
-                    "br" -> if (attr(child, "type") == "page") return !sawText
+                    "t", "tab" -> if (child.textContent.isNotEmpty() || child.localName == "tab") {
+                        sawText = true
+                    }
+                    "br" -> if (attr(child, "type") == "page") {
+                        answer = !sawText
+                        return
+                    }
+                    // A break may be written inside a tracked insertion or
+                    // a content control like anything else in a paragraph.
+                    "r", in RUN_CONTAINERS, "hyperlink", "fldSimple" -> walk(child, depth + 1)
                 }
+                if (answer != null) return
             }
         }
-        return null
+
+        walk(p, 0)
+        return answer
     }
 
     /**

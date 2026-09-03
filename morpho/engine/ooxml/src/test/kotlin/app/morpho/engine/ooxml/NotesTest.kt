@@ -158,4 +158,29 @@ class NotesTest {
         val paragraphs = doc.blocks.filterIsInstance<Paragraph>()
         assertTrue(paragraphs.none { it.style.pageBreakBefore }, "a line break broke the page")
     }
+
+    @Test
+    fun `a break written inside a tracked insertion still breaks the page`() {
+        val doc = read(
+            body = """<w:p><w:r><w:t>Before.</w:t></w:r></w:p>
+                <w:p><w:ins w:id="1"><w:r><w:br w:type="page"/></w:r></w:ins></w:p>
+                <w:p><w:r><w:t>After.</w:t></w:r></w:p>"""
+        )
+        val paragraphs = doc.blocks.filterIsInstance<Paragraph>()
+        assertEquals(listOf("Before.", "After."), paragraphs.map { it.text })
+        assertTrue(paragraphs[1].style.pageBreakBefore, "a break inside an insertion was missed")
+    }
+
+    @Test
+    fun `a break before a content control breaks before what it holds`() {
+        val doc = read(
+            body = """<w:p><w:r><w:br w:type="page"/></w:r></w:p>
+                <w:sdt><w:sdtContent>
+                  <w:p><w:r><w:t>The held paragraph.</w:t></w:r></w:p>
+                </w:sdtContent></w:sdt>"""
+        )
+        val paragraph = doc.blocks.filterIsInstance<Paragraph>().single()
+        assertEquals("The held paragraph.", paragraph.text)
+        assertTrue(paragraph.style.pageBreakBefore, "the break stopped at the control")
+    }
 }
