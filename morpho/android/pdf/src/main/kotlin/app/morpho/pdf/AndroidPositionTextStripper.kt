@@ -3,6 +3,7 @@ package app.morpho.pdf
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.ExtractedText
 import app.morpho.engine.layout.pdf.PdfColumns
+import app.morpho.engine.layout.pdf.PdfDrawing
 import app.morpho.engine.layout.pdf.PdfLine
 import app.morpho.engine.layout.pdf.PdfLook
 import app.morpho.engine.layout.pdf.PdfPageSheet
@@ -202,6 +203,9 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
 
     /** The rules drawn on the pages of the last [capture]. */
     fun rules(): List<PdfRule> = ruleCatcher.rules.toList()
+
+    /** The box every painted path of the last [capture] covered. */
+    fun drawings(): List<PdfDrawing> = ruleCatcher.drawings.toList()
 
     /** The sheet of every page that drew text in the last [capture]. */
     fun pages(): List<PdfPageSheet> =

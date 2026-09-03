@@ -7,6 +7,8 @@ import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.layout.Table
+import app.morpho.engine.layout.pdf.PageFigures
+import app.morpho.engine.layout.pdf.PdfDrawing
 import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLayout
 import app.morpho.engine.layout.pdf.PdfOutlineEntry
@@ -134,9 +136,16 @@ class PdfReader {
             // A document that names its own chapters says which lines are
             // headings; without one, only the type they were set in tells.
             val chapters = outline ?: DocumentOutline.read(doc)
+            // What the page drew rather than placed: a chart, a diagram, a
+            // signature. Photographed where it stood and handed on as a
+            // picture, so everything downstream puts it in the reading
+            // where the page put it.
+            val figures = attempt {
+                drawn(doc, PageFigures.of(stripper.drawings(), lines, stripper.pages()))
+            } ?: emptyList()
             val model = if (lines.isNotEmpty()) {
                 PdfLayout.reconstruct(
-                    lines, confidence, images, stripper.pages(), stripper.rules(), chapters,
+                    lines, confidence, images + figures, stripper.pages(), stripper.rules(), chapters,
                     // Page numbers count from one; the renderer counts from
                     // zero, and the two have been confused before.
                     crop = { page, left, top, right, bottom, masks, trim ->
@@ -163,6 +172,37 @@ class PdfReader {
             ?.trim()?.takeIf { it.isNotEmpty() } ?: return model
         return model.copy(defaultLanguage = language)
     }
+
+    /**
+     * Each figure as the picture of it the page draws, at the size it was
+     * drawn — cropped from the page itself, since there is nothing else to
+     * take it from. A figure the page will not draw is left out rather
+     * than guessed at.
+     */
+    private fun drawn(document: PDDocument, figures: List<PdfDrawing>): List<PdfImage> =
+        figures.take(MOST_FIGURES).mapNotNull { figure ->
+            val cropped = PageImages.crop(
+                document, figure.page - 1,
+                figure.left, figure.top, figure.right, figure.bottom,
+                trim = true,
+            ) ?: return@mapNotNull null
+            PdfImage(
+                page = figure.page,
+                topY = cropped.top,
+                bytes = cropped.image.bytes,
+                mimeType = cropped.image.mimeType,
+                widthPx = cropped.image.widthPx,
+                heightPx = cropped.image.heightPx,
+            )
+        }
+
+    /**
+     * How many figures of one document are drawn. Each costs a render of
+     * the band it sits in, and a document with hundreds of them is a
+     * drawing rather than a document — the reader would spend a phone's
+     * afternoon on it and produce a file nobody wants.
+     */
+    private val MOST_FIGURES = 60
 
     private fun plainTextFallback(
         doc: PDDocument,

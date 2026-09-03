@@ -65,6 +65,48 @@ data class PdfLook(
 data class PdfRun(val text: String, val look: PdfLook?)
 
 /**
+ * Ink a page draws rather than places: the box a painted path covers, in
+ * top-down page points.
+ *
+ * A chart, a diagram, an organisation tree, a signature — a spreadsheet,
+ * a word processor and every drawing tool export one as paths, not as a
+ * picture the file holds. A reader that collects pictures finds none of
+ * it, and the text of a report converts while every figure in it
+ * vanishes without a word.
+ *
+ * A path is not a figure on its own: a rule is one, so is the shading
+ * behind a table's head, so is the border round a page. What tells them
+ * apart is what they hold — a figure holds no words of the document,
+ * because it is not behind anything.
+ */
+data class PdfDrawing(
+    /** 1-based page number. */
+    val page: Int,
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+) {
+    val widthPt: Float get() = right - left
+    val heightPt: Float get() = bottom - top
+
+    /** This box grown to hold [other] as well. */
+    fun with(other: PdfDrawing) = PdfDrawing(
+        page = page,
+        left = minOf(left, other.left),
+        top = minOf(top, other.top),
+        right = maxOf(right, other.right),
+        bottom = maxOf(bottom, other.bottom),
+    )
+
+    /** Whether [other] overlaps this box, or comes within [gap] of it. */
+    fun near(other: PdfDrawing, gap: Float): Boolean =
+        page == other.page &&
+            left - gap <= other.right && other.left - gap <= right &&
+            top - gap <= other.bottom && other.top - gap <= bottom
+}
+
+/**
  * A line drawn across a page: a stroked rule or a filled sliver, in
  * top-down page points, with the page it was drawn on. Under a paper's
  * dates, above the note at its foot, between the rows of a table — a

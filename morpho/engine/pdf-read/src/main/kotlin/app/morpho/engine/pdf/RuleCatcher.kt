@@ -1,5 +1,6 @@
 package app.morpho.engine.pdf
 
+import app.morpho.engine.layout.pdf.PdfDrawing
 import app.morpho.engine.layout.pdf.PdfRule
 import org.apache.pdfbox.contentstream.PDFStreamEngine
 import org.apache.pdfbox.contentstream.operator.Operator
@@ -19,6 +20,11 @@ import kotlin.math.abs
  * rule: it is a path, stroked or filled, and what makes it a rule is that
  * it is horizontal, long enough to be seen and thin enough not to be a box.
  *
+ * The same operators say where a page draws rather than places: a chart,
+ * a diagram, a signature. Those are collected too, as the box each
+ * painted path covers, because a reader that gathers only the pictures a
+ * file holds converts the text of a report and loses every figure in it.
+ *
  * A text engine is given the operators it needs and no others, so the
  * paths go past it unread. This installs the few that matter on any engine
  * that wants them, and collects what they draw.
@@ -36,21 +42,41 @@ internal class RuleCatcher(private val page: () -> PDPage?, private val pageNumb
 
     val rules = mutableListOf<PdfRule>()
 
+    /** The box every painted path covered, rules among them. */
+    val drawings = mutableListOf<PdfDrawing>()
+
     private var subpathStart: FloatArray? = null
     private var current: FloatArray? = null
     private val pendingSegments = mutableListOf<PdfRule>()
     private val pendingSlivers = mutableListOf<PdfRule>()
 
+    /** What the path being built covers so far, as left, top, right, bottom. */
+    private var reach: FloatArray? = null
+
+    private fun reaches(point: FloatArray) {
+        val box = reach
+        if (box == null) {
+            reach = floatArrayOf(point[0], point[1], point[0], point[1])
+            return
+        }
+        box[0] = minOf(box[0], point[0])
+        box[1] = minOf(box[1], point[1])
+        box[2] = maxOf(box[2], point[0])
+        box[3] = maxOf(box[3], point[1])
+    }
+
     /** Adds the path operators to [engine], so what it draws is seen as well as read. */
     fun installOn(engine: PDFStreamEngine) {
         engine.addOperator(operator("m") { operands ->
             val point = point(engine, operands, 0) ?: return@operator
+            reaches(point)
             subpathStart = point
             current = point
         })
         engine.addOperator(operator("l") { operands ->
             val from = current
             val to = point(engine, operands, 0) ?: return@operator
+            reaches(to)
             if (from != null) segment(from, to)
             current = to
         })
@@ -68,6 +94,8 @@ internal class RuleCatcher(private val page: () -> PDPage?, private val pageNumb
             val h = number(operands[3]) ?: return@operator
             val a = transform(engine, x, y)
             val b = transform(engine, x + w, y + h)
+            reaches(a)
+            reaches(b)
             val top = minOf(a[1], b[1])
             val bottom = maxOf(a[1], b[1])
             if (bottom - top <= maxThicknessPt) {
@@ -76,6 +104,20 @@ internal class RuleCatcher(private val page: () -> PDPage?, private val pageNumb
             current = null
             subpathStart = null
         })
+        // A curve reaches wherever its points do. Its control points are
+        // not on the curve, so the box is a little generous — which is the
+        // right way to be wrong about where a figure ends.
+        for (name in listOf("c", "v", "y")) {
+            engine.addOperator(
+                operator(name) { operands ->
+                    var at = 0
+                    while (at + 1 < operands.size) {
+                        point(engine, operands, at)?.let { reaches(it); current = it }
+                        at += 2
+                    }
+                },
+            )
+        }
         for (name in listOf("S", "s", "B", "B*", "b", "b*")) {
             engine.addOperator(operator(name) { _ -> paint(strokes = true, fills = name != "S" && name != "s") })
         }
@@ -120,6 +162,13 @@ internal class RuleCatcher(private val page: () -> PDPage?, private val pageNumb
     private fun paint(strokes: Boolean, fills: Boolean) {
         if (strokes) rules += pendingSegments.filter { it.right - it.left >= minLengthPt }
         if (fills) rules += pendingSlivers.filter { it.right - it.left >= minLengthPt }
+        // A path that was painted covered what it covered, whether or not
+        // any of it was a rule. A path merely closed off — the "n" that
+        // sets a clip and draws nothing — covered nothing.
+        reach?.takeIf { strokes || fills }?.let {
+            drawings += PdfDrawing(pageNumber(), it[0], it[1], it[2], it[3])
+        }
+        reach = null
         pendingSegments.clear()
         pendingSlivers.clear()
         current = null
