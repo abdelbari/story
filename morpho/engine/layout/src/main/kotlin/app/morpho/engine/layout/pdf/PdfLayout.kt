@@ -153,11 +153,17 @@ object PdfLayout {
         // The pictures the page owns are the page's; only the document's
         // own go into the reading.
         val model = reconstructBody(split.body, confidence, split.bodyImages, sheets, rules, outline)
-        if (split.header.isEmpty() && split.footer.isEmpty()) return model
+        if (split.header.isEmpty() && split.footer.isEmpty() &&
+            split.evenHeader.isEmpty() && split.evenFooter.isEmpty()
+        ) {
+            return model
+        }
         val page = model.pageSetup
         return model.copy(
             header = split.header,
             footer = split.footer,
+            evenHeader = split.evenHeader,
+            evenFooter = split.evenFooter,
             pageSetup = page?.copy(
                 headerDistancePt = split.headerDistancePt ?: page.headerDistancePt,
                 footerDistancePt = split.footerDistancePt ?: page.footerDistancePt,

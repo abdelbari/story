@@ -143,6 +143,12 @@ object DocxReader {
                 pageSetup = sectPr?.let(::parsePageSetup),
                 header = sectPr?.let { furniture(it, "headerReference", parts, media, numbering, styles, at) }.orEmpty(),
                 footer = sectPr?.let { furniture(it, "footerReference", parts, media, numbering, styles, at) }.orEmpty(),
+                evenHeader = sectPr?.let {
+                    furniture(it, "headerReference", parts, media, numbering, styles, at, side = "even")
+                }.orEmpty(),
+                evenFooter = sectPr?.let {
+                    furniture(it, "footerReference", parts, media, numbering, styles, at, side = "even")
+                }.orEmpty(),
             )
         } catch (e: IllegalArgumentException) {
             throw e
@@ -193,9 +199,21 @@ object DocxReader {
         numbering: Map<String, Map<Int, ListLevel>>,
         styles: StyleSheet,
         at: String,
+        /**
+         * Which side's. A book names one head for its right-hand pages and
+         * another for its left, and reading only the first would put one of
+         * them on every page of the converted document.
+         */
+        side: String = "default",
     ): List<Block> {
         val references = children(sectPr, reference)
-        val chosen = references.firstOrNull { attr(it, "type") == "default" } ?: references.firstOrNull() ?: return emptyList()
+        // Failing a reference for this side, the default side takes any
+        // that is not the other side's: a document that names only a first
+        // page's head still has one, and losing it would be worse than
+        // repeating it.
+        val chosen = references.firstOrNull { attr(it, "type") == side }
+            ?: (if (side == "default") references.firstOrNull { attr(it, "type") != "even" } else null)
+            ?: return emptyList()
         val relId = chosen.getAttributeNS(R_NS, "id").ifEmpty { return emptyList() }
         val partName = media.partFor(relId) ?: return emptyList()
         val bytes = parts[partName] ?: return emptyList()

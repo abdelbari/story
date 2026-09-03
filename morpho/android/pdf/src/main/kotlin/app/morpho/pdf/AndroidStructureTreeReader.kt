@@ -136,6 +136,9 @@ private class Furnishings(
     val firstPageNumber: Int,
     /** The first page carried none of it: a title page, left clear. */
     val differentFirstPage: Boolean = false,
+    /** What the left-hand pages repeat, where they repeat something else. */
+    val evenHeader: List<Block> = emptyList(),
+    val evenFooter: List<Block> = emptyList(),
 ) {
     companion object {
         val NONE = Furnishings(emptyList(), emptyList(), null, null, 1)
@@ -1025,11 +1028,32 @@ internal object AndroidStructureTreeReader {
             val width = pageWidthByIndex[0]?.takeIf { it > 0f } ?: return Furnishings.NONE
             val height = pageHeightByIndex[0]?.takeIf { it > 0f } ?: return Furnishings.NONE
             var firstPageNumber = 1
-            fun side(atTop: Boolean): Pair<List<Block>, Float?> {
+            /**
+             * What a page repeats, with its digits masked, for telling one
+             * side of an opening from the other: a book's left-hand pages
+             * carry the title of the book where the right carry the
+             * chapter, and both repeat.
+             */
+            fun repeatedOn(index: Int): String =
+                furnitureByPage[index].orEmpty().flatMap { it.glyphs }
+                    .let { glyphs -> readOffThePage(positioned(glyphs).map { index to it }) }
+                    .replace(Regex("[0-9\u0660-\u0669\u06F0-\u06F9]"), "#")
+
+            // Page one is a right-hand page, and a page's index counts from
+            // zero, so the right-hand pages are the ones at an even index.
+            val furnished = furnitureByPage.filterValues { it.isNotEmpty() }.keys.sorted()
+            val onTheRight = furnished.firstOrNull { it % 2 == 0 }
+            val onTheLeft = furnished.firstOrNull { it % 2 == 1 }
+            val mirrored = onTheRight != null && onTheLeft != null &&
+                repeatedOn(onTheRight).isNotBlank() &&
+                repeatedOn(onTheRight) != repeatedOn(onTheLeft)
+
+            fun side(atTop: Boolean, stands: Int? = null): Pair<List<Block>, Float?> {
                 val byPage = furnitureByPage.mapValues { (_, list) -> list.filter { it.atTop == atTop } }
                     .filterValues { it.isNotEmpty() }
                 if (byPage.isEmpty()) return emptyList<Block>() to null
-                val reference = if (byPage.containsKey(1)) 1 else byPage.keys.min()
+                val reference = stands?.takeIf { byPage.containsKey(it) }
+                    ?: if (byPage.containsKey(1)) 1 else byPage.keys.min()
                 val pieces = byPage.getValue(reference)
                 val box = boundsOf(pieces) ?: return emptyList<Block>() to null
                 val distance = if (atTop) box[1] else height - box[3]
@@ -1083,8 +1107,12 @@ internal object AndroidStructureTreeReader {
                 return if (blocks.isEmpty()) emptyList<Block>() to null else blocks to distance
             }
 
-            val (header, headerDistance) = side(atTop = true)
-            val (footer, footerDistance) = side(atTop = false)
+            val (header, headerDistance) = side(atTop = true, stands = if (mirrored) onTheRight else null)
+            val (footer, footerDistance) = side(atTop = false, stands = if (mirrored) onTheRight else null)
+            // The left-hand pages' own, read from a left-hand page, and only
+            // where the two sides really do repeat something different.
+            val (evenHeader, _) = if (mirrored) side(true, onTheLeft) else emptyList<Block>() to null
+            val (evenFooter, _) = if (mirrored) side(false, onTheLeft) else emptyList<Block>() to null
             // A title page carries no running head, and the reference page
             // is the second one for exactly that reason. Stamping the head
             // it found onto page one would put it on the one page of the
@@ -1092,7 +1120,10 @@ internal object AndroidStructureTreeReader {
             val bare = furnitureByPage.isNotEmpty() &&
                 furnitureByPage[0].isNullOrEmpty() &&
                 (header.isNotEmpty() || footer.isNotEmpty())
-            return Furnishings(header, footer, headerDistance, footerDistance, firstPageNumber, bare)
+            return Furnishings(
+                header, footer, headerDistance, footerDistance, firstPageNumber, bare,
+                evenHeader, evenFooter,
+            )
         }
 
         /** The box, in top-down page points, that a page's furniture occupies. */
@@ -1318,6 +1349,8 @@ internal object AndroidStructureTreeReader {
                     ),
                     header = furnishings.header,
                     footer = furnishings.footer,
+                    evenHeader = furnishings.evenHeader,
+                    evenFooter = furnishings.evenFooter,
                 )
             )
         }

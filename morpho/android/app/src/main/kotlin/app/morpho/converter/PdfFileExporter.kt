@@ -327,14 +327,21 @@ internal object PdfFileExporter {
             // one the original left clear.
             if (clearFirstPage && ordinal == 1) return
             val number = opening.firstPageNumber + ordinal - 1
-            if (model.header.isNotEmpty()) {
+            // A book's left-hand pages carry their own head and foot. The
+            // side a page falls on is the side its number falls on, not the
+            // order it was drawn in: a document that starts at page 48
+            // opens on a left-hand page.
+            val onTheLeft = number % 2 == 0
+            val header = if (onTheLeft && model.evenHeader.isNotEmpty()) model.evenHeader else model.header
+            val footer = if (onTheLeft && model.evenFooter.isNotEmpty()) model.evenFooter else model.footer
+            if (header.isNotEmpty()) {
                 var y = sheet.headerDistance
-                for (block in model.header) y += drawBlock(canvas, block, y, number, sheet)
+                for (block in header) y += drawBlock(canvas, block, y, number, sheet)
             }
-            if (model.footer.isNotEmpty()) {
-                val height = model.footer.sumOf { heightOf(it, number, sheet).toDouble() }.toFloat()
+            if (footer.isNotEmpty()) {
+                val height = footer.sumOf { heightOf(it, number, sheet).toDouble() }.toFloat()
                 var y = sheet.height - sheet.footerDistance - height
-                for (block in model.footer) y += drawBlock(canvas, block, y, number, sheet)
+                for (block in footer) y += drawBlock(canvas, block, y, number, sheet)
             }
         }
 

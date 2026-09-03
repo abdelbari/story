@@ -180,6 +180,50 @@ class FurnitureTest {
      * [/Top] or [/Bottom], holding its text and its bars, outside the tree
      * — as Word marks a header and a footer.
      */
+    /**
+     * A tagged book: the right-hand pages headed by the chapter and the
+     * left by the book, and each numbered at its own outer edge. Both
+     * repeat, so both are marked as pagination artifacts, and a reader
+     * that keeps one page's worth of them keeps one and loses the other.
+     */
+    private fun opening(): List<Sheet> = List(6) { index ->
+        val onTheRight = index % 2 == 0
+        val head = if (onTheRight) "Chapter Three: Instruments" else "A History of the Sciences"
+        Sheet(
+            body = body(index),
+            furniture = listOf(
+                Furniture(atTop = true, pieces = listOf(Piece(head, 60f, 42f, 9f)), bars = listOf(headBar)),
+                Furniture(
+                    atTop = false,
+                    pieces = listOf(Piece((index + 1).toString(), if (onTheRight) 500f else 60f, 802f, 10f)),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `both sides of a tagged opening keep their own head`() {
+        val model = PdfReader().extract(tagged("en") { opening() })
+        assertTrue(model.header.isNotEmpty(), "the right-hand pages'")
+        assertTrue(model.evenHeader.isNotEmpty(), "and the left-hand pages'")
+        // Both are pictures of the page they were read from, so what tells
+        // them apart is that they are not the same picture.
+        val right = model.header.single() as ImageBlock
+        val left = model.evenHeader.single() as ImageBlock
+        assertTrue(
+            !right.bytes.contentEquals(left.bytes),
+            "one head was read twice and the other lost",
+        )
+    }
+
+    @Test
+    fun `a paper that heads every page alike keeps one head, not two`() {
+        val model = PdfReader().extract(tagged("en") { pages(numbers = listOf(48, 49, 50), numberX = 60f) })
+        assertTrue(model.header.isNotEmpty())
+        assertTrue(model.evenHeader.isEmpty(), "there is nothing different about the left-hand pages")
+        assertTrue(model.evenFooter.isEmpty())
+    }
+
     private fun tagged(language: String, sheets: (PDDocument) -> List<Sheet>): ByteArray {
         val bytes = ByteArrayOutputStream()
         PDDocument().use { document ->

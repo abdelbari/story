@@ -53,35 +53,53 @@ object DocxWriter {
         return out.toByteArray()
     }
 
+    /**
+     * Which parts a package needs beyond the ones every document has, so
+     * the content types, the relationships and the files themselves agree
+     * — three lists that have to say the same thing, and a document Word
+     * refuses to open when they do not.
+     */
+    private class Parts(document: DocumentModel, val notes: Boolean) {
+        val header = document.header.isNotEmpty()
+        val footer = document.footer.isNotEmpty()
+        val evenHeader = document.evenHeader.isNotEmpty()
+        val evenFooter = document.evenFooter.isNotEmpty()
+
+        /** The left-hand pages carry their own, so Word must be told to look. */
+        val mirrored = evenHeader || evenFooter
+    }
+
     fun write(document: DocumentModel, output: OutputStream) {
         val numbering = NumberingPlan(document)
         val images = ImagePlan(document)
         val links = LinkPlan(document)
         val notes = NotePlan(document)
-        val header = document.header.isNotEmpty()
-        val footer = document.footer.isNotEmpty()
+        val parts = Parts(document, notes.entries.isNotEmpty())
         ZipOutputStream(output).use { zip ->
-            zip.part("[Content_Types].xml", contentTypesXml(header, footer, notes.entries.isNotEmpty()))
+            zip.part("[Content_Types].xml", contentTypesXml(parts))
             zip.part("_rels/.rels", packageRelsXml())
-            zip.part("word/_rels/document.xml.rels", documentRelsXml(images, links, header, footer, notes.entries.isNotEmpty()))
+            zip.part("word/_rels/document.xml.rels", documentRelsXml(images, links, parts))
             zip.part("word/document.xml", documentXml(document, numbering, images, links, notes))
             if (notes.entries.isNotEmpty()) {
                 zip.part("word/footnotes.xml", footnotesXml(document, numbering, images, links, notes))
             }
             zip.part("word/styles.xml", stylesXml())
             zip.part("word/numbering.xml", numberingXml(numbering))
+            if (parts.mirrored) zip.part("word/settings.xml", settingsXml())
             zip.part("docProps/core.xml", corePropsXml())
             zip.part("docProps/app.xml", appPropsXml())
             // A running header or footer is a part of its own, with its own
-            // relationships to the pictures it shows.
-            if (header) {
-                zip.part("word/header1.xml", furnitureXml("hdr", document.header, document, numbering, images, links, ImagePlan.PART_HEADER))
-                partRelsXml(images, links, ImagePlan.PART_HEADER)?.let { zip.part("word/_rels/header1.xml.rels", it) }
+            // relationships to the pictures it shows. A book gives its
+            // left-hand pages another of each.
+            fun furniture(on: Boolean, tag: String, name: String, blocks: List<Block>, part: String) {
+                if (!on) return
+                zip.part("word/$name.xml", furnitureXml(tag, blocks, document, numbering, images, links, part))
+                partRelsXml(images, links, part)?.let { zip.part("word/_rels/$name.xml.rels", it) }
             }
-            if (footer) {
-                zip.part("word/footer1.xml", furnitureXml("ftr", document.footer, document, numbering, images, links, ImagePlan.PART_FOOTER))
-                partRelsXml(images, links, ImagePlan.PART_FOOTER)?.let { zip.part("word/_rels/footer1.xml.rels", it) }
-            }
+            furniture(parts.header, "hdr", "header1", document.header, ImagePlan.PART_HEADER)
+            furniture(parts.footer, "ftr", "footer1", document.footer, ImagePlan.PART_FOOTER)
+            furniture(parts.evenHeader, "hdr", "header2", document.evenHeader, ImagePlan.PART_EVEN_HEADER)
+            furniture(parts.evenFooter, "ftr", "footer2", document.evenFooter, ImagePlan.PART_EVEN_FOOTER)
             // A picture drawn many times over is stored once and pointed at
             // by every drawing of it.
             for (entry in images.media()) {
@@ -259,6 +277,8 @@ object DocxWriter {
             assign(document.blocks, ImagePlan.PART_DOCUMENT)
             assign(document.header, ImagePlan.PART_HEADER)
             assign(document.footer, ImagePlan.PART_FOOTER)
+            assign(document.evenHeader, ImagePlan.PART_EVEN_HEADER)
+            assign(document.evenFooter, ImagePlan.PART_EVEN_FOOTER)
         }
 
         fun relIdFor(target: String, part: String): String? = byPartAndTarget[part to target]?.relId
@@ -339,6 +359,8 @@ object DocxWriter {
             assign(document.blocks, PART_DOCUMENT)
             assign(document.header, PART_HEADER)
             assign(document.footer, PART_FOOTER)
+            assign(document.evenHeader, PART_EVEN_HEADER)
+            assign(document.evenFooter, PART_EVEN_FOOTER)
         }
 
         fun entryFor(block: ImageBlock): Entry = byBlock.getValue(block)
@@ -393,6 +415,9 @@ object DocxWriter {
             const val PART_DOCUMENT = "document"
             const val PART_HEADER = "header"
             const val PART_FOOTER = "footer"
+            /** The left-hand pages' own, where a book gives them one. */
+            const val PART_EVEN_HEADER = "evenHeader"
+            const val PART_EVEN_FOOTER = "evenFooter"
         }
     }
 
@@ -978,7 +1003,7 @@ object DocxWriter {
         // it wants no space around it and no line spacing of Word's own,
         // or the head comes back taller than the one it was cropped from
         // and the text under it starts lower down the page.
-        if (part == ImagePlan.PART_HEADER || part == ImagePlan.PART_FOOTER) {
+        if (part in FURNITURE_PARTS) {
             sb.append("<w:pPr>")
             if (document?.defaultDirection == TextDirection.RTL) sb.append("<w:bidi/>")
             sb.append("""<w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/>""")
@@ -1001,7 +1026,7 @@ object DocxWriter {
      */
     private fun room(document: DocumentModel, part: String): Pair<Long, Long> {
         val page = document.pageSetup ?: return MAX_CX_EMU to MAX_CY_EMU
-        val furniture = part == ImagePlan.PART_HEADER || part == ImagePlan.PART_FOOTER
+        val furniture = part in FURNITURE_PARTS
         val across =
             if (furniture) page.widthPt else page.widthPt - page.marginLeftPt - page.marginRightPt
         val down =
@@ -1059,7 +1084,9 @@ object DocxWriter {
     private fun sectPr(document: DocumentModel, page: PageSetup?): String {
         val sb = StringBuilder("<w:sectPr>")
         if (document.header.isNotEmpty()) sb.append("""<w:headerReference w:type="default" r:id="$HEADER_REL_ID"/>""")
+        if (document.evenHeader.isNotEmpty()) sb.append("""<w:headerReference w:type="even" r:id="$EVEN_HEADER_REL_ID"/>""")
         if (document.footer.isNotEmpty()) sb.append("""<w:footerReference w:type="default" r:id="$FOOTER_REL_ID"/>""")
+        if (document.evenFooter.isNotEmpty()) sb.append("""<w:footerReference w:type="even" r:id="$EVEN_FOOTER_REL_ID"/>""")
         // The source's own page when the reader measured it; else A4
         // portrait with 2.54 cm margins (values in twentieths of a point).
         if (page == null) {
@@ -1086,15 +1113,35 @@ object DocxWriter {
         return sb.append("</w:sectPr>").toString()
     }
 
+    /** The parts that hold a page's own furniture rather than the document's text. */
+    private val FURNITURE_PARTS = setOf(
+        ImagePlan.PART_HEADER,
+        ImagePlan.PART_FOOTER,
+        ImagePlan.PART_EVEN_HEADER,
+        ImagePlan.PART_EVEN_FOOTER,
+    )
+
+    private const val HEADER_TYPE =
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"
+    private const val FOOTER_TYPE =
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"
+    private const val HEADER_REL_TYPE =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header"
+    private const val FOOTER_REL_TYPE =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"
+
     private const val HEADER_REL_ID = "rIdHdr1"
     private const val FOOTER_REL_ID = "rIdFtr1"
+    private const val EVEN_HEADER_REL_ID = "rIdHdr2"
+    private const val EVEN_FOOTER_REL_ID = "rIdFtr2"
+    private const val SETTINGS_REL_ID = "rIdSet1"
     private const val NOTES_REL_ID = "rIdFtn1"
 
     // ------------------------------------------------------------------
     // Static parts
     // ------------------------------------------------------------------
 
-    private fun contentTypesXml(header: Boolean, footer: Boolean, notes: Boolean): String = XML_DECL +
+    private fun contentTypesXml(parts: Parts): String = XML_DECL +
         """<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">""" +
         """<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>""" +
         """<Default Extension="xml" ContentType="application/xml"/>""" +
@@ -1103,12 +1150,23 @@ object DocxWriter {
         """<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>""" +
         """<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>""" +
         """<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>""" +
-        (if (header) """<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>""" else "") +
-        (if (footer) """<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>""" else "") +
-        (if (notes) """<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>""" else "") +
+        (if (parts.header) """<Override PartName="/word/header1.xml" ContentType="$HEADER_TYPE"/>""" else "") +
+        (if (parts.footer) """<Override PartName="/word/footer1.xml" ContentType="$FOOTER_TYPE"/>""" else "") +
+        (if (parts.evenHeader) """<Override PartName="/word/header2.xml" ContentType="$HEADER_TYPE"/>""" else "") +
+        (if (parts.evenFooter) """<Override PartName="/word/footer2.xml" ContentType="$FOOTER_TYPE"/>""" else "") +
+        (if (parts.mirrored) """<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>""" else "") +
+        (if (parts.notes) """<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>""" else "") +
         """<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>""" +
         """<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>""" +
         """</Types>"""
+
+    /**
+     * The document's settings. Only written when there is something to
+     * say: a book whose left-hand pages carry their own head and foot,
+     * which Word looks for only when told that the two sides differ.
+     */
+    private fun settingsXml(): String = XML_DECL +
+        """<w:settings xmlns:w="$W"><w:evenAndOddHeaders/></w:settings>"""
 
     private fun packageRelsXml(): String = XML_DECL +
         """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""" +
@@ -1117,14 +1175,17 @@ object DocxWriter {
         """<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>""" +
         """</Relationships>"""
 
-    private fun documentRelsXml(images: ImagePlan, links: LinkPlan, header: Boolean, footer: Boolean, notes: Boolean): String {
+    private fun documentRelsXml(images: ImagePlan, links: LinkPlan, parts: Parts): String {
         val sb = StringBuilder(XML_DECL)
         sb.append("""<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""")
         sb.append("""<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>""")
         sb.append("""<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>""")
-        if (header) sb.append("""<Relationship Id="$HEADER_REL_ID" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>""")
-        if (footer) sb.append("""<Relationship Id="$FOOTER_REL_ID" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>""")
-        if (notes) sb.append("""<Relationship Id="$NOTES_REL_ID" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>""")
+        if (parts.header) sb.append("""<Relationship Id="$HEADER_REL_ID" Type="$HEADER_REL_TYPE" Target="header1.xml"/>""")
+        if (parts.footer) sb.append("""<Relationship Id="$FOOTER_REL_ID" Type="$FOOTER_REL_TYPE" Target="footer1.xml"/>""")
+        if (parts.evenHeader) sb.append("""<Relationship Id="$EVEN_HEADER_REL_ID" Type="$HEADER_REL_TYPE" Target="header2.xml"/>""")
+        if (parts.evenFooter) sb.append("""<Relationship Id="$EVEN_FOOTER_REL_ID" Type="$FOOTER_REL_TYPE" Target="footer2.xml"/>""")
+        if (parts.mirrored) sb.append("""<Relationship Id="$SETTINGS_REL_ID" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>""")
+        if (parts.notes) sb.append("""<Relationship Id="$NOTES_REL_ID" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>""")
         for (entry in images.entriesFor(ImagePlan.PART_DOCUMENT)) {
             sb.append(
                 """<Relationship Id="${entry.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${entry.fileName}"/>"""

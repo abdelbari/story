@@ -24,6 +24,18 @@ data class DocumentModel(
      */
     val header: List<Block> = emptyList(),
     val footer: List<Block> = emptyList(),
+    /**
+     * What the left-hand pages repeat, where they repeat something else.
+     *
+     * A printed book puts the title of the book on one side of the opening
+     * and the title of the chapter on the other, and the page number at
+     * the outer edge of each — which is the left edge on one and the right
+     * on the other. Read as one head and stamped on every page, half of a
+     * converted book says the wrong thing. Empty means both sides repeat
+     * the same thing, which is what a journal article does.
+     */
+    val evenHeader: List<Block> = emptyList(),
+    val evenFooter: List<Block> = emptyList(),
 )
 
 enum class TextDirection { LTR, RTL }

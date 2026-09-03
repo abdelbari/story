@@ -61,6 +61,9 @@ object PageFurniture {
         val bodyImages: List<PdfImage> = emptyList(),
         val header: List<Block> = emptyList(),
         val footer: List<Block> = emptyList(),
+        /** What the left-hand pages repeat, where they repeat something else. */
+        val evenHeader: List<Block> = emptyList(),
+        val evenFooter: List<Block> = emptyList(),
         /** Where the head sits below the top edge, and the foot above the bottom, in points. */
         val headerDistancePt: Float? = null,
         val footerDistancePt: Float? = null,
@@ -292,7 +295,24 @@ object PageFurniture {
         // used when it carries any, since that is the page a reader opens.
         val furnished = (running.map { it.page } + ruled.map { it.page }).toSortedSet()
         val readPages = body.map { it.page }.distinct().sorted()
+
+        // A printed book puts the title of the book on one side of the
+        // opening and the title of the chapter on the other. Both repeat,
+        // so both are furniture and both leave the text — and a reader that
+        // keeps one page's worth keeps one of them and loses the other
+        // outright, then prints the survivor on every page.
+        val byPageAll = running.groupBy { it.page }
+        fun repeatedOn(page: Int): String = byPageAll[page].orEmpty()
+            .sortedBy { it.baselineY }
+            .joinToString("\n") { DIGITS.replace(it.text, "#") }
+        val onTheRight = furnished.firstOrNull { it % 2 == 1 }
+        val onTheLeft = furnished.firstOrNull { it % 2 == 0 }
+        val mirrored = onTheRight != null && onTheLeft != null &&
+            repeatedOn(onTheRight).isNotEmpty() &&
+            repeatedOn(onTheRight) != repeatedOn(onTheLeft)
+
         val reference = when {
+            mirrored -> onTheRight!!
             1 in furnished -> 1
             furnished.isNotEmpty() -> furnished.first()
             else -> readPages.firstOrNull() ?: return Split(body, bodyImages)
@@ -313,11 +333,11 @@ object PageFurniture {
             }
         }
 
-        fun side(atTop: Boolean): Pair<List<Block>, Float?> {
-            val own = byPage[reference].orEmpty()
+        fun side(atTop: Boolean, page: Int = reference): Pair<List<Block>, Float?> {
+            val own = byPage[page].orEmpty()
                 .filter { (it.baselineY < height / 2) == atTop }
                 .sortedBy { it.baselineY }
-            val ownRules = ruled.filter { it.page == reference && (it.y < height / 2) == atTop }
+            val ownRules = ruled.filter { it.page == page && (it.y < height / 2) == atTop }
             if (crop != null && ownRules.isNotEmpty()) {
                 // The band stops where the page's own text starts. A rule
                 // in the margin is usually a head's; a page ruled all round
@@ -325,8 +345,8 @@ object PageFurniture {
                 // the first line of the page in the header and leave it in
                 // the body as well.
                 photographed(
-                    crop, reference, own, ownRules, atTop, width, height,
-                    textEdge(reference, atTop), counted, rtl,
+                    crop, page, own, ownRules, atTop, width, height,
+                    textEdge(page, atTop), counted, rtl,
                 )?.let { return it }
             }
             if (own.isNotEmpty()) {
@@ -341,9 +361,9 @@ object PageFurniture {
             // there either. The page itself is the last thing left to ask.
             if (crop != null) {
                 val ownPictures = pictured.filter {
-                    it.page == reference && (it.topY < height / 2) == atTop
+                    it.page == page && (it.topY < height / 2) == atTop
                 }
-                val stopAt = textEdge(reference, atTop)
+                val stopAt = textEdge(page, atTop)
                 if (ownPictures.isNotEmpty()) {
                     // Already proved furniture by repeating, so the band
                     // is photographed as it stands with no second page
@@ -351,7 +371,7 @@ object PageFurniture {
                     // match itself from page to page, and comparing here
                     // would drop it from the head after already having
                     // taken it out of the text.
-                    band(crop, reference, atTop, width, height, stopAt)
+                    band(crop, page, atTop, width, height, stopAt)
                         ?.let { return listOf<Block>(it.image) to distanceOf(it, atTop, height) }
                     // The page would not draw. The picture itself is still
                     // the honest answer, even without the place it sat in.
@@ -364,9 +384,9 @@ object PageFurniture {
                         )
                     ) to null
                 }
-                val other = readPages.firstOrNull { it != reference } ?: return emptyList<Block>() to null
+                val other = readPages.firstOrNull { it != page } ?: return emptyList<Block>() to null
                 repeated(
-                    crop, reference, other, atTop, width, height,
+                    crop, page, other, atTop, width, height,
                     minOfNotNull(stopAt, textEdge(other, atTop), atTop),
                 )?.let { return it }
             }
@@ -375,13 +395,19 @@ object PageFurniture {
 
         val (header, headerDistance) = side(atTop = true)
         val (footer, footerDistance) = side(atTop = false)
+        // The left-hand pages' own, read from a left-hand page, and only
+        // where the two sides really do repeat something different.
+        val (evenHeader, evenHeaderDistance) = if (mirrored) side(true, onTheLeft!!) else emptyList<Block>() to null
+        val (evenFooter, evenFooterDistance) = if (mirrored) side(false, onTheLeft!!) else emptyList<Block>() to null
         return Split(
             body = body,
             bodyImages = bodyImages,
             header = header,
             footer = footer,
-            headerDistancePt = headerDistance,
-            footerDistancePt = footerDistance,
+            evenHeader = evenHeader,
+            evenFooter = evenFooter,
+            headerDistancePt = headerDistance ?: evenHeaderDistance,
+            footerDistancePt = footerDistance ?: evenFooterDistance,
             firstPageNumber = counted?.let { it.offset + 1 },
             // A title page carries no running head, and the reference page
             // is the second one for exactly that reason. Stamping the head

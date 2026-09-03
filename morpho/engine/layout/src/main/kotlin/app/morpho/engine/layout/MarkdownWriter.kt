@@ -41,6 +41,7 @@ object MarkdownWriter {
         // once at the top, the foot once at the bottom, rather than once
         // for every page or not at all.
         appendBlocks(out, document.header, notes)
+        appendBlocks(out, document.evenHeader, notes)
         appendBlocks(out, document.blocks, notes)
         // The notes themselves, at the end, where Markdown keeps them.
         if (notes.any()) {
@@ -48,6 +49,7 @@ object MarkdownWriter {
             out.append(notes.definitions())
         }
         appendBlocks(out, document.footer, notes)
+        appendBlocks(out, document.evenFooter, notes)
         if (out.isNotEmpty()) out.append("\n")
         return out.toString()
     }

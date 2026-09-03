@@ -57,17 +57,22 @@ object HtmlWriter {
 
         // The running header and footer, once each: a flowing page has no
         // page tops to repeat them on, so they stand at the head and the
-        // foot of the document, where a reader expects them.
-        if (document.header.isNotEmpty()) {
+        // foot of the document, where a reader expects them. A book whose
+        // left-hand pages carry their own shows both, one under the other:
+        // there are no left-hand pages here to put them on, and showing
+        // one of the two would say the other had been lost.
+        val heads = document.header + document.evenHeader
+        val feet = document.footer + document.evenFooter
+        if (heads.isNotEmpty()) {
             sb.append("""<header class="page-header">""").append("\n")
-            appendBlocks(sb, document.header, defaultDirection)
+            appendBlocks(sb, heads, defaultDirection)
             sb.append("</header>\n")
         }
         appendBlocks(sb, document.blocks, defaultDirection, shapes)
         appendNotes(sb, document.blocks, defaultDirection)
-        if (document.footer.isNotEmpty()) {
+        if (feet.isNotEmpty()) {
             sb.append("""<footer class="page-footer">""").append("\n")
-            appendBlocks(sb, document.footer, defaultDirection)
+            appendBlocks(sb, feet, defaultDirection)
             sb.append("</footer>\n")
         }
 

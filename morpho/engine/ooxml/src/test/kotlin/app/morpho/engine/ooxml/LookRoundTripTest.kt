@@ -624,4 +624,48 @@ class LookRoundTripTest {
         }
         throw AssertionError("$name is not in the package")
     }
+
+    @Test
+    fun `a book keeps its left and right pages' heads apart`() {
+        val document = DocumentModel(
+            blocks = listOf(Paragraph(listOf(TextRun("body")))),
+            pageSetup = PageSetup(595f, 842f, 56f, 72f, 56f, 84f, headerDistancePt = 30f),
+            header = listOf(Paragraph(listOf(TextRun("The Chapter")))),
+            footer = listOf(Paragraph(listOf(TextRun("right foot")))),
+            evenHeader = listOf(Paragraph(listOf(TextRun("The Book")))),
+            evenFooter = listOf(Paragraph(listOf(TextRun("left foot")))),
+        )
+        val docx = DocxWriter.toByteArray(document)
+        val xml = partOf(docx, "word/document.xml")
+        val section = xml.substring(xml.lastIndexOf("<w:sectPr"))
+        assertTrue(section.contains("""<w:headerReference w:type="even""""), section)
+        assertTrue(section.contains("""<w:footerReference w:type="even""""), section)
+        // Word looks for the left-hand pages' own only when the settings
+        // say the two sides differ.
+        assertTrue(partOf(docx, "word/settings.xml").contains("<w:evenAndOddHeaders/>"))
+        assertTrue(
+            partOf(docx, "[Content_Types].xml").contains("""PartName="/word/settings.xml""""),
+            "a part the package holds and does not declare is a document Word will not open",
+        )
+        assertTrue(partOf(docx, "word/_rels/document.xml.rels").contains("Target=\"settings.xml\""))
+
+        val read = DocxReader.read(docx)
+        assertEquals("The Chapter", (read.header.single() as Paragraph).text)
+        assertEquals("The Book", (read.evenHeader.single() as Paragraph).text)
+        assertEquals("right foot", (read.footer.single() as Paragraph).text)
+        assertEquals("left foot", (read.evenFooter.single() as Paragraph).text)
+    }
+
+    @Test
+    fun `a document whose pages all read alike writes no settings of its own`() {
+        val document = DocumentModel(
+            blocks = listOf(Paragraph(listOf(TextRun("body")))),
+            header = listOf(Paragraph(listOf(TextRun("The Journal")))),
+        )
+        val docx = DocxWriter.toByteArray(document)
+        assertFalse(partOf(docx, "[Content_Types].xml").contains("settings.xml"))
+        val read = DocxReader.read(docx)
+        assertTrue(read.evenHeader.isEmpty() && read.evenFooter.isEmpty())
+        assertEquals("The Journal", (read.header.single() as Paragraph).text)
+    }
 }
