@@ -11,6 +11,7 @@ import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.ParagraphStyle
+import app.morpho.engine.layout.Sentences
 import app.morpho.engine.layout.Table
 import app.morpho.engine.layout.TableCell
 import app.morpho.engine.layout.TableRow
@@ -1012,16 +1013,6 @@ object PdfLayout {
     /** Depths within this of each other are the one depth. */
     private const val SAME_DEPTH_PT = 6f
 
-    /** What a sentence stops on, a bracket or a quote closed after it allowed for. */
-    private const val SENTENCE_ENDS = ".:!?\u061F\u06D4\u2026"
-    private const val CLOSERS = ")]}\u00BB\u203A\u0022\u0027\u201D\u2019"
-
-    /** Whether [text] reaches the end of a sentence rather than stopping mid-way. */
-    private fun finishesASentence(text: String): Boolean {
-        val trimmed = text.trimEnd().trimEnd { it in CLOSERS }
-        return trimmed.lastOrNull()?.let { it in SENTENCE_ENDS } ?: false
-    }
-
     private fun endGap(line: PdfLine, block: Pair<Float, Float>, rtl: Boolean): Float =
         (if (rtl) line.x - block.first else block.second - line.xEnd).coerceAtLeast(0f)
 
@@ -1062,7 +1053,7 @@ object PdfLayout {
         // first line. What tells the two apart is whether the item had
         // finished — a line that stops mid-sentence is being carried on,
         // wherever the line under it begins.
-        if (ListLabels.opensWithLabel(previous.text) && finishesASentence(previous.text)) {
+        if (ListLabels.opensWithLabel(previous.text) && Sentences.finishes(previous.text)) {
             val edge = blockByPage[line.page]
             val direction = Bidi.firstStrongDirection(previous.text)
             if (edge != null &&

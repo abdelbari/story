@@ -1,8 +1,10 @@
 package app.morpho.pdf
 
 import android.content.Context
+import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
+import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.layout.Table
@@ -58,6 +60,7 @@ class AndroidOcrReader(private val context: Context) {
     ): DocumentModel {
         val dataParent = ensureTrainedData(languages)
         val pageTexts = mutableListOf<String>()
+        var sheet: PageSetup? = null
         AndroidPdfReader.load(bytes, password).use { doc ->
             val renderer = PDFRenderer(doc)
             val tess = TessBaseAPI()
@@ -74,6 +77,10 @@ class AndroidOcrReader(private val context: Context) {
                     val index = number - 1
                     if (!shouldContinue()) throw Cancelled()
                     onPage(ordinal + 1, wanted.size)
+                    // The sheet these pages were rendered from. Without it
+                    // a converted scan is laid out on whatever Word opens
+                    // with, and a page numbered from 47 starts again at 1.
+                    if (sheet == null) sheet = sheetOf(doc, index)
                     val bitmap = renderer.renderImageWithDPI(index, dpiFor(doc, index))
                     try {
                         tess.setImage(bitmap)
@@ -90,15 +97,43 @@ class AndroidOcrReader(private val context: Context) {
                 tess.recycle()
             }
         }
-        val model = PlainTextImporter.import(pageTexts.joinToString(separator = "\n\n"))
-        return model.copy(
-            blocks = model.blocks.map { block ->
-                when (block) {
-                    is Paragraph -> block.copy(confidence = OCR_CONFIDENCE)
-                    is Table -> block.copy(confidence = OCR_CONFIDENCE)
-                    is ImageBlock -> block
-                }
+        // Read as the pages they are, not as one long text: what every
+        // page repeats at its head or foot is the page's own, and a
+        // paragraph that carried on over a turn is joined back up.
+        val model = PlainTextImporter.importPages(pageTexts, sheet)
+        fun scored(blocks: List<Block>) = blocks.map { block ->
+            when (block) {
+                is Paragraph -> block.copy(confidence = OCR_CONFIDENCE)
+                is Table -> block.copy(confidence = OCR_CONFIDENCE)
+                is ImageBlock -> block
             }
+        }
+        return model.copy(
+            blocks = scored(model.blocks),
+            // A recognised running head is a guess like everything else
+            // recognition hands back, and the Fidelity Report should say so.
+            header = scored(model.header),
+            footer = scored(model.footer),
+        )
+    }
+
+    /**
+     * The sheet the page at [index] is set on, as the document states it.
+     *
+     * Margins are not stated anywhere a scan can be asked, so the sheet
+     * carries none: an invented margin lays every line of the converted
+     * document out to the wrong width, which is worse than none at all.
+     */
+    private fun sheetOf(doc: PDDocument, index: Int): PageSetup? {
+        val box = runCatching { doc.getPage(index).cropBox }.getOrNull() ?: return null
+        if (box.width <= 0f || box.height <= 0f) return null
+        return PageSetup(
+            widthPt = box.width,
+            heightPt = box.height,
+            marginTopPt = 0f,
+            marginBottomPt = 0f,
+            marginLeftPt = 0f,
+            marginRightPt = 0f,
         )
     }
 

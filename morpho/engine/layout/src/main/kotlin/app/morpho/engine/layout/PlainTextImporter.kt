@@ -36,6 +36,33 @@ object PlainTextImporter {
     // Western, Arabic-Indic (٠-٩) and Eastern Arabic-Indic (۰-۹) digits count.
     private val numberedItem = Regex("""^[0-9\u0660-\u0669\u06F0-\u06F9]{1,2}[.)]\s+""")
 
+    /**
+     * The recognised pages of a scanned document, one string per page.
+     *
+     * A page's words come back from recognition with nothing to say what
+     * they were, so what belongs to the page rather than the document —
+     * its running head, its number — is taken out and kept as the head and
+     * foot of the converted file, and a paragraph that carried on over the
+     * turn of a page is joined back up. See [ScannedPages].
+     *
+     * [page] is the sheet those pages were rendered from, where the caller
+     * knows it; the number its running head counts from is taken from the
+     * pages themselves.
+     */
+    fun importPages(pages: List<String>, page: PageSetup? = null): DocumentModel {
+        val read = ScannedPages.of(pages)
+        val model = import(read.text)
+        return model.copy(
+            header = read.header,
+            footer = read.footer,
+            // The sheet, where the caller knows it — a page rendered for
+            // recognition was rendered from something with a size. Nothing
+            // here invents one: an invented sheet lays every line of the
+            // document out to the wrong width.
+            pageSetup = page?.copy(firstPageNumber = read.firstPageNumber ?: page.firstPageNumber),
+        )
+    }
+
     fun import(text: String): DocumentModel {
         val written = text.replace("\r\n", "\n").replace('\r', '\n').split("\n")
         // The notes come out first: a mark in the middle of a sentence
