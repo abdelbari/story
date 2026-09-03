@@ -6,6 +6,7 @@ import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
 import app.morpho.engine.layout.LineJoiner
+import app.morpho.engine.layout.ListLabels
 import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
@@ -520,6 +521,12 @@ object PdfLayout {
         // The foot of one column and the head of the next are not one
         // paragraph, however close their baselines happen to fall.
         if ((flows[previous] ?: 0) != (flows[line] ?: 0)) return true
+        // A line that opens with the label a page drew for a list item is
+        // the next item, whatever the gap above it says. A list is set
+        // tight — tighter than the lines within a paragraph, often — so a
+        // rule about gaps alone reads a page of items as one paragraph,
+        // and a converted checklist comes back as a wall of prose.
+        if (ListLabels.opensWithLabel(line.text)) return true
         val pitch =
             if (medianPitch > 0f) medianPitch
             else FALLBACK_PITCH_FACTOR * max(previous.maxFontSize, line.maxFontSize)

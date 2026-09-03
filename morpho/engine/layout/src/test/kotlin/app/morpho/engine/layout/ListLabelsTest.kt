@@ -1,6 +1,8 @@
 package app.morpho.engine.layout
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /** The markers a page has to draw for itself, since a page has no numbering. */
@@ -80,5 +82,32 @@ class ListLabelsTest {
             ListLabels.markerFor(ParagraphStyle(listMarker = ListMarker.NUMBERED, listLevel = 1), 3),
         )
         assertEquals("", ListLabels.markerFor(ParagraphStyle(), 1))
+    }
+
+    @Test
+    fun `a label is a marker or a short enumerator, and a space after it`() {
+        // What both readers ask before deciding that a line is an item of
+        // a list: the one with tags so as not to draw a second marker over
+        // the page's own, the one without because a label is where one
+        // item ends and the next begins.
+        for (label in listOf("• item", "- item", "* item", "– item", "» item", "▪ item")) {
+            assertTrue(ListLabels.opensWithLabel(label), label)
+        }
+        for (label in listOf("1. item", "2) item", "a. item", "أ- item", "12. item")) {
+            assertTrue(ListLabels.opensWithLabel(label), label)
+        }
+    }
+
+    @Test
+    fun `prose that merely opens like a label is prose`() {
+        for (text in listOf(
+            "-and on with no space after the dash",
+            "The ordinary opening of a sentence",
+            "1984. was a year, written out in full",
+            "",
+            "Introduction: the opening of a paper",
+        )) {
+            assertFalse(ListLabels.opensWithLabel(text), text)
+        }
     }
 }

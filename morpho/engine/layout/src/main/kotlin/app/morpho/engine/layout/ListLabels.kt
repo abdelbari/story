@@ -12,6 +12,39 @@ package app.morpho.engine.layout
  */
 object ListLabels {
 
+    /** What a page draws before a list item: a bullet, a dash, a star. */
+    private const val MARKER_CHARACTERS =
+        "\u2022\u00B7\u2219\u2212\u2013\u2014-*\u25AA\u25AB\u25CF\u25CB\u25E6\u2023\u2043\u00BB\u203A"
+
+    /** What an enumerator ends with: "3.", "\u0623-", "a)". */
+    private const val LABEL_TERMINATORS = "-.)\u2013\u061B:"
+
+    /** An enumerator is this many characters at most, its terminator included. */
+    private const val LONGEST_LABEL = 3
+
+    /**
+     * Whether [text] opens with the label a page drew for a list item: a
+     * marker character — a bullet, a dash, a star — or a short enumerator
+     * such as "\u0623-", "3." or "a)", either of them followed by a space,
+     * which is what separates a label from a sentence that merely begins
+     * with a dash.
+     *
+     * Both readers ask this. The one with tags asks so as not to draw a
+     * second marker over the one the page already drew; the one without
+     * asks because a label is where one item ends and the next begins,
+     * and a list is set too tight for the gaps to say so.
+     */
+    fun opensWithLabel(text: String): Boolean {
+        val space = text.indexOfFirst { it == ' ' || it == '\t' }
+        if (space <= 0) return false
+        val label = text.substring(0, space)
+        if (label.length == 1) return label[0] in MARKER_CHARACTERS
+        if (label.length > LONGEST_LABEL) return false
+        if (label.last() !in LABEL_TERMINATORS) return false
+        return label.dropLast(1).all { it.isLetterOrDigit() }
+    }
+
+
     /** However deep a document nests its lists, no deeper than Word's own nine levels. */
     const val DEEPEST_LEVEL = 8
 
