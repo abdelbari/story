@@ -261,16 +261,7 @@ object PageFurniture {
         val said = words.joinToString(separator = "") { it.text }.trim().takeIf { it.isNotEmpty() }
             ?: return picture
         if (said.none { it.isLetter() }) return picture
-        return ImageBlock(
-            bytes = picture.bytes,
-            mimeType = picture.mimeType,
-            widthPx = picture.widthPx,
-            heightPx = picture.heightPx,
-            confidence = picture.confidence,
-            widthPt = picture.widthPt,
-            heightPt = picture.heightPt,
-            description = said,
-        )
+        return picture.copy(description = said)
     }
 
     /** Clear space left around a rule when the band it belongs to is photographed. */

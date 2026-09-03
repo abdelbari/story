@@ -1968,16 +1968,7 @@ internal object StructureTreeReader {
         private fun emitDrawnFigure(element: PDStructureElement, said: String?) {
             val picture = texts.drawnUnder(markedContentIds(element)) ?: return
             sawText = true
-            blocks += if (said == null) picture else ImageBlock(
-                bytes = picture.bytes,
-                mimeType = picture.mimeType,
-                widthPx = picture.widthPx,
-                heightPx = picture.heightPx,
-                confidence = picture.confidence,
-                widthPt = picture.widthPt,
-                heightPt = picture.heightPt,
-                description = said,
-            )
+            blocks += if (said == null) picture else picture.copy(description = said)
         }
 
         /** Every marked content the tree hangs under [element], with its page. */

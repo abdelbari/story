@@ -330,6 +330,38 @@ class ImageBlock(
         result = 31 * result + (description?.hashCode() ?: 0)
         return result
     }
+
+    /**
+     * This picture with something about it changed.
+     *
+     * A data class would have written this, but a picture is bytes and
+     * bytes compare by identity unless somebody says otherwise, so this
+     * class writes its own [equals] — and loses [copy] along with it.
+     * Without one, every place that rebuilds a picture lists its fields
+     * by hand, and a field added later is silently dropped by whichever
+     * of them nobody remembered: which is the way a table's cells once
+     * lost the colour they were filled with and how many columns they
+     * covered.
+     */
+    fun copy(
+        bytes: ByteArray = this.bytes,
+        mimeType: String = this.mimeType,
+        widthPx: Int = this.widthPx,
+        heightPx: Int = this.heightPx,
+        confidence: Float = this.confidence,
+        widthPt: Float? = this.widthPt,
+        heightPt: Float? = this.heightPt,
+        description: String? = this.description,
+    ): ImageBlock = ImageBlock(
+        bytes = bytes,
+        mimeType = mimeType,
+        widthPx = widthPx,
+        heightPx = heightPx,
+        confidence = confidence,
+        widthPt = widthPt,
+        heightPt = heightPt,
+        description = description,
+    )
 }
 
 /**
