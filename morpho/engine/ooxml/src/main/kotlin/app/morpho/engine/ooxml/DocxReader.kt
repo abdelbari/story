@@ -96,6 +96,7 @@ object DocxReader {
     private const val A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
     private const val WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
     private const val R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    private const val MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
     private const val EMU_PER_PX = 9525L
     private val MIME_BY_EXTENSION = mapOf("png" to "image/png", "jpeg" to "image/jpeg", "jpg" to "image/jpeg")
     /** Elements that hold runs without changing them; a hyperlink is handled on its own, since it says where its runs point. */
@@ -352,6 +353,47 @@ object DocxReader {
     }
 
     /**
+     * An equation as a line of text: what somebody would have typed to
+     * write it out.
+     *
+     * Word writes an equation in a language of its own, and nothing this
+     * converter writes can hold it as an equation — but a formula dropped
+     * out of a paper is a paper that no longer says what it said, so it is
+     * written out the way it reads: a fraction as a/b, a power as a^2, a
+     * root as √(x), and every symbol as the character it already is.
+     */
+    private fun mathTextOf(element: Element, depth: Int = 0): String {
+        if (depth > MAX_NESTING_DEPTH) return ""
+        fun partsOf(parent: Element, name: String): String =
+            elementChildren(parent).filter { it.localName == name }
+                .joinToString(separator = "") { mathTextOf(it, depth + 1) }
+
+        return when (element.localName) {
+            "t" -> element.textContent
+            // A fraction: numerator over denominator, bracketed where it
+            // takes more than one character to say.
+            "f" -> {
+                val over = bracketed(partsOf(element, "num"))
+                val under = bracketed(partsOf(element, "den"))
+                if (over.isEmpty() && under.isEmpty()) "" else "$over/$under"
+            }
+            "sSup" -> partsOf(element, "e") + "^" + bracketed(partsOf(element, "sup"))
+            "sSub" -> partsOf(element, "e") + "_" + bracketed(partsOf(element, "sub"))
+            "sSubSup" ->
+                partsOf(element, "e") + "_" + bracketed(partsOf(element, "sub")) +
+                    "^" + bracketed(partsOf(element, "sup"))
+            "rad" -> "√(" + partsOf(element, "e") + ")"
+            "d" -> "(" + elementChildren(element).filter { it.localName == "e" }
+                .joinToString(separator = ", ") { mathTextOf(it, depth + 1) } + ")"
+            else -> elementChildren(element).joinToString(separator = "") { mathTextOf(it, depth + 1) }
+        }
+    }
+
+    /** A part of a formula in brackets, unless it is one character and needs none. */
+    private fun bracketed(text: String): String =
+        if (text.length <= 1) text else "($text)"
+
+    /**
      * Whether [p] carries a page break somebody typed, and if so whether it
      * comes before any of the paragraph's own words: null for a paragraph
      * with no break in it, true for a break before the text, false for one
@@ -465,7 +507,17 @@ object DocxReader {
             "Run-container nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
         }
         val runs = mutableListOf<TextRun>()
-        for (child in children(parent)) {
+        // Every element, not only Word's own: an equation is written in a
+        // language of its own, in the paragraph beside the runs rather than
+        // inside one, and a walk that sees only Word's elements walks past it.
+        for (child in elementChildren(parent)) {
+            if (child.namespaceURI == MATH_NS) {
+                if (child.localName == "oMath" || child.localName == "oMathPara") {
+                    mathTextOf(child).takeIf { it.isNotBlank() }?.let { runs += TextRun(it) }
+                }
+                continue
+            }
+            if (child.namespaceURI != W) continue
             when (child.localName) {
                 "r" -> parseRun(child, paragraphRtl, media.takeIf { inline }, notes, styles, inherited)?.let(runs::add)
                 "fldSimple" -> {
