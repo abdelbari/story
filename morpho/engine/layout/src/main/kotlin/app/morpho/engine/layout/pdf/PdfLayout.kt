@@ -85,6 +85,25 @@ object PdfLayout {
     private const val MIN_LINES_FOR_PERCENTILE = 5
     /** Fewer long lines than this and the question does not arise. */
     private const val MIN_LINES_TO_JUDGE = 8
+
+    /**
+     * How much surer or less sure a block is than the plain reconstruction
+     * it starts from, and the ends of the band it may move within — a
+     * reconstructed block never claims to have been read from a document's
+     * own structure, however well its lines agreed.
+     */
+    private const val NAMED_BY_THE_DOCUMENT = 0.2f
+    private const val REGULAR_ON_THE_PAGE = 0.1f
+    private const val GUESSED_FROM_WEIGHT = 0.02f
+    private const val GUESSED_FROM_ALIGNMENT = 0.04f
+    private const val LEAST_SURE = 0.55f
+    private const val SUREST_RECONSTRUCTION = 0.84f
+
+    /** How far a line may start from where the others do and still be one of them. */
+    private const val EDGE_TOLERANCE_SHARE = 0.02f
+
+    /** How far the space between two baselines may differ from the rest. */
+    private const val PITCH_TOLERANCE_SHARE = 0.15f
     /** A page whose text stopped this many lines short of where it could have run was broken on purpose. */
     private const val EARLY_BREAK_LINES = 2f
     /** How far a paragraph looks for a rule of its own, in its own line pitch. */
@@ -130,7 +149,10 @@ object PdfLayout {
         var cursor = 0
         for (region in regions) {
             if (region.start > cursor) stretches += lines.subList(cursor, region.start)
-            tablesWithAnchor += lines[region.start] to tableOf(region, confidence)
+            // A table found by the alignment of its columns is the biggest
+            // guess this reader makes; it says so.
+            tablesWithAnchor += lines[region.start] to
+                tableOf(region, (confidence - GUESSED_FROM_ALIGNMENT).coerceAtLeast(LEAST_SURE))
             cursor = region.end
         }
         if (cursor < lines.size) stretches += lines.subList(cursor, lines.size)
@@ -174,19 +196,32 @@ object PdfLayout {
             // in the body's own face, and the outline is the producer saying
             // outright which lines they are.
             val named = PdfOutline.kindOf(outline, first.page, clusterLines.joinToString(" ") { it.text })
+            val byBoldnessAlone = named == null && bySize == ParagraphKind.BODY &&
+                boldLevel != null && isBold(clusterLines) &&
+                clusterLines.sumOf { it.text.length } <= HeadingSizes.MAX_CHARS
             val kind = when {
                 named != null -> named
                 bySize != ParagraphKind.BODY -> bySize
-                boldLevel != null && isBold(clusterLines) &&
-                    clusterLines.sumOf { it.text.length } <= HeadingSizes.MAX_CHARS -> boldLevel
+                byBoldnessAlone -> boldLevel!!
                 else -> ParagraphKind.BODY
             }
+            // How sure the reader is of what it just built, so the Fidelity
+            // Report can put the shakiest blocks in front of a reader
+            // instead of listing a whole reconstructed document as equally
+            // doubtful. Everything stays inside the band that says it was
+            // reconstructed rather than read.
+            val sureness = when {
+                named != null -> confidence + NAMED_BY_THE_DOCUMENT
+                byBoldnessAlone -> confidence - GUESSED_FROM_WEIGHT
+                looksRegular(clusterLines, blockByPage) -> confidence + REGULAR_ON_THE_PAGE
+                else -> confidence
+            }.coerceIn(LEAST_SURE, SUREST_RECONSTRUCTION)
             val next = flatClusters.getOrNull(index + 1)?.firstOrNull()
             positioned += Positioned(
                 first.page,
                 flows[first] ?: 0,
                 first.baselineY,
-                paragraph(clusterLines, kind, confidence, blockByPage, next, rules, flatClusters.getOrNull(index - 1)?.lastOrNull()),
+                paragraph(clusterLines, kind, sureness, blockByPage, next, rules, flatClusters.getOrNull(index - 1)?.lastOrNull()),
             )
         }
         val textCount = positioned.size
@@ -415,6 +450,31 @@ object PdfLayout {
             }
         }
         return clusters
+    }
+
+    /**
+     * Whether a cluster's lines sit on the page the way a paragraph's do:
+     * every line starting from the same edge, and the space between their
+     * baselines the same all the way down. A block assembled out of lines
+     * that agree with each other is a safer reading than one made of lines
+     * that agree about nothing.
+     */
+    private fun looksRegular(lines: List<PdfLine>, blockByPage: Map<Int, Pair<Float, Float>>): Boolean {
+        if (lines.size < 2) return false
+        val rightToLeft = Bidi.dominantDirection(lines.joinToString(" ") { it.text }) == TextDirection.RTL
+        val block = blockByPage[lines.first().page] ?: return false
+        val width = block.second - block.first
+        if (width <= 0f) return false
+        // Every line but the first begins where the others do — the first
+        // may be indented, which is how a paragraph is often set.
+        val edges = lines.drop(1).map { if (rightToLeft) it.xEnd else it.x }
+        val edge = edges.first()
+        if (edges.any { abs(it - edge) > EDGE_TOLERANCE_SHARE * width }) return false
+        val steps = lines.zipWithNext { above, below -> below.baselineY - above.baselineY }
+            .filter { it > 0f }
+        if (steps.isEmpty()) return false
+        val pitch = HeadingSizes.median(steps)
+        return pitch > 0f && steps.all { abs(it - pitch) <= PITCH_TOLERANCE_SHARE * pitch }
     }
 
     /**

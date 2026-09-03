@@ -54,7 +54,10 @@ class PdfTableDetectionTest {
             listOf("City", "Population", "Country"),
             table.rows[0].cells.map { it.blocks.filterIsInstance<Paragraph>().single().text },
         )
-        assertEquals(0.6f, table.confidence)
+        // A table found by the alignment of its columns is the biggest
+        // guess the untagged reader makes, and says so: it sits a little
+        // below the plain reconstruction everything else starts from.
+        assertEquals(0.56f, table.confidence, 0.001f)
         assertTrue(model.blocks.filterIsInstance<Paragraph>().isEmpty())
     }
 
