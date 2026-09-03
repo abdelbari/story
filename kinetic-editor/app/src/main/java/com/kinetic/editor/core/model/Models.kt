@@ -92,7 +92,23 @@ data class TextSpec(
     val font: TextFont = TextFont.SANS,
     val bold: Boolean = true,
     val italic: Boolean = false,
+    val anim: TextAnim = TextAnim.FADE,
 )
+
+/**
+ * How a text clip enters and leaves.
+ *
+ * The timing is [textAnimAt], shared by the preview and the export, so an
+ * animation is one implementation seen twice rather than two that drift.
+ */
+@Serializable
+enum class TextAnim(val label: String) {
+    NONE("Cut"),
+    FADE("Fade"),
+    POP("Pop"),
+    RISE("Rise"),
+    TYPE("Type"),
+}
 
 /**
  * The type faces a text clip can use.

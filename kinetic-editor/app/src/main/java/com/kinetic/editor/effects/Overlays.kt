@@ -18,7 +18,10 @@ import androidx.media3.effect.TextOverlay
 import androidx.media3.effect.TextureOverlay
 import com.google.common.collect.ImmutableList
 import com.kinetic.editor.core.model.StickerSpec
+import com.kinetic.editor.core.model.TextAnim
+import com.kinetic.editor.core.model.TextAnimState
 import com.kinetic.editor.core.model.TextSpec
+import com.kinetic.editor.core.model.textAnimAt
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TrackType
 
@@ -69,6 +72,7 @@ object OverlayFactory {
         return if (any) OverlayEffect(overlays.build()) else null
     }
 
+    /** Sticker fade; text has its own animations, see [textAnimAt]. */
     internal fun windowAlpha(timeUs: Long, startUs: Long, endUs: Long): Float {
         if (timeUs < startUs || timeUs >= endUs) return 0f
         val inEdge = ((timeUs - startUs).toFloat() / FADE_US).coerceIn(0f, 1f)
@@ -78,7 +82,7 @@ object OverlayFactory {
 }
 
 private class TimedTextOverlay(
-    spec: TextSpec,
+    private val spec: TextSpec,
     private val startUs: Long,
     private val endUs: Long,
 ) : TextOverlay() {
@@ -106,13 +110,40 @@ private class TimedTextOverlay(
         )
     }
 
-    override fun getText(presentationTimeUs: Long): SpannableString = styled
+    /**
+     * Every prefix of the styled text, built up front. Typing has to hand back a
+     * different string each frame, and getText runs on the GL thread: better a
+     * few dozen small objects at export start than an allocation per frame.
+     */
+    private val prefixes: List<SpannableString>? =
+        if (spec.anim == TextAnim.TYPE && spec.text.length <= MAX_TYPED) {
+            (0..spec.text.length).map { n -> SpannableString(styled.subSequence(0, n)) }
+        } else {
+            null
+        }
 
-    override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings =
-        StaticOverlaySettings.Builder()
-            .setBackgroundFrameAnchor(anchorX, anchorY)
-            .setAlphaScale(OverlayFactory.windowAlpha(presentationTimeUs, startUs, endUs))
+    private fun stateAt(timeUs: Long): TextAnimState =
+        textAnimAt(spec.anim, timeUs, startUs, endUs, spec.text.length)
+
+    override fun getText(presentationTimeUs: Long): SpannableString {
+        val chars = stateAt(presentationTimeUs).visibleChars
+        if (chars < 0 || prefixes == null) return styled
+        return prefixes[chars.coerceIn(0, prefixes.size - 1)]
+    }
+
+    override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
+        val anim = stateAt(presentationTimeUs)
+        return StaticOverlaySettings.Builder()
+            .setBackgroundFrameAnchor(anchorX, anchorY + anim.dy)
+            .setScale(anim.scale, anim.scale)
+            .setAlphaScale(anim.alpha)
             .build()
+    }
+
+    private companion object {
+        /** Beyond this, typing shows everything rather than pre-building a novel. */
+        const val MAX_TYPED = 240
+    }
 }
 
 private class TimedStickerOverlay(

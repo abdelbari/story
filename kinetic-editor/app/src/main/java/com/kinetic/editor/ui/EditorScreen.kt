@@ -70,6 +70,7 @@ import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.TrackType
+import com.kinetic.editor.core.model.TextAnim
 import com.kinetic.editor.core.model.TextFont
 import com.kinetic.editor.core.model.TextSpec
 import com.kinetic.editor.core.model.TransitionType
@@ -534,6 +535,23 @@ private fun ClipInspector(
                         fontSize = 14.sp,
                         color = if (spec.italic) Color(0xFF35C4B5) else Color(0xFF9A9AA5),
                     )
+                }
+            }
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text("Animate", color = Color(0xFF9A9AA5), fontSize = 11.sp)
+                for (motion in TextAnim.entries) {
+                    val active = spec.anim == motion
+                    TextButton(onClick = { edit(spec.copy(anim = motion)) }) {
+                        Text(
+                            motion.label,
+                            fontSize = 12.sp,
+                            color = if (active) Color(0xFF35C4B5) else Color(0xFF9A9AA5),
+                        )
+                    }
                 }
             }
             Row(

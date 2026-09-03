@@ -15,6 +15,7 @@ import com.kinetic.editor.core.model.readFades
 import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.ProjectCodec
 import com.kinetic.editor.core.model.StickerSpec
+import com.kinetic.editor.core.model.TextAnim
 import com.kinetic.editor.core.model.TextFont
 import com.kinetic.editor.core.model.TextSpec
 import com.kinetic.editor.core.model.TransitionSpec
@@ -28,6 +29,7 @@ import com.kinetic.editor.core.model.audioStructureHash
 import com.kinetic.editor.core.model.overlayStructureHash
 import com.kinetic.editor.core.model.gainAt
 import com.kinetic.editor.core.model.layoutKey
+import com.kinetic.editor.core.model.textAnimAt
 import com.kinetic.editor.core.model.snapToFrame
 import com.kinetic.editor.core.model.videoStructureHash
 import com.kinetic.editor.core.mvi.EditorIntent
@@ -412,6 +414,54 @@ class CoreLogicTest {
 
         val trimmed = reduce(withPip, EditorIntent.TrimClip(pipClip.id, 500, 4_000))
         assertNotEquals(withPip.overlayStructureHash(), trimmed.overlayStructureHash())
+    }
+
+    @Test
+    fun everyTextAnimationIsAtRestInTheMiddleAndGoneOutside() {
+        val start = 1_000_000L
+        val end = 5_000_000L
+        for (anim in TextAnim.entries) {
+            assertEquals(0f, textAnimAt(anim, start - 1, start, end, 5).alpha, 1e-4f)
+            assertEquals(0f, textAnimAt(anim, end, start, end, 5).alpha, 1e-4f)
+            // Whatever it does on the way in, by the middle it must be showing
+            // the text plainly: full alpha, unit scale, on its anchor.
+            val mid = textAnimAt(anim, 3_000_000L, start, end, 5)
+            assertEquals("$anim alpha", 1f, mid.alpha, 1e-4f)
+            assertEquals("$anim scale", 1f, mid.scale, 1e-4f)
+            assertEquals("$anim dy", 0f, mid.dy, 1e-4f)
+        }
+    }
+
+    @Test
+    fun popOvershootsRiseLandsAndTypeReveals() {
+        val end = 4_000_000L
+        // A pop that does not overshoot is just a zoom.
+        assertEquals(0.6f, textAnimAt(TextAnim.POP, 0, 0, end, 0).scale, 1e-3f)
+        val peak = (0..100).map { textAnimAt(TextAnim.POP, it * 3_500L, 0, end, 0).scale }.maxOrNull()!!
+        assertTrue("pop peaked at $peak, expected an overshoot", peak > 1.02f)
+        assertEquals(1f, textAnimAt(TextAnim.POP, 2_000_000L, 0, end, 0).scale, 1e-3f)
+
+        // Rise enters from below the anchor and settles exactly on it.
+        assertTrue(textAnimAt(TextAnim.RISE, 0, 0, end, 0).dy < -0.1f)
+        assertEquals(0f, textAnimAt(TextAnim.RISE, 2_000_000L, 0, end, 0).dy, 1e-3f)
+
+        val n = 10
+        assertEquals(0, textAnimAt(TextAnim.TYPE, 0, 0, end, n).visibleChars)
+        assertEquals(n, textAnimAt(TextAnim.TYPE, 350_000L, 0, end, n).visibleChars)
+        assertEquals(n, textAnimAt(TextAnim.TYPE, 2_000_000L, 0, end, n).visibleChars)
+        // Typing is the entrance, so it must not also fade in — the others do.
+        assertEquals(1f, textAnimAt(TextAnim.TYPE, 175_000L, 0, end, n).alpha, 1e-3f)
+        assertTrue(textAnimAt(TextAnim.FADE, 175_000L, 0, end, n).alpha < 1f)
+        // -1 means "all of it", so a clip that is not typing shows everything.
+        assertEquals(-1, textAnimAt(TextAnim.FADE, 175_000L, 0, end, n).visibleChars)
+    }
+
+    @Test
+    fun aShortTextClipGetsAShortAnimationNotATruncatedOne() {
+        // 200ms is shorter than the 350ms window; if each end still took 350ms
+        // they would overlap and the text would never reach full opacity.
+        val mid = textAnimAt(TextAnim.FADE, 100_000L, 0, 200_000L, 3)
+        assertEquals(1f, mid.alpha, 1e-3f)
     }
 
     @Test

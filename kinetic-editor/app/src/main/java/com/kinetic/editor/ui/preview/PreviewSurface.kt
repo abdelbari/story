@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
@@ -41,6 +42,7 @@ import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.layoutKey
 import com.kinetic.editor.core.model.pipWindowAt
+import com.kinetic.editor.core.model.textAnimAt
 import com.kinetic.editor.ui.previewStyle
 import com.kinetic.editor.engine.PreviewEngine
 import com.kinetic.editor.ui.timeline.TimelineViewportState
@@ -179,22 +181,42 @@ private fun PreviewOverlayLayer(
                 TrackType.TEXT -> for (p in state.placements(track)) {
                     if (timeMs !in p) continue
                     val spec = p.clip.text ?: continue
+                    // The export's overlay reads this same function per frame.
+                    val anim = textAnimAt(
+                        spec.anim,
+                        timeMs * 1_000L,
+                        p.startMs * 1_000L,
+                        p.endMs * 1_000L,
+                        spec.text.length,
+                    )
+                    if (anim.alpha <= 0f) continue
+                    val shown =
+                        if (anim.visibleChars < 0) spec.text else spec.text.take(anim.visibleChars)
+                    if (shown.isEmpty()) continue
+
                     val scale = size.width / state.outputWidth
-                    val layout = textCache.getOrPut(spec.layoutKey((spec.textSizePx * scale).toInt())) {
-                        if (textCache.size > 128) textCache.clear()
+                    val key = spec.layoutKey((spec.textSizePx * scale).toInt()) + "#" + shown.length
+                    val layout = textCache.getOrPut(key) {
+                        if (textCache.size > 256) textCache.clear()
                         measurer.measure(
-                            AnnotatedString(spec.text),
+                            AnnotatedString(shown),
                             spec.previewStyle((spec.textSizePx * scale / density).sp),
                         )
                     }
                     // NDC anchors: x right-positive, y up-positive, (0,0) center.
                     val cx = (spec.anchorX * 0.5f + 0.5f) * size.width
-                    val cy = (-spec.anchorY * 0.5f + 0.5f) * size.height
-                    drawText(
-                        layout,
-                        Color(spec.argb),
-                        topLeft = Offset(cx - layout.size.width / 2f, cy - layout.size.height / 2f),
-                    )
+                    val cy = (-(spec.anchorY + anim.dy) * 0.5f + 0.5f) * size.height
+                    val base = Color(spec.argb)
+                    scale(anim.scale, pivot = Offset(cx, cy)) {
+                        drawText(
+                            layout,
+                            base.copy(alpha = base.alpha * anim.alpha),
+                            topLeft = Offset(
+                                cx - layout.size.width / 2f,
+                                cy - layout.size.height / 2f,
+                            ),
+                        )
+                    }
                 }
 
                 TrackType.STICKER -> for (p in state.placements(track)) {

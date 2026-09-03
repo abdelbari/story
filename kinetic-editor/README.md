@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 46 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 49 pure-JVM logic tests
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
@@ -40,8 +40,8 @@ environment, so the app has not been assembled by Gradle there. Instead:
   undefined name and a missing import in `EditorScreen`.)
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 46 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 48-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 49 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 51-scenario executable sandbox suite.
 
 ---
 
@@ -267,6 +267,16 @@ during pinch-zoom. Instead:
 - Overlay rotation is specified **counter-clockwise** by media3 and clockwise
   by Compose, so every preview rotation is negated against its export value.
   A preview that turns the opposite way from the render is worse than none.
+- **Text animations are one implementation, seen twice.** `textAnimAt` is pure
+  timing math in `core/model/Planning.kt`: given an animation, a time and the
+  clip's window it returns alpha, scale, an anchor offset and a character count.
+  The export's `TextOverlay` reads it per frame and the preview's Canvas draws
+  from it, so an animation cannot look one way on screen and another in the
+  file — and because it is pure, its timing is unit-tested, which is otherwise
+  the kind of thing only a rendered video reveals. A clip shorter than the
+  animation gets a *shorter* animation rather than a truncated one, so the two
+  ends never overlap. Type-on pre-builds its prefixes at export start rather
+  than allocating a string per frame on the GL thread.
 - **Type faces are Android's own families, not bundled fonts.** `TextFont`
   carries the family name (`sans-serif`, `serif`, `monospace`, `cursive`) that
   the export resolves through `TypefaceSpan` *and* that Compose's built-in
@@ -304,7 +314,7 @@ the exporter — the model, the preview and the export path agree on all three.
 | Clips | speed presets (0.5–4x), per-clip brightness/contrast/saturation, film LUT toggle |
 | Transitions | dip-to-black, wipe, zoom-punch on any clip boundary |
 | Audio | music and voiceover lanes, per-clip volume, fade in/out, track mute |
-| Text | editable content (multi-line), four type faces, bold, italic, eight colours, size, position |
+| Text | editable content (multi-line), four type faces, bold, italic, eight colours, size, position, and five entrance animations (cut, fade, pop, rise, type-on) |
 | Overlays | stickers (size, position, rotation), picture-in-picture (size, position, rotation, opacity) — every control is the number the export consumes |
 | Looks | eight one-tap filters that set the same grade/LUT fields the sliders edit, so a preset is a starting point rather than a mode |
 | Canvas | 9:16, 16:9, 1:1 and 4:5 presets, each fitted, filled (cropped) or stretched — applied by the same `Presentation` in preview and export |

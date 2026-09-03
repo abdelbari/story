@@ -209,3 +209,68 @@ fun pipWindowAt(windows: List<PipWindow>, timeUs: Long): PipWindow? {
     }
     return null
 }
+
+/* ------------------------------ text animation ----------------------------- */
+
+/** How a text overlay is drawn at one moment: the whole animation, as data. */
+data class TextAnimState(
+    val alpha: Float,
+    val scale: Float,
+    /** NDC offset added to the anchor's y; the frame is 2 units tall. */
+    val dy: Float,
+    /** Characters to reveal, or -1 for all of them. */
+    val visibleChars: Int,
+)
+
+private const val TEXT_ANIM_US = 350_000L
+private const val RISE_NDC = 0.15f
+
+/**
+ * The state of a text animation at [timeUs], in composition (== timeline) time.
+ *
+ * One implementation for both pipelines: the preview draws from it and the
+ * export's overlay reads it per frame, so an animation cannot look one way on
+ * screen and another in the file. Pure, and therefore actually testable —
+ * animation timing is otherwise the kind of thing only a rendered video reveals.
+ */
+fun textAnimAt(
+    anim: TextAnim,
+    timeUs: Long,
+    startUs: Long,
+    endUs: Long,
+    charCount: Int,
+): TextAnimState {
+    if (timeUs < startUs || timeUs >= endUs) return TextAnimState(0f, 1f, 0f, 0)
+    // A short clip gets a short animation rather than a truncated one: neither
+    // end may eat more than half of it, or the two would overlap.
+    val windowUs = minOf(TEXT_ANIM_US, (endUs - startUs) / 2).coerceAtLeast(1L)
+    val enter = ((timeUs - startUs).toFloat() / windowUs).coerceIn(0f, 1f)
+    val exit = ((endUs - timeUs).toFloat() / windowUs).coerceIn(0f, 1f)
+    val edge = minOf(enter, exit)
+    return when (anim) {
+        TextAnim.NONE -> TextAnimState(1f, 1f, 0f, -1)
+        TextAnim.FADE -> TextAnimState(edge, 1f, 0f, -1)
+        TextAnim.POP -> TextAnimState(edge, 0.6f + 0.4f * easeOutBack(enter), 0f, -1)
+        TextAnim.RISE -> TextAnimState(edge, 1f, -RISE_NDC * (1f - easeOutCubic(enter)), -1)
+        // Typing IS the entrance, so it does not also fade in; it still fades out.
+        TextAnim.TYPE -> TextAnimState(
+            alpha = exit,
+            scale = 1f,
+            dy = 0f,
+            visibleChars = kotlin.math.ceil(charCount * enter).toInt().coerceIn(0, charCount),
+        )
+    }
+}
+
+/** 0 -> 1 overshooting slightly past 1, which is what makes a pop read as a pop. */
+private fun easeOutBack(t: Float): Float {
+    val c1 = 1.70158f
+    val c3 = c1 + 1f
+    val u = t - 1f
+    return 1f + c3 * u * u * u + c1 * u * u
+}
+
+private fun easeOutCubic(t: Float): Float {
+    val u = 1f - t
+    return 1f - u * u * u
+}
