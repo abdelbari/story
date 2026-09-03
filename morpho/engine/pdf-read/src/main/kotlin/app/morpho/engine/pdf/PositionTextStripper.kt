@@ -1,6 +1,7 @@
 package app.morpho.engine.pdf
 
 import app.morpho.engine.layout.Bidi
+import app.morpho.engine.layout.Comment
 import app.morpho.engine.layout.ExtractedText
 import app.morpho.engine.layout.pdf.PdfColumns
 import app.morpho.engine.layout.pdf.PdfDrawing
@@ -257,6 +258,12 @@ internal class PositionTextStripper : PDFTextStripper() {
 
     /** The rules drawn on the pages of the last [capture]. */
     fun rules(): List<PdfRule> = ruleCatcher.rules.toList()
+
+    /**
+     * Everything anybody wrote about the document, numbered the way the
+     * glyphs refer to it.
+     */
+    fun comments(): List<Comment> = highlights?.notes.orEmpty()
 
     /** The box every painted path of the last [capture] covered. */
     fun drawings(): List<PdfDrawing> = ruleCatcher.drawings.toList()
@@ -533,6 +540,7 @@ internal class PositionTextStripper : PDFTextStripper() {
             underline = markedAt(position, under = true),
             struck = markedAt(position, under = false),
             link = linkAt(position),
+            commentIds = notesAt(position),
         )
     }
 
@@ -585,6 +593,22 @@ internal class PositionTextStripper : PDFTextStripper() {
         if (declared != null && PdfSlant.declares(declared)) return true
         val matrix = runCatching { position.textMatrix }.getOrNull() ?: return false
         return PdfSlant.leansIn(matrix.scaleX, matrix.shearY, matrix.shearX, matrix.scaleY)
+    }
+
+    /**
+     * The notes somebody left about [position].
+     *
+     * A remark typed against a highlight is about the words the highlight
+     * covers; a note left on its own is about the line it sits beside.
+     * Either way nothing in the file joins the note to the words, so the
+     * two are joined by where they are, exactly as a highlight is.
+     */
+    private fun notesAt(position: TextPosition): List<Int> {
+        val page = highlights?.page(currentPageNo - 1) ?: return emptyList()
+        return page.notesAt(
+            position.xDirAdj + position.widthDirAdj / 2,
+            position.yDirAdj - position.heightDir / 2,
+        )
     }
 
     /** The colour of the highlight over [position], if one covers it. */

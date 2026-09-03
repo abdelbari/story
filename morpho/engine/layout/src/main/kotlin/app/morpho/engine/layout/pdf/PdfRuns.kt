@@ -18,6 +18,7 @@ object PdfRuns {
         colorRgb = look?.colorRgb,
         highlightRgb = look?.highlightRgb,
         link = look?.link,
+        commentIds = look?.commentIds.orEmpty(),
     )
 
     /**
@@ -71,6 +72,11 @@ object PdfRuns {
             current.link == look.link &&
             current.underline == look.underline &&
             current.struck == look.struck &&
+            // A space between two words a note is about is inside the
+            // note; one between a word it is about and a word it is not
+            // decides where the note stops, and joining it to the wrong
+            // side moves the note off the words it was left on.
+            current.commentIds == look.commentIds &&
             current.raised == look.raised
     }
 }

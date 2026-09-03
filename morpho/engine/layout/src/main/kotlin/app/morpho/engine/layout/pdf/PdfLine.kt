@@ -67,6 +67,13 @@ data class PdfLook(
      */
     val underline: Boolean = false,
     val struck: Boolean = false,
+    /**
+     * The notes somebody left about this glyph, by the number the reader
+     * gave each. A PDF says nothing on the glyph itself; the notes are
+     * annotations standing over the words, and which words each reaches
+     * is worked out from where it sits, the way a highlight's is.
+     */
+    val commentIds: List<Int> = emptyList(),
 )
 
 /** A stretch of a line's text set in one look. */

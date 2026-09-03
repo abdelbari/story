@@ -3,6 +3,7 @@ package app.morpho.pdf
 import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Block
+import app.morpho.engine.layout.Comment
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ExtractedText
 import app.morpho.engine.layout.Footnotes
@@ -314,6 +315,8 @@ internal object AndroidStructureTreeReader {
         val links = IdentityHashMap<TextPosition, String>()
         /** The colour marked over each glyph a highlight annotation covers. */
         val highlights = IdentityHashMap<TextPosition, Int>()
+        /** The notes about each glyph a reader left a remark over, by number. */
+        val comments = IdentityHashMap<TextPosition, List<Int>>()
         /**
          * What each top-level artifact drew besides text — rules and
          * pictures, as boxes — by the order the artifact was opened in,
@@ -522,6 +525,10 @@ internal object AndroidStructureTreeReader {
             // these two are the ones that change what it says.
             if (pageHighlights?.underlined(middleX, middleY) == true) underlined[text] = true
             if (pageHighlights?.struck(middleX, middleY) == true) struck[text] = true
+            // And what the reader wrote: a remark typed against a
+            // highlight, or a note left in the margin beside the line.
+            pageHighlights?.notesAt(middleX, middleY)?.takeIf { it.isNotEmpty() }
+                ?.let { comments[text] = it }
             super.processTextPosition(text)
         }
 
@@ -671,6 +678,10 @@ internal object AndroidStructureTreeReader {
         /** Where each glyph points, for the few a link annotation covers. */
         private val linkByPosition = IdentityHashMap<TextPosition, String>()
         private val highlightByPosition = IdentityHashMap<TextPosition, Int>()
+        private val commentsByPosition = IdentityHashMap<TextPosition, List<Int>>()
+
+        /** Everything anybody wrote about the document, in the order its pages carry it. */
+        val comments: List<Comment>
         private val glyphsByPageAndMcid = HashMap<Long, List<Glyph>>()
         private val textByPageAndMcid = HashMap<Long, String>()
         private val sizeByPageAndMcid = HashMap<Long, Float>()
@@ -690,6 +701,7 @@ internal object AndroidStructureTreeReader {
         init {
             val pageLinks = runCatching { AndroidPageLinks(doc) }.getOrNull()
             val pageHighlights = runCatching { AndroidPageHighlights(doc) }.getOrNull()
+            comments = pageHighlights?.notes.orEmpty()
             for ((index, page) in doc.pages.withIndex()) {
                 pageIndexByPage[page.cosObject] = index
                 // A page may be written portrait and turned a quarter turn
@@ -722,6 +734,7 @@ internal object AndroidStructureTreeReader {
                 struckByPosition.putAll(extractor.struck)
                 linkByPosition.putAll(extractor.links)
                 highlightByPosition.putAll(extractor.highlights)
+                commentsByPosition.putAll(extractor.comments)
             }
             baseDirection = Bidi.directionOfLanguage(runCatching { doc.documentCatalog.language }.getOrNull())
                 ?: Bidi.dominantDirection(buildString {
@@ -1080,6 +1093,7 @@ internal object AndroidStructureTreeReader {
             raised = raised,
             colorRgb = colorByPosition[position],
             highlightRgb = highlightByPosition[position],
+            commentIds = commentsByPosition[position].orEmpty(),
             underline = underlinedByPosition[position] == true,
             struck = struckByPosition[position] == true,
             link = linkByPosition[position],
@@ -1665,6 +1679,9 @@ internal object AndroidStructureTreeReader {
                     footer = furnishings.footer,
                     evenHeader = furnishings.evenHeader,
                     evenFooter = furnishings.evenFooter,
+                    // What people wrote on the document while reading it,
+                    // numbered the way the runs above refer to it.
+                    comments = texts.comments,
                 )
             )
         }

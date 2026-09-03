@@ -165,7 +165,12 @@ class AndroidPdfReader(context: Context) {
             } else {
                 plainTextFallback(doc, confidence, images)
             }
-            spoken(doc, Footnotes.refine(Links.refine(model)))
+            // What people wrote on the document while reading it. The
+            // glyphs already carry which note each was the subject of;
+            // this is what the notes say.
+            val remarked = stripper.comments()
+                .let { if (it.isEmpty()) model else model.copy(comments = it) }
+            spoken(doc, Footnotes.refine(Links.refine(remarked)))
         }
 
     /**
