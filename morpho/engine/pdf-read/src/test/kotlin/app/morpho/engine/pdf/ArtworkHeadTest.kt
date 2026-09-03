@@ -104,4 +104,13 @@ class ArtworkHeadTest {
             withHead.blocks.filterIsInstance<Paragraph>().map { it.text },
         )
     }
+
+    @Test
+    fun `a head found only by photographing it does not make page one a title page`() {
+        val model = PdfReader().extract(paper(headOnEveryPage = true))
+        // Page one carries the head like every other page. Told the first
+        // page is its own, Word would leave it clear — blanking a head the
+        // paper printed there.
+        assertEquals(false, model.pageSetup?.differentFirstPage)
+    }
 }

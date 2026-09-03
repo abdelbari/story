@@ -85,4 +85,13 @@ class LetterheadTest {
             "a figure that appears once is a figure, and belongs in the reading",
         )
     }
+
+    @Test
+    fun `a letterhead on every page does not make page one a title page`() {
+        val model = PdfReader().extract(report(logoOnEveryPage = true))
+        assertTrue(
+            model.pageSetup?.differentFirstPage != true,
+            "page one carries the letterhead like every other page",
+        )
+    }
 }

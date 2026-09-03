@@ -293,7 +293,11 @@ object PageFurniture {
 
         // One page's furniture stands for every page's. The first page is
         // used when it carries any, since that is the page a reader opens.
-        val furnished = (running.map { it.page } + ruled.map { it.page }).toSortedSet()
+        // The pages that were seen to carry furniture. A picture counts:
+        // a letterhead is furniture, and a reference page that has one is
+        // a better page to stand for the rest than one that does not.
+        val furnished = (running.map { it.page } + ruled.map { it.page } + pictured.map { it.page })
+            .toSortedSet()
         val readPages = body.map { it.page }.distinct().sorted()
 
         // A printed book puts the title of the book on one side of the
@@ -413,7 +417,13 @@ object PageFurniture {
             // is the second one for exactly that reason. Stamping the head
             // it found onto page one would put it on the one page of the
             // document the original deliberately left clear.
-            differentFirstPage = 1 !in furnished && (header.isNotEmpty() || footer.isNotEmpty()),
+            //
+            // Only where the pages were compared and page one was found
+            // bare, though. A head recovered by photographing a page says
+            // nothing whatever about what page one carries, and claiming a
+            // title page on that would blank a head the paper printed.
+            differentFirstPage = furnished.isNotEmpty() && 1 !in furnished &&
+                (header.isNotEmpty() || footer.isNotEmpty()),
         )
     }
 
