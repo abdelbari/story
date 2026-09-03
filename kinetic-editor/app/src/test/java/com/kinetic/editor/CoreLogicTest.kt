@@ -537,6 +537,10 @@ class CoreLogicTest {
         // asked to set one that is not in the linked program. So a uniform the
         // Kotlin sets but the shader never reads is not a silent no-op: it is a
         // crash on the first frame, on every device.
+        //
+        // This is the cheap version, so it runs wherever Gradle does.
+        // tools/check-shaders.py does it exactly, by compiling the shader and
+        // reflecting the linked program; that one needs glslang installed.
         val src = EditorShaders.FRAGMENT
         for (name in SHADER_UNIFORMS) {
             val uses = src.split(name).size - 1

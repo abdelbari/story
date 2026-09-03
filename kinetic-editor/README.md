@@ -11,6 +11,7 @@ under a strict MVI contract.
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
 ./gradlew :app:testDebugUnitTest # 54 pure-JVM logic tests
+python3 tools/check-shaders.py   # compiles the GLSL (needs glslang-tools)
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
@@ -38,6 +39,15 @@ environment, so the app has not been assembled by Gradle there. Instead:
   pieces (`AndroidView`, `LocalContext`, activity results, WorkManager,
   ViewModel). The whole tree type-checks clean. (This is what caught an
   undefined name and a missing import in `EditorScreen`.)
+- **The GLSL is compiled**, by the Khronos reference compiler, as the ESSL 1.00
+  a GLES driver reads it as — both stages, and both sides of the precision
+  guard. `tools/check-shaders.py` then reflects the linked program and checks it
+  against the Kotlin that drives it: every uniform `GradeShaderProgram` writes
+  must exist in the linked program with a matching type. That is not
+  pedantry — drivers strip uniforms nothing reads, and `GlProgram` *throws*
+  when asked to set a missing one, so a uniform renamed on one side only is a
+  crash on the first frame of every device. The checker was proved by breaking
+  the shader on purpose: it catches both a renamed uniform and a syntax error.
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
   geometry) runs on the JVM: the 54 tests in `app/src/test` pass under JUnit
@@ -429,6 +439,7 @@ with the process and a restored project could not reopen its own media.
 kinetic-editor/
 ├── gradlew · gradle/wrapper/ · settings.gradle.kts · build.gradle.kts
 ├── gradle/libs.versions.toml · gradle.properties · app/proguard-rules.pro
+├── tools/check-shaders.py       compiles the GLSL, checks its uniforms
 └── app/src/
     ├── test/java/com/kinetic/editor/    CoreLogicTest (document, planning,
     │                                    codec, shader contract) +
