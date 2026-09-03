@@ -729,6 +729,16 @@ object DocxReader {
             "Run-container nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
         }
         val runs = mutableListOf<TextRun>()
+        // A field written the long way round: a run that begins it, runs
+        // holding the instruction, a run that separates, the runs holding
+        // what it last worked out to, and a run that ends it. Word writes
+        // a page number and often a link this way, and read as the plain
+        // text of its result a numbered footer says the same number on
+        // every page it is stamped on.
+        var fieldDepth = 0
+        var inResult = false
+        var resultFrom = 0
+        val instruction = StringBuilder()
         // Every element, not only Word's own: an equation is written in a
         // language of its own, in the paragraph beside the runs rather than
         // inside one, and a walk that sees only Word's elements walks past it.
@@ -740,6 +750,42 @@ object DocxReader {
                 continue
             }
             if (child.namespaceURI != W) continue
+            // A run that says something about a field rather than holding
+            // the document's words, and the runs of a field's instruction,
+            // are the field's own scaffolding and are not text.
+            if (child.localName == "r") {
+                val mark = firstChild(child, "fldChar")?.let { attr(it, "fldCharType") }
+                when (mark) {
+                    "begin" -> {
+                        if (fieldDepth == 0) {
+                            instruction.setLength(0)
+                            inResult = false
+                            resultFrom = runs.size
+                        }
+                        fieldDepth++
+                        continue
+                    }
+                    "separate" -> {
+                        if (fieldDepth == 1) {
+                            inResult = true
+                            resultFrom = runs.size
+                        }
+                        continue
+                    }
+                    "end" -> {
+                        fieldDepth = (fieldDepth - 1).coerceAtLeast(0)
+                        if (fieldDepth == 0) {
+                            applyField(runs, resultFrom, instruction.toString())
+                            inResult = false
+                        }
+                        continue
+                    }
+                }
+                if (fieldDepth > 0 && !inResult) {
+                    for (part in children(child, "instrText")) instruction.append(part.textContent)
+                    continue
+                }
+            }
             when (child.localName) {
                 "r" -> parseRun(child, paragraphRtl, media.takeIf { inline }, notes, styles, inherited)?.let(runs::add)
                 "fldSimple" -> {
@@ -776,6 +822,46 @@ object DocxReader {
             }
         }
         return runs
+    }
+
+    /**
+     * What a field's instruction makes of the runs holding its result.
+     *
+     * A page number is a field the writer fills in rather than text, so it
+     * counts the pages it is stamped on instead of repeating the one the
+     * document was last saved showing. A link written as a field points
+     * where its instruction says, the way one written as `w:hyperlink`
+     * does. Every other field is left as the words it worked out to,
+     * which is what a reader of the document sees.
+     */
+    private fun applyField(runs: MutableList<TextRun>, from: Int, instruction: String) {
+        if (from >= runs.size) return
+        val said = instruction.trim()
+        val name = said.substringBefore(' ').uppercase()
+        val change: (TextRun) -> TextRun = when {
+            name == "PAGE" -> { run -> run.copy(field = RunField.PAGE_NUMBER) }
+            name == "HYPERLINK" -> {
+                val target = linkOf(said) ?: return
+                ({ run -> run.copy(link = run.link ?: target) })
+            }
+            else -> return
+        }
+        for (index in from until runs.size) runs[index] = change(runs[index])
+    }
+
+    /**
+     * Where a HYPERLINK field points: the address in quotes after it, or
+     * the place in this document its `\l` switch names.
+     */
+    private fun linkOf(instruction: String): String? {
+        val quoted = Regex("\"([^\"]*)\"").findAll(instruction).map { it.groupValues[1] }.toList()
+        val anchor = Regex("""\\l\s+"?([^"\s]+)"?""").find(instruction)?.groupValues?.get(1)
+        val address = quoted.firstOrNull { it.isNotBlank() && it != anchor }
+        return when {
+            address != null -> address
+            anchor != null -> "#" + anchor
+            else -> null
+        }
     }
 
     private fun parseParagraphStyle(
