@@ -149,6 +149,29 @@ enum class CanvasFit(val label: String) {
     STRETCH("Stretch"),
 }
 
+/**
+ * Pan, zoom and rotation of the picture inside its own frame — CapCut's
+ * "transform", and the thing a reframe or a slow push-in is made of.
+ *
+ * Applied by the shared shader, so it costs no extra pass and the preview and
+ * the render are the same code. Offsets are NDC over a 2-unit frame; positive
+ * [rotationDeg] turns the picture counter-clockwise, as media3 specifies
+ * rotation everywhere else.
+ */
+@Serializable
+@Immutable
+data class TransformSpec(
+    val scale: Float = 1f,
+    val offsetX: Float = 0f,
+    val offsetY: Float = 0f,
+    val rotationDeg: Float = 0f,
+) {
+    val isIdentity: Boolean
+        get() = scale == 1f && offsetX == 0f && offsetY == 0f && rotationDeg == 0f
+
+    companion object { val NONE = TransformSpec() }
+}
+
 /** Placement of a picture-in-picture video overlay. Null on a clip = full frame. */
 @Serializable
 @Immutable
@@ -199,6 +222,7 @@ data class ClipModel(
     val sticker: StickerSpec? = null,
     /** Set on VIDEO_OVERLAY clips; drives both the preview surface and the compositor. */
     val pip: PipSpec? = null,
+    val transform: TransformSpec = TransformSpec.NONE,
 ) {
     /** Source-domain span (what the decoder actually reads). */
     val sourceSpanMs: Long get() = trimOutMs - trimInMs

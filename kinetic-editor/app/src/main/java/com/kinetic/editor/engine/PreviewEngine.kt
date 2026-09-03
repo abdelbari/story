@@ -432,6 +432,7 @@ class PreviewEngine(
                 FxSegment(
                     startUs = previewUs,
                     endUs = previewUs + w.durationUs,
+                    transform = clip.transform,
                     brightness = clip.grade.brightness,
                     contrast = clip.grade.contrast,
                     saturation = clip.grade.saturation,
@@ -574,6 +575,7 @@ class PreviewEngine(
             val clip = placements.getOrNull(player.currentMediaItemIndex)?.clip ?: return
             provider.snapshot = ClipFx(
                 grade = clip.grade,
+                transform = clip.transform,
                 lutBitmap = clip.lut?.let { lutCache[it.assetPath] },
                 lutIntensity = clip.lut?.intensity ?: 0f,
             )

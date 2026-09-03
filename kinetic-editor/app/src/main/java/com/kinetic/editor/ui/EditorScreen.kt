@@ -68,6 +68,7 @@ import com.kinetic.editor.core.model.fadeKeyframes
 import com.kinetic.editor.core.model.readFades
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.LutSpec
+import com.kinetic.editor.core.model.TransformSpec
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.OverlayAnim
@@ -675,6 +676,33 @@ private fun ClipInspector(
                             fontSize = 12.sp,
                             color = if (active) Color(0xFF35C4B5) else Color(0xFF9A9AA5),
                         )
+                    }
+                }
+            }
+            // Transform: the same numbers the shader applies, in preview and render.
+            val xf = clip.transform
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                InspectorSlider("Zoom", xf.scale, 0.2f..4f) {
+                    dispatch(EditorIntent.SetTransform(clip.id, xf.copy(scale = it)))
+                }
+                InspectorSlider("Turn", xf.rotationDeg, -180f..180f) {
+                    dispatch(EditorIntent.SetTransform(clip.id, xf.copy(rotationDeg = it)))
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                InspectorSlider("Pan X", xf.offsetX, -1f..1f) {
+                    dispatch(EditorIntent.SetTransform(clip.id, xf.copy(offsetX = it)))
+                }
+                InspectorSlider("Pan Y", xf.offsetY, -1f..1f) {
+                    dispatch(EditorIntent.SetTransform(clip.id, xf.copy(offsetY = it)))
+                }
+            }
+            if (!xf.isIdentity) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = {
+                        dispatch(EditorIntent.SetTransform(clip.id, TransformSpec.NONE))
+                    }) {
+                        Text("Reset transform", fontSize = 12.sp, color = Color(0xFF9A9AA5))
                     }
                 }
             }

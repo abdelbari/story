@@ -43,6 +43,11 @@ uniform float uSaturation;
 uniform float uTemperature;
 uniform float uTransType;
 uniform float uTransProgress;
+// Clip transform: pan, zoom and rotate the picture inside its own frame.
+uniform float uXfScale;
+uniform vec2 uXfOffset;
+uniform float uXfRot;
+uniform float uAspect;
 
 // 64^3 LUT packed as an 8x8 grid of 64x64 blue-slices in a 512x512 texture.
 vec3 applyLut(vec3 c) {
@@ -58,6 +63,19 @@ vec3 applyLut(vec3 c) {
 void main() {
   vec2 uv = vTexCoords;
   float p = clamp(uTransProgress, 0.0, 1.0);
+
+  // Move the CONTENT, so the sampling coordinate moves the opposite way.
+  // Written branch-free: with an identity transform every term below is
+  // exactly a no-op, so untransformed clips cost a few ALU ops and nothing else.
+  vec2 q = uv - 0.5;
+  q -= uXfOffset * 0.5;            // offsets are NDC, over a 2-unit frame
+  q /= uXfScale;
+  q.x *= uAspect;                  // square up, rotate, unsquare, so a
+  float cs = cos(uXfRot);          // rotation does not shear the picture
+  float sn = sin(uXfRot);
+  q = vec2(q.x * cs + q.y * sn, -q.x * sn + q.y * cs);
+  q.x /= uAspect;
+  uv = q + 0.5;
 
   // Zoom-punch warps sampling coords: scale peaks at the cut point (p = 0.5).
   if (uTransType > 2.5) {
@@ -96,7 +114,11 @@ void main() {
     c *= 1.0 - 0.25 * (1.0 - abs(1.0 - 2.0 * p));
   }
 
-  gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+  // Anything the transform moved off the source is black, not a smeared edge
+  // texel: zooming out or panning past the border letterboxes cleanly. Applied
+  // last so a brightened grade cannot lift the surround off black.
+  float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+  gl_FragColor = vec4(clamp(c, 0.0, 1.0) * inside, 1.0);
 }
 """
 }

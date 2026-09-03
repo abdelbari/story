@@ -166,6 +166,7 @@ object CompositionMapper {
                 GradeGlEffect(
                     ClipGradeProvider(
                         grade = clip.grade,
+                        transform = clip.transform,
                         lutBitmap = lutBitmap,
                         lutIntensity = clip.lut?.intensity ?: 0f,
                         transOutType = clip.transitionOut?.type ?: TransitionType.NONE,
@@ -281,6 +282,7 @@ object CompositionMapper {
                     GradeGlEffect(
                         ClipGradeProvider(
                             grade = clip.grade,
+                            transform = clip.transform,
                             lutBitmap = lutBitmap,
                             lutIntensity = clip.lut?.intensity ?: 0f,
                             transOutType = TransitionType.NONE,

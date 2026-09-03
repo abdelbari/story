@@ -50,6 +50,19 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
     is EditorIntent.ApplyFilter -> replaceClip(state, intent.clipId) {
         it.copy(grade = intent.grade, lut = intent.lut)
     }
+    is EditorIntent.SetTransform -> replaceClip(state, intent.clipId) {
+        it.copy(
+            transform = intent.transform.copy(
+                // A zero or negative scale divides the sampling coordinate by
+                // nothing; the offsets bound how far off-frame a clip can be
+                // pushed before it is simply gone.
+                scale = intent.transform.scale.coerceIn(0.1f, 8f),
+                offsetX = intent.transform.offsetX.coerceIn(-2f, 2f),
+                offsetY = intent.transform.offsetY.coerceIn(-2f, 2f),
+                rotationDeg = intent.transform.rotationDeg.coerceIn(-180f, 180f),
+            ),
+        )
+    }
     is EditorIntent.SetTransition -> replaceClip(state, intent.clipId) {
         it.copy(transitionOut = intent.transition)
     }

@@ -12,6 +12,7 @@ import androidx.media3.effect.BaseGlShaderProgram
 import androidx.media3.effect.GlEffect
 import androidx.media3.effect.GlShaderProgram
 import com.kinetic.editor.core.model.ColorGradeSpec
+import com.kinetic.editor.core.model.TransformSpec
 import com.kinetic.editor.core.model.TransitionType
 
 /**
@@ -28,10 +29,26 @@ class GradeUniformsBuffer {
     var lutIntensity = 0f
     var transType = 0f
     var transProgress = 0f
+    var xfScale = 1f
+    var xfOffsetX = 0f
+    var xfOffsetY = 0f
+    var xfRotRad = 0f
 
     fun reset() {
         brightness = 0f; contrast = 1f; saturation = 1f; temperature = 0f
         lutBitmap = null; lutIntensity = 0f; transType = 0f; transProgress = 0f
+        xfScale = 1f; xfOffsetX = 0f; xfOffsetY = 0f; xfRotRad = 0f
+    }
+
+    fun setTransform(xf: TransformSpec) {
+        xfScale = xf.scale
+        xfOffsetX = xf.offsetX
+        xfOffsetY = xf.offsetY
+        xfRotRad = xf.rotationDeg * DEG_TO_RAD
+    }
+
+    private companion object {
+        const val DEG_TO_RAD = (Math.PI / 180.0).toFloat()
     }
 
     fun setGrade(grade: ColorGradeSpec) {
@@ -68,6 +85,12 @@ class GradeShaderProgram(
     private var lutTexId = -1
     private var loadedLut: Bitmap? = null
 
+    /**
+     * Frame shape, so a rotation turns the picture instead of shearing it.
+     * configure() always runs before the first drawFrame.
+     */
+    private var aspect = 1f
+
     init {
         try {
             program = GlProgram(EditorShaders.VERTEX, EditorShaders.FRAGMENT)
@@ -81,7 +104,10 @@ class GradeShaderProgram(
         )
     }
 
-    override fun configure(inputWidth: Int, inputHeight: Int): Size = Size(inputWidth, inputHeight)
+    override fun configure(inputWidth: Int, inputHeight: Int): Size {
+        aspect = if (inputHeight > 0) inputWidth.toFloat() / inputHeight else 1f
+        return Size(inputWidth, inputHeight)
+    }
 
     override fun drawFrame(inputTexId: Int, presentationTimeUs: Long) {
         try {
@@ -105,6 +131,10 @@ class GradeShaderProgram(
             program.setFloatUniform("uTemperature", uniforms.temperature)
             program.setFloatUniform("uTransType", uniforms.transType)
             program.setFloatUniform("uTransProgress", uniforms.transProgress)
+            program.setFloatUniform("uXfScale", uniforms.xfScale)
+            program.setFloatsUniform("uXfOffset", floatArrayOf(uniforms.xfOffsetX, uniforms.xfOffsetY))
+            program.setFloatUniform("uXfRot", uniforms.xfRotRad)
+            program.setFloatUniform("uAspect", aspect)
             program.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, /* first= */ 0, /* count= */ 4)
             GlUtil.checkGlError()
@@ -160,6 +190,7 @@ class GradeShaderProgram(
  */
 class ClipGradeProvider(
     private val grade: ColorGradeSpec,
+    private val transform: TransformSpec,
     private val lutBitmap: Bitmap?,
     private val lutIntensity: Float,
     private val transOutType: TransitionType,
@@ -177,6 +208,7 @@ class ClipGradeProvider(
 
         out.reset()
         out.setGrade(grade)
+        out.setTransform(transform)
         out.lutBitmap = lutBitmap
         out.lutIntensity = lutIntensity
 
@@ -218,6 +250,7 @@ class PreviewFxProvider : GradeUniformsProvider {
         out.contrast = seg.contrast
         out.saturation = seg.saturation
         out.temperature = seg.temperature
+        out.setTransform(seg.transform)
         out.lutBitmap = seg.lutBitmap
         out.lutIntensity = seg.lutIntensity
 
@@ -238,6 +271,7 @@ class PreviewFxProvider : GradeUniformsProvider {
 /** Immutable uniform snapshot for one clip. */
 class ClipFx(
     val grade: ColorGradeSpec,
+    val transform: TransformSpec,
     val lutBitmap: Bitmap?,
     val lutIntensity: Float,
 )
@@ -260,6 +294,7 @@ class ClipSnapshotFxProvider : GradeUniformsProvider {
         out.reset()
         val s = snapshot ?: return
         out.setGrade(s.grade)
+        out.setTransform(s.transform)
         out.lutBitmap = s.lutBitmap
         out.lutIntensity = s.lutIntensity
     }
@@ -269,6 +304,7 @@ class ClipSnapshotFxProvider : GradeUniformsProvider {
 class FxSegment(
     val startUs: Long,
     val endUs: Long,
+    val transform: TransformSpec,
     val brightness: Float,
     val contrast: Float,
     val saturation: Float,

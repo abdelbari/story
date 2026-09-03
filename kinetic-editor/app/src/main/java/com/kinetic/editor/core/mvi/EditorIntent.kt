@@ -10,6 +10,7 @@ import com.kinetic.editor.core.model.StickerSpec
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TextSpec
 import com.kinetic.editor.core.model.TrackId
+import com.kinetic.editor.core.model.TransformSpec
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.VolumeKeyframe
 import kotlinx.collections.immutable.ImmutableList
@@ -87,6 +88,11 @@ sealed interface EditorIntent {
         val grade: ColorGradeSpec,
         val lut: LutSpec?,
     ) : EditorIntent
+
+    /** Pan, zoom and rotate the picture inside its frame. */
+    data class SetTransform(val clipId: ClipId, val transform: TransformSpec) : EditorIntent {
+        override val coalesceKey get() = "xform:${clipId.value}"
+    }
 
     data class SetTransition(val clipId: ClipId, val transition: TransitionSpec?) : EditorIntent
 

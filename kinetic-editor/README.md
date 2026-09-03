@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 50 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 52 pure-JVM logic tests
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
@@ -40,8 +40,8 @@ environment, so the app has not been assembled by Gradle there. Instead:
   undefined name and a missing import in `EditorScreen`.)
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 50 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 52-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 52 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 54-scenario executable sandbox suite.
 
 ---
 
@@ -320,12 +320,30 @@ the exporter — the model, the preview and the export path agree on all three.
 | Looks | eight one-tap filters that set the same grade/LUT fields the sliders edit, so a preset is a starting point rather than a mode |
 | Canvas | 9:16, 16:9, 1:1 and 4:5 presets, each fitted, filled (cropped) or stretched — applied by the same `Presentation` in preview and export |
 | Editing | trim, split, move, reorder, duplicate, delete, per-clip speed, detach audio |
+| Transform | pan, zoom and rotate the picture inside its frame, on any video clip |
 | Output | background MP4 export with live progress, published to Movies/Kinetic |
 
 Volume fades deserve a note: the model stores a general keyframe envelope, but
 the UI exposes fade-in/fade-out durations, because that is what nearly every
 volume edit actually is. `fadeKeyframes`/`readFades` convert between the two, so
 the sliders reflect whatever envelope a clip really has.
+
+### Transform rides the shader it already had
+
+Pan, zoom and rotate are not a new pass. The grade shader was already warping
+sampling coordinates for the zoom-punch transition, so a clip transform is four
+more uniforms on the same draw: offset and scale move the sampling coordinate
+the opposite way from the picture, and the rotation squares the frame up before
+turning it so it does not shear. It is written branch-free, because with an
+identity transform every term is exactly a no-op — an untouched clip pays a few
+ALU ops and nothing else.
+
+Anything the transform moves off the source reads as black rather than a
+smeared edge texel, and that mask is applied *last*, so a brightened grade
+cannot lift the surround off black.
+
+Because it is the same shader in both pipelines, the preview and the render
+share one implementation of the geometry, exactly as they share the colour.
 
 ## 5b. Lifecycle
 

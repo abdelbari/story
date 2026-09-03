@@ -18,6 +18,7 @@ import com.kinetic.editor.core.model.StickerSpec
 import com.kinetic.editor.core.model.OverlayAnim
 import com.kinetic.editor.core.model.TextFont
 import com.kinetic.editor.core.model.TextSpec
+import com.kinetic.editor.core.model.TransformSpec
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.planSequence
 import com.kinetic.editor.core.model.transitionWindowsUs
@@ -523,6 +524,43 @@ class CoreLogicTest {
     }
 
     @Test
+    fun everyUniformTheProgramSetsIsAlsoReadByTheShader() {
+        // GLSL compilers strip uniforms nothing reads, and GlProgram throws when
+        // asked to set one that is not in the linked program. So a uniform the
+        // Kotlin sets but the shader never reads is not a silent no-op: it is a
+        // crash on the first frame, on every device.
+        val src = EditorShaders.FRAGMENT
+        for (name in SHADER_UNIFORMS) {
+            val uses = src.split(name).size - 1
+            assertTrue("$name is not declared in the shader", src.contains("uniform") && uses > 0)
+            assertTrue("$name is declared but never read", uses > 1)
+        }
+    }
+
+    @Test
+    fun transformClampsToWhatTheShaderCanActuallySample() {
+        val c = clip("a", 4_000)
+        val s0 = stateWith(listOf(c))
+        val wild = reduce(
+            s0,
+            EditorIntent.SetTransform(
+                c.id,
+                TransformSpec(scale = 0f, offsetX = 9f, offsetY = -9f, rotationDeg = 900f),
+            ),
+        ).mainTrack.clips[0].transform
+        // Zero scale divides the sampling coordinate by nothing.
+        assertEquals(0.1f, wild.scale, 1e-4f)
+        assertEquals(2f, wild.offsetX, 1e-4f)
+        assertEquals(-2f, wild.offsetY, 1e-4f)
+        assertEquals(180f, wild.rotationDeg, 1e-4f)
+
+        assertTrue(TransformSpec.NONE.isIdentity)
+        assertFalse(TransformSpec(scale = 1.2f).isIdentity)
+        // An untouched clip stays byte-identical on disk.
+        assertFalse(ProjectCodec.encode(s0).contains("transform"))
+    }
+
+    @Test
     fun shaderSourcesAreAsciiOnly() {
         // GLSL ES 1.00 restricts the source character set to ASCII, comments
         // included. A typographic dash in a comment makes strict drivers reject
@@ -840,3 +878,11 @@ class CoreLogicTest {
         assertEquals(0f, buf.brightness, 1e-3f)
     }
 }
+
+/** Every uniform GradeShaderProgram sets; see the test above for why it matters. */
+private val SHADER_UNIFORMS = listOf(
+    "uTexSampler", "uLutSampler", "uLutEnabled", "uLutIntensity",
+    "uBrightness", "uContrast", "uSaturation", "uTemperature",
+    "uTransType", "uTransProgress",
+    "uXfScale", "uXfOffset", "uXfRot", "uAspect",
+)
