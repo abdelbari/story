@@ -54,9 +54,6 @@ import javax.xml.parsers.DocumentBuilderFactory
  * one); no other exception type escapes.
  *
  * Deliberate v0 choices:
- * - The main part is located at the fixed OPC path word/document.xml; the
- *   officeDocument relationship is not followed yet (Word can, rarely, name
- *   the part differently — a known limitation).
  * - Paragraphs with no runs and no text are skipped ([DocxWriter] emits an
  *   empty spacer paragraph after each table).
  * - Inside a `w:bidi` paragraph, a run without `w:rtl` reads back as
@@ -80,17 +77,27 @@ object DocxReader {
     private const val MAX_PART_BYTES = 32 * 1024 * 1024
     private const val MAX_MEDIA_PART_BYTES = 16 * 1024 * 1024
     private const val MAX_TOTAL_MEDIA_BYTES = 64 * 1024 * 1024
-    private val NEEDED_PARTS =
-        setOf(
-            "word/document.xml",
-            "word/numbering.xml",
-            "word/styles.xml",
-            "word/_rels/document.xml.rels",
-        )
-    /** A running header or footer part, or the relationships of one: word/header1.xml, word/_rels/footer2.xml.rels. */
-    private val FURNITURE_PART = Regex("word/(?:_rels/)?(?:header|footer)\\d*\\.xml(?:\\.rels)?")
-    private const val NOTES_PART = "word/footnotes.xml"
-    private const val END_NOTES_PART = "word/endnotes.xml"
+    /** The package's own relationships, which say where its document is. */
+    private const val PACKAGE_RELS = "_rels/.rels"
+    private const val OFFICE_DOCUMENT =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
+    /** Where a .docx keeps its document unless its relationships say otherwise. */
+    private const val CONVENTIONAL_MAIN_PART = "word/document.xml"
+    /**
+     * The parts a document is made of, by the shape of their names.
+     *
+     * A package is read once, and which directory it keeps its document in
+     * is not known until its relationships have been read out of it — so
+     * the shapes are matched while reading and the directory is settled
+     * afterwards. A .docx has one such directory, `word/`, so matching any
+     * of them costs nothing and reads a package that names its own
+     * differently.
+     */
+    private val DOCUMENT_PART = Regex("[^/]+/document\\d*\\.xml")
+    private val SIDE_PART = Regex("[^/]+/(?:styles|numbering|footnotes|endnotes)\\.xml")
+    private val FURNITURE_PART = Regex("[^/]+/(?:header|footer)\\d*\\.xml")
+    private val RELATIONSHIPS_PART = Regex("[^/]+/_rels/[^/]+\\.rels")
+    private val MEDIA_PART = Regex("[^/]+/media/[^/]+")
     private const val EMU_PER_PT = 12700L
     private const val REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
     private const val A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -108,11 +115,15 @@ object DocxReader {
     fun read(input: InputStream): DocumentModel {
         try {
             val parts = readNeededParts(input)
-            val documentPart = parts["word/document.xml"]
-                ?: throw IllegalArgumentException("Not a .docx package: word/document.xml is missing.")
-            val numbering = parts["word/numbering.xml"]?.let(::parseNumbering).orEmpty()
-            val styles = StyleSheet(parts["word/styles.xml"])
-            val media = MediaStore(parts, "word/_rels/document.xml.rels")
+            // Where the package says its document is, which is not always
+            // where a document usually is.
+            val documentName = mainPartName(parts)
+            val documentPart = parts[documentName]
+                ?: throw IllegalArgumentException("Not a .docx package: $documentName is missing.")
+            val at = documentName.substringBeforeLast('/', "")
+            val numbering = parts[beside(at, "numbering.xml")]?.let(::parseNumbering).orEmpty()
+            val styles = StyleSheet(parts[beside(at, "styles.xml")])
+            val media = MediaStore(parts, relationshipsOf(documentName), at)
             val body = firstChild(parseXml(documentPart).documentElement, "body")
                 ?: return DocumentModel(blocks = emptyList())
             val sectPr = mainSection(body)
@@ -121,8 +132,8 @@ object DocxReader {
             // its footnotes and its endnotes apart, so note 1 may be two
             // different notes and each is kept under the kind it belongs to.
             val notes = Notes(
-                notesOf(parts[NOTES_PART], "footnote", numbering, media, styles) +
-                    notesOf(parts[END_NOTES_PART], "endnote", numbering, media, styles)
+                notesOf(parts[beside(at, "footnotes.xml")], "footnote", numbering, media, styles) +
+                    notesOf(parts[beside(at, "endnotes.xml")], "endnote", numbering, media, styles)
             )
             return DocumentModel(
                 blocks = parseBlocks(
@@ -130,8 +141,8 @@ object DocxReader {
                     sections = sectionShapes(body),
                 ),
                 pageSetup = sectPr?.let(::parsePageSetup),
-                header = sectPr?.let { furniture(it, "headerReference", parts, media, numbering, styles) }.orEmpty(),
-                footer = sectPr?.let { furniture(it, "footerReference", parts, media, numbering, styles) }.orEmpty(),
+                header = sectPr?.let { furniture(it, "headerReference", parts, media, numbering, styles, at) }.orEmpty(),
+                footer = sectPr?.let { furniture(it, "footerReference", parts, media, numbering, styles, at) }.orEmpty(),
             )
         } catch (e: IllegalArgumentException) {
             throw e
@@ -148,12 +159,13 @@ object DocxReader {
                 val entry = zip.nextEntry ?: break
                 if (!entry.isDirectory &&
                     (
-                        entry.name in NEEDED_PARTS || entry.name == NOTES_PART ||
-                            entry.name == END_NOTES_PART || FURNITURE_PART.matches(entry.name)
+                        entry.name == PACKAGE_RELS ||
+                            DOCUMENT_PART.matches(entry.name) || SIDE_PART.matches(entry.name) ||
+                            FURNITURE_PART.matches(entry.name) || RELATIONSHIPS_PART.matches(entry.name)
                         )
                 ) {
                     parts[entry.name] = readBounded(zip, entry.name, MAX_PART_BYTES)
-                } else if (!entry.isDirectory && entry.name.startsWith("word/media/")) {
+                } else if (!entry.isDirectory && MEDIA_PART.matches(entry.name)) {
                     val bytes = readBounded(zip, entry.name, MAX_MEDIA_PART_BYTES)
                     totalMedia += bytes.size
                     require(totalMedia <= MAX_TOTAL_MEDIA_BYTES) {
@@ -180,6 +192,7 @@ object DocxReader {
         media: MediaStore,
         numbering: Map<String, Map<Int, ListLevel>>,
         styles: StyleSheet,
+        at: String,
     ): List<Block> {
         val references = children(sectPr, reference)
         val chosen = references.firstOrNull { attr(it, "type") == "default" } ?: references.firstOrNull() ?: return emptyList()
@@ -187,9 +200,9 @@ object DocxReader {
         val partName = media.partFor(relId) ?: return emptyList()
         val bytes = parts[partName] ?: return emptyList()
         val root = runCatching { parseXml(bytes).documentElement }.getOrNull() ?: return emptyList()
-        val rels = "word/_rels/" + partName.removePrefix("word/") + ".rels"
+        val rels = relationshipsOf(partName)
         // A paragraph that is nothing but a picture is the picture, as it was written.
-        return parseBlocks(root, numbering, MediaStore(parts, rels), depth = 0, inline = true, styles = styles).map { block ->
+        return parseBlocks(root, numbering, MediaStore(parts, rels, at), depth = 0, inline = true, styles = styles).map { block ->
             val only = (block as? Paragraph)?.runs?.singleOrNull()
             val picture = only?.image
             if (only != null && only.text.isEmpty() && picture != null) picture else block
@@ -211,7 +224,47 @@ object DocxReader {
     }
 
     /** Image relationships plus the media bytes they point at. */
-    private class MediaStore(parts: Map<String, ByteArray>, relsPart: String) {
+    /** [name] beside a part kept in directory [at], or at the package root when there is none. */
+    private fun beside(at: String, name: String): String = if (at.isEmpty()) name else "$at/$name"
+
+    /** Where a part's own relationships are kept: `word/_rels/document.xml.rels` beside `word/document.xml`. */
+    private fun relationshipsOf(part: String): String {
+        val at = part.substringBeforeLast('/', "")
+        return beside(at, "_rels/" + part.substringAfterLast('/') + ".rels")
+    }
+
+    /**
+     * Where the package says its document is.
+     *
+     * OPC names the main part by a relationship rather than by a path, and
+     * Word writes `word/document2.xml` after it has repaired a file — a
+     * document Word itself opens without a word, which a reader that knows
+     * only the conventional path calls "not a .docx". Where the package
+     * says nothing, or names a part it does not hold, the conventional
+     * path is what a .docx means.
+     */
+    private fun mainPartName(parts: Map<String, ByteArray>): String {
+        val declared = parts[PACKAGE_RELS]
+            ?.let { runCatching { targetOf(it, OFFICE_DOCUMENT) }.getOrNull() }
+            ?.removePrefix("/")
+            ?.takeIf { parts.containsKey(it) }
+        return declared ?: CONVENTIONAL_MAIN_PART
+    }
+
+    /** Where the relationship of [type] in a relationships part points, as it was written. */
+    private fun targetOf(bytes: ByteArray, type: String): String? {
+        val root = parseXml(bytes).documentElement
+        val relationships = root.getElementsByTagNameNS(REL_NS, "Relationship")
+        for (index in 0 until relationships.length) {
+            val relationship = relationships.item(index) as Element
+            if (relationship.getAttribute("Type") == type) {
+                return relationship.getAttribute("Target").takeIf { it.isNotEmpty() }
+            }
+        }
+        return null
+    }
+
+    private class MediaStore(parts: Map<String, ByteArray>, relsPart: String, private val at: String) {
         private val targetByRelId: Map<String, String> =
             parts[relsPart]?.let(::parseRelationships).orEmpty()
         private val parts = parts
@@ -224,7 +277,8 @@ object DocxReader {
             val target = targetByRelId[relId] ?: return null
             return when {
                 target.startsWith("/") -> target.removePrefix("/")
-                else -> "word/$target"
+                at.isEmpty() -> target
+                else -> "$at/$target"
             }
         }
 
