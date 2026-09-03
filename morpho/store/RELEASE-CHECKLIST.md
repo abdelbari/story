@@ -72,7 +72,10 @@ Work through, in this order — each exercises a path nothing else covers:
       stopping at the bottom edge with the rest of it gone. Its head must
       stand at the top of every page it runs onto, once on each, and the
       head of a table that has no body under it must not be repeated at
-      all. Use one with a picture in a cell — a letterhead's logo, a CV's
+      all. Use one with a merged cell too — an invoice's label beside
+      three lines, a schedule's day beside its hours: it must stand beside
+      all the rows it covers, with no rule running through it, and all of
+      what it says must be there. Use one with a picture in a cell — a letterhead's logo, a CV's
       photo — and check the picture is in the exported PDF too.
 - [ ] **A Markdown file with a table in it**, converted to Word. It must
       arrive as a table, not as paragraphs of pipe characters, with the

@@ -41,6 +41,7 @@ import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.RunField
 import app.morpho.engine.layout.Table
+import app.morpho.engine.layout.TableCell
 import app.morpho.engine.layout.TableGrid
 import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
@@ -246,8 +247,16 @@ internal object PdfFileExporter {
             y = sheet.marginTop
         }
 
+        /**
+         * Something to draw on the page before it is finished: a table's
+         * cell that covers several rows, which is drawn when the last of
+         * them is and so may still be waiting when the page runs out.
+         */
+        var beforeClosing: (() -> Unit)? = null
+
         fun closePage() {
             val open = page ?: return
+            beforeClosing?.invoke()
             drawNotes(open.canvas)
             pdf.finishPage(open)
             page = null
@@ -681,51 +690,140 @@ internal object PdfFileExporter {
             strokeWidth = 0.75f
             color = 0xFF9E9E9E.toInt()
         }
+        /** A cell's content, laid out to the width it is drawn at. */
+        fun piecesOf(cell: TableCell, width: Float): List<Piece> {
+            val textWidth = (width - 2 * CELL_PADDING).toInt().coerceAtLeast(1)
+            // Numbered items restart per cell, same contiguity rule as
+            // the top-level walk.
+            val counts = ListCounts()
+            return cell.blocks.mapNotNull { held ->
+                when (held) {
+                    is Paragraph -> held.takeIf { it.text.isNotEmpty() }?.let { para ->
+                        val numbered = counts.next(para.style)
+                        val direction = para.style.direction ?: defaultDirection
+                        val paint = paintFor(para.style.kind)
+                        val text = spannable(para, numbered)
+                        tabs(text, para)
+                        Piece.Text(
+                            layout(
+                                text,
+                                paint,
+                                direction,
+                                para.style.alignment,
+                                textWidth,
+                                pitchOf(para, paint),
+                            )
+                        )
+                    }
+                    // A picture in a cell is part of the table: the logo on
+                    // a letterhead, the photo on a CV, the product beside
+                    // its price.
+                    is ImageBlock -> picture(held, textWidth.toFloat(), cursor.sheet)
+                    // A table inside a table is a stated gap.
+                    is Table -> null
+                }
+            }
+        }
+
+        /** Where a cell stands and how wide it is drawn, in the columns as laid out. */
+        fun placeOf(place: TableGrid.Filled): Pair<Float, Float> {
+            val column = placed(place.column, place.span)
+            val x = cursor.sheet.marginLeft + offsets[column]
+            val width = (column until column + place.span)
+                .sumOf { columnWidths[it].toDouble() }.toFloat()
+            return x to width
+        }
+
+        // A cell that covers several rows is drawn once, when the last of
+        // them is, its box reaching back up to the row it began in — which
+        // is where a table draws it. It has to wait, because the rows it
+        // covers are laid out one at a time and how tall they come to is
+        // not known until they are; drawn in the first of them instead, a
+        // label meant to stand beside three rows stood beside one, with
+        // whatever did not fit cut off.
+        val waiting = mutableListOf<Waiting>()
+        var onPage = cursor.ordinal
+
+        /**
+         * The cells still waiting, drawn as far as this page goes. A merge
+         * that runs off the foot of a page is two boxes, one on each, which
+         * is what a page can show of it.
+         */
+        fun drawWaiting(canvas: Canvas, upTo: Float, cells: List<Waiting> = waiting) {
+            for (held in cells) {
+                val (x, width) = held.at
+                held.cell.shadingRgb?.let { fill ->
+                    canvas.drawRect(
+                        x, held.top, x + width, upTo,
+                        Paint().apply { color = 0xFF000000.toInt() or fill },
+                    )
+                }
+                if (block.ruled) canvas.drawRect(x, held.top, x + width, upTo, border)
+                canvas.save()
+                canvas.clipRect(
+                    x + CELL_PADDING, held.top + CELL_PADDING,
+                    x + width - CELL_PADDING, upTo - CELL_PADDING,
+                )
+                canvas.translate(x + CELL_PADDING, held.top + CELL_PADDING - held.drawnTo)
+                var pieceY = 0f
+                for (piece in held.pieces) {
+                    canvas.save()
+                    canvas.translate(0f, pieceY)
+                    piece.draw(canvas)
+                    canvas.restore()
+                    pieceY += piece.height + 2f
+                }
+                canvas.restore()
+                held.drawnTo += (upTo - held.top - 2 * CELL_PADDING).coerceAtLeast(0f)
+            }
+        }
+
+        /**
+         * What a cell ending in row [rowIndex] still needs of it.
+         *
+         * The rows such a cell covers have each been as tall as their own
+         * words asked for; whatever of it they did not hold falls to the
+         * last of them, which is where a table puts it.
+         */
+        fun owedBy(rowIndex: Int): Float =
+            waiting.filter { it.lastRow <= rowIndex }
+                .maxOfOrNull { held ->
+                    (held.bottoms.lastOrNull() ?: 0f) - held.drawnTo + 2 * CELL_PADDING -
+                        (cursor.y - held.top)
+                }
+                ?.coerceAtLeast(0f) ?: 0f
+
         // One row, drawn where the cursor stands and carried over the page
         // where it is taller than what is left. [atTopOfPage] is given
         // every fresh page the row runs onto, before anything is measured
         // against what is left of it, so that something can be put back at
         // the head of it first.
-        fun band(row: List<TableGrid.Place>, atTopOfPage: () -> Unit = {}) {
+        fun band(
+            rowIndex: Int,
+            row: List<TableGrid.Place>,
+            atTopOfPage: () -> Unit = {},
+            ofTheHead: Boolean = false,
+        ) {
             // Only the places a cell begins are drawn; a covered place is
-            // the cell above still going, and an empty one is nothing.
-            val places = row.filterIsInstance<TableGrid.Filled>()
-            val cellPieces = places.map { place ->
-                val cell = place.cell
-                val start = placed(place.column, place.span)
-                val width = (start until start + place.span).sumOf { columnWidths[it].toDouble() }.toFloat()
-                val textWidth = (width - 2 * CELL_PADDING).toInt().coerceAtLeast(1)
-                // Numbered items restart per cell, same contiguity rule as
-                // the top-level walk.
-                val counts = ListCounts()
-                cell.blocks.mapNotNull { held ->
-                    when (held) {
-                        is Paragraph -> held.takeIf { it.text.isNotEmpty() }?.let { para ->
-                            val numbered = counts.next(para.style)
-                            val direction = para.style.direction ?: defaultDirection
-                            val paint = paintFor(para.style.kind)
-                            val text = spannable(para, numbered)
-                            tabs(text, para)
-                            Piece.Text(
-                                layout(
-                                    text,
-                                    paint,
-                                    direction,
-                                    para.style.alignment,
-                                    textWidth,
-                                    pitchOf(para, paint),
-                                )
-                            )
-                        }
-                        // A picture in a cell is part of the table: the
-                        // logo on a letterhead, the photo on a CV, the
-                        // product beside its price.
-                        is ImageBlock -> picture(held, textWidth.toFloat(), cursor.sheet)
-                        // A table inside a table is a stated gap.
-                        is Table -> null
-                    }
-                }
+            // the cell above still going, and an empty one is nothing. A
+            // cell that covers several rows waits for the last of them —
+            // except in the head, which is drawn again on every page the
+            // table runs onto and so has no last row to wait for.
+            val all = row.filterIsInstance<TableGrid.Filled>()
+            val places = if (ofTheHead) all else all.filter { it.rowSpan <= 1 }
+            for (place in if (ofTheHead) emptyList() else all.filter { it.rowSpan > 1 }) {
+                val (x, width) = placeOf(place)
+                val pieces = piecesOf(place.cell, width)
+                waiting += Waiting(
+                    cell = place.cell,
+                    pieces = pieces,
+                    bottoms = pieceBottoms(pieces),
+                    lastRow = rowIndex + place.rowSpan - 1,
+                    at = x to width,
+                    top = cursor.y,
+                )
             }
+            val cellPieces = places.map { piecesOf(it.cell, placeOf(it).second) }
             // The bottom edge of every line of every cell, so that a row
             // too tall for what is left of the page can be cut between
             // lines and carry on over the page instead of being drawn off
@@ -736,12 +834,27 @@ internal object PdfFileExporter {
                 val tallest = lines.indices.maxOfOrNull {
                     (lines[it].lastOrNull() ?: 0f) - drawnTo[it]
                 } ?: 0f
-                cursor.ensureRoom(tallest + 2 * CELL_PADDING)
+                // What a cell ending in this row still needs of it, so a
+                // merge that would be cut off at the foot of the page
+                // takes a fresh one and carries on there with room.
+                cursor.ensureRoom(maxOf(tallest, owedBy(rowIndex)) + 2 * CELL_PADDING)
                 atTopOfPage()
+                // A page that turned took what was waiting with it: the
+                // cells still waiting start again at the top of this one,
+                // under whatever the head put back there. The head's own
+                // rows do not say where that is — they are what is being
+                // put back — so they leave the question to the row that
+                // asked for the page.
+                if (!ofTheHead && cursor.ordinal != onPage) {
+                    onPage = cursor.ordinal
+                    for (held in waiting) held.top = cursor.y
+                }
                 val room = (cursor.remaining - 2 * CELL_PADDING).coerceAtLeast(0f)
                 val cuts = lines.indices.map { StackedLines.cut(lines[it], drawnTo[it], room) }
-                val bandHeight = (cuts.indices.maxOfOrNull { cuts[it] - drawnTo[it] } ?: 0f) +
-                    2 * CELL_PADDING
+                val bandHeight = maxOf(
+                    (cuts.indices.maxOfOrNull { cuts[it] - drawnTo[it] } ?: 0f) + 2 * CELL_PADDING,
+                    minOf(owedBy(rowIndex), cursor.remaining),
+                )
                 val canvas = cursor.canvas
                 for ((index, pieces) in cellPieces.withIndex()) {
                     val place = places[index]
@@ -785,6 +898,15 @@ internal object PdfFileExporter {
                 // Every cut moves each unfinished cell past at least one
                 // more line, so a row is always finished in the end.
                 val unfinished = lines.indices.any { StackedLines.more(lines[it], drawnTo[it]) }
+                if (!unfinished) {
+                    // The cells whose last row this was are drawn now, from
+                    // the row each began in down to here.
+                    val done = waiting.filter { it.lastRow <= rowIndex }
+                    if (done.isNotEmpty()) {
+                        drawWaiting(canvas, cursor.y, done)
+                        waiting -= done.toSet()
+                    }
+                }
                 if (unfinished) cursor.openPage()
             } while (unfinished)
         }
@@ -803,15 +925,45 @@ internal object PdfFileExporter {
             if (head.isNotEmpty() && cursor.ordinal != headOn) {
                 // Drawing the head is not itself an occasion to put the
                 // head back: it is what is being put back.
-                for (row in head) band(row)
+                for ((index, row) in head.withIndex()) band(index, row, ofTheHead = true)
                 headOn = cursor.ordinal
             }
         }
-        for (row in head) band(row)
-        headOn = cursor.ordinal
-        for (row in grid.rows.drop(head.size)) band(row, putHeadBack)
+        // A cell still waiting when a page runs out is drawn as far as
+        // that page goes and started again on the next, which is what a
+        // page can show of a merge that runs off the foot of it.
+        cursor.beforeClosing = { if (waiting.isNotEmpty()) drawWaiting(cursor.canvas, cursor.y) }
+        try {
+            for ((index, row) in head.withIndex()) band(index, row, ofTheHead = true)
+            headOn = cursor.ordinal
+            for ((index, row) in grid.rows.withIndex().drop(head.size)) band(index, row, putHeadBack)
+            // A cell whose rows the table ran out of is drawn all the same.
+            if (waiting.isNotEmpty()) {
+                drawWaiting(cursor.canvas, cursor.y)
+                waiting.clear()
+            }
+        } finally {
+            cursor.beforeClosing = null
+        }
         cursor.advance(minOf(10f, cursor.remaining))
     }
+
+    /**
+     * A cell that covers several rows, waiting for the last of them.
+     *
+     * [top] is where its box begins on the page being drawn — the row it
+     * began in, or the top of a fresh page where one turned under it —
+     * and [drawnTo] how much of its content earlier pages already showed.
+     */
+    private class Waiting(
+        val cell: TableCell,
+        val pieces: List<Piece>,
+        val bottoms: List<Float>,
+        val lastRow: Int,
+        val at: Pair<Float, Float>,
+        var top: Float,
+        var drawnTo: Float = 0f,
+    )
 
     /** Paragraph runs as styled text, with an optional plain-text list marker. */
     private fun spannable(block: Paragraph, numberedCount: Int): SpannableStringBuilder {
