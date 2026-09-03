@@ -52,7 +52,7 @@ object HtmlWriter {
         // uses are named, so a browser printing this lays each part of it
         // on the sheet that part was set on.
         val shapes = sectionShapes(document)
-        sb.append("<style>").append(CSS).append(pageCss(document.pageSetup))
+        sb.append("<style>").append(CSS).append(pageCss(document.pageSetup, defaultDirection))
             .append(sectionCss(shapes)).append("</style></head><body>\n")
 
         // The running header and footer, once each: a flowing page has no
@@ -341,7 +341,12 @@ object HtmlWriter {
         for ((index, segment) in segments.withIndex()) {
             val stop = stops.getOrNull(index - 1)
             if (index > 0 && stop != null) {
-                sb.append("""<span style="position:absolute;inset-inline-start:${pt(stop)}">""")
+                // Set on one line, as a tab stop is. Left to wrap, a long
+                // last stretch becomes two lines inside a paragraph one
+                // line tall, and the words underneath are drawn over.
+                sb.append(
+                    """<span style="position:absolute;white-space:pre;inset-inline-start:${pt(stop)}">"""
+                )
             } else if (index > 0) {
                 sb.append(" ")
             }
@@ -472,15 +477,28 @@ object HtmlWriter {
      * The source's page, when a reader measured it, as the sheet the print
      * framework lays this out on and the margins the preview keeps.
      */
-    private fun pageCss(page: PageSetup?): String {
+    private fun pageCss(page: PageSetup?, direction: TextDirection): String {
         if (page == null) return ""
         val margins = "${pt(page.marginTopPt)} ${pt(page.marginRightPt)} " +
             "${pt(page.marginBottomPt)} ${pt(page.marginLeftPt)}"
+        // A running head is set against the page and reaches into the
+        // margins as often as not — the paper this was measured on has one
+        // six points wider than its own text. Held inside the column, the
+        // end of it is simply cut off, and a reader looking at the preview
+        // sees a header with the author's name missing from it. So the head
+        // and the foot are pulled out to the edges of the sheet and their
+        // start padded back to where the text begins, which leaves the
+        // margin free for them to run into, as the page left it.
+        val start = if (direction == TextDirection.RTL) page.marginRightPt else page.marginLeftPt
+        val furniture = "header.page-header,footer.page-footer{" +
+            "margin-left:-${pt(page.marginLeftPt)};margin-right:-${pt(page.marginRightPt)};" +
+            "padding-inline-start:${pt(start)};}"
         // The margins belong to the sheet when this is printed — the app
         // prints it to make a PDF, with the framework's own margins turned
         // off — and to the body only on screen, where there is no sheet.
         // Setting both unconditionally would print every margin twice.
-        return "@page{size:${pt(page.widthPt)} ${pt(page.heightPt)};margin:$margins;}" +
+        return furniture +
+            "@page{size:${pt(page.widthPt)} ${pt(page.heightPt)};margin:$margins;}" +
             "@media screen{body{margin:$margins;}}"
     }
 

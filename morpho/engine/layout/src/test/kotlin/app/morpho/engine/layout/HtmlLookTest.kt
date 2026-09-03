@@ -48,8 +48,8 @@ class HtmlLookTest {
             )
         )
         assertTrue(html.contains("""<p style="position:relative">"""), html)
-        assertTrue(html.contains("""<span style="position:absolute;inset-inline-start:182.5pt">"""), html)
-        assertTrue(html.contains("""<span style="position:absolute;inset-inline-start:346.5pt">"""), html)
+        assertTrue(html.contains("""<span style="position:absolute;white-space:pre;inset-inline-start:182.5pt">"""), html)
+        assertTrue(html.contains("""<span style="position:absolute;white-space:pre;inset-inline-start:346.5pt">"""), html)
         assertTrue(!html.contains("\t"), "the tab character itself has no place in the markup: $html")
     }
 
@@ -75,7 +75,7 @@ class HtmlLookTest {
         )
         assertTrue(html.contains("<img"), "the head of the foot is a picture: $html")
         assertTrue(
-            html.contains("""<span style="position:absolute;inset-inline-start:443.0pt">48</span>"""),
+            html.contains("""<span style="position:absolute;white-space:pre;inset-inline-start:443.0pt">48</span>"""),
             "and the number still sits at its stop: $html",
         )
     }
