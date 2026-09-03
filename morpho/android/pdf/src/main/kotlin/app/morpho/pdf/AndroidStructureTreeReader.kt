@@ -24,6 +24,8 @@ import app.morpho.engine.layout.pdf.PageFigures
 import app.morpho.engine.layout.pdf.PageFurniture
 import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLook
+import app.morpho.engine.layout.pdf.PdfMarks
+import app.morpho.engine.layout.pdf.PdfRule
 import app.morpho.engine.layout.pdf.PdfRun
 import app.morpho.engine.layout.pdf.PdfRuns
 import app.morpho.engine.layout.pdf.PdfSlant
@@ -55,6 +57,7 @@ import com.tom_roush.pdfbox.util.Matrix
 import java.util.Collections
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 import java.util.IdentityHashMap
 
 /**
@@ -119,7 +122,7 @@ private class Placement(
 )
 
 /** A rule drawn across a page: a stroked horizontal line or a filled sliver, in top-down page points. */
-private class Rule(val y: Float, val left: Float, val right: Float)
+private class Rule(val y: Float, val left: Float, val right: Float, val thickness: Float = 0f)
 
 /**
  * What a page repeats in its margin — a running head, a footer with the
@@ -229,11 +232,16 @@ internal object AndroidStructureTreeReader {
     private const val TABLE_RULE_SHARE = 0.6f
     /** Rules across a table before it counts as one the page ruled. */
     private const val TABLE_RULES_TO_BE_RULED = 2
-    /** The characters a producer draws as a list marker. */
     /** A filled rectangle no taller than this is a rule, not a box. */
     private const val RULE_MAX_THICKNESS_PT = 4f
+    /** What a pen of no width draws: the thinnest line a page can hold. */
+    private const val HAIRLINE_PT = 0.5f
     /** A rule shorter than this is a dash or a tick, not a rule. */
     private const val RULE_MIN_LENGTH_PT = 20f
+    /** A hair shorter than this marks nothing: no word is this narrow. */
+    private const val MARK_MIN_LENGTH_PT = 3f
+    /** However many hairs a page draws, no more than this are kept to mark words by. */
+    private const val MOST_MARKS = 20_000
     /** A rule this many type sizes below a paragraph's last baseline, or above its first, belongs to it. */
     private const val RULE_REACH = 1.6f
     /** A rule nearer than this share of the type size to a baseline is that line's own underscoring. */
@@ -278,6 +286,14 @@ internal object AndroidStructureTreeReader {
     ) : PDFMarkedContentExtractor() {
         /** The rules drawn on the page outside any artifact — a running header's own do not count. */
         val rules = mutableListOf<Rule>()
+
+        /**
+         * Every horizontal hair the page drew, however short — the line
+         * under one underlined word, the stroke through a struck-out
+         * price. Too short to be rules of the page, so they are kept
+         * apart and asked only about the words they lie on.
+         */
+        val marks = mutableListOf<Rule>()
         /** The colour each glyph was painted in, where it was not the plain black a page paints with. */
         val colors = IdentityHashMap<TextPosition, Int>()
         /** Where each glyph points, for the few a link annotation covers. */
@@ -424,13 +440,13 @@ internal object AndroidStructureTreeReader {
                 val from = current
                 val to = point(operands, 0) ?: return@pathOperator
                 reaches(to)
-                if (from != null) segment(from, to)
+                if (from != null) segment(from, to, penWidth())
                 current = to
             })
             addOperator(pathOperator("h") { _ ->
                 val from = current
                 val to = subpathStart
-                if (from != null && to != null) segment(from, to)
+                if (from != null && to != null) segment(from, to, penWidth())
                 current = to
             })
             // A curve reaches wherever its points do. Its control points
@@ -460,7 +476,9 @@ internal object AndroidStructureTreeReader {
                 val top = minOf(a[1], b[1])
                 val bottom = maxOf(a[1], b[1])
                 if (bottom - top <= RULE_MAX_THICKNESS_PT) {
-                    pendingSlivers += Rule((top + bottom) / 2, minOf(a[0], b[0]), maxOf(a[0], b[0]))
+                    pendingSlivers += Rule(
+                        (top + bottom) / 2, minOf(a[0], b[0]), maxOf(a[0], b[0]), bottom - top,
+                    )
                 }
                 current = null
                 subpathStart = null
@@ -521,9 +539,26 @@ internal object AndroidStructureTreeReader {
             return floatArrayOf(p.x - box.lowerLeftX, box.upperRightY - p.y)
         }
 
-        private fun segment(from: FloatArray, to: FloatArray) {
+        private fun segment(from: FloatArray, to: FloatArray, thickness: Float) {
             if (abs(from[1] - to[1]) > 0.5f) return
-            pendingSegments += Rule((from[1] + to[1]) / 2, minOf(from[0], to[0]), maxOf(from[0], to[0]))
+            pendingSegments += Rule(
+                (from[1] + to[1]) / 2, minOf(from[0], to[0]), maxOf(from[0], to[0]), thickness,
+            )
+        }
+
+        /**
+         * How thick a stroked line is drawn, in page points: the pen's
+         * width through whatever the page is scaled by. A hairline — a
+         * width of nought, meaning the thinnest the device can draw —
+         * counts as the hair it is.
+         */
+        private fun penWidth(): Float {
+            val state = runCatching { graphicsState }.getOrNull() ?: return HAIRLINE_PT
+            val width = runCatching { state.lineWidth }.getOrNull() ?: return HAIRLINE_PT
+            if (width <= 0f) return HAIRLINE_PT
+            val ctm = runCatching { state.currentTransformationMatrix }.getOrNull() ?: return width
+            val scale = sqrt(abs(ctm.scaleX * ctm.scaleY - ctm.shearX * ctm.shearY))
+            return if (scale.isFinite() && scale > 0f) width * scale else width
         }
 
         private fun paint(strokes: Boolean, fills: Boolean) {
@@ -531,6 +566,11 @@ internal object AndroidStructureTreeReader {
             if (!inArtifact) {
                 if (strokes) rules += pendingSegments.filter { it.right - it.left >= RULE_MIN_LENGTH_PT }
                 if (fills) rules += pendingSlivers.filter { it.right - it.left >= RULE_MIN_LENGTH_PT }
+                if (marks.size < MOST_MARKS) {
+                    val painted = (if (strokes) pendingSegments else emptyList()) +
+                        (if (fills) pendingSlivers else emptyList())
+                    marks += painted.filter { it.right - it.left >= MARK_MIN_LENGTH_PT }
+                }
             } else {
                 // The furniture's own rules: kept as the boxes they cover,
                 // so the crop reaches them.
@@ -578,6 +618,9 @@ internal object AndroidStructureTreeReader {
         private val inkByPageIndex = HashMap<Int, InkBox>()
         /** The rules drawn on each page, outside its running header and footer. */
         private val rulesByPageIndex = HashMap<Int, List<Rule>>()
+
+        /** Every hair each page drew, short ones included, to mark its words by. */
+        private val marksByPageIndex = HashMap<Int, List<Rule>>()
         /**
          * The box each marked content drew rather than placed. A Figure
          * the producer tagged as one but drew with paths — how a
@@ -632,6 +675,7 @@ internal object AndroidStructureTreeReader {
                     }
                 }
                 rulesByPageIndex[index] = extractor.rules.toList()
+                marksByPageIndex[index] = extractor.marks.toList()
                 for ((mcid, box) in extractor.drawnByMcid) {
                     drawnByPageAndMcid[key(index, mcid)] = box
                 }
@@ -841,6 +885,9 @@ internal object AndroidStructureTreeReader {
             val baseline = dominantBaseline(ordered)
             val lineSize = ordered.filter { abs(it.position.yDirAdj - baseline) <= SAME_LINE_TOLERANCE_PT }
                 .maxOfOrNull { it.position.fontSizeInPt } ?: 0f
+            // Which of the page's rules are this line's own marks: the
+            // hair drawn under a term, or through a clause struck out.
+            val marking = marking(page, ordered, baseline, lineSize)
             var previous: TextPosition? = null
             // A producer that painted its spaces is trusted on where the
             // words are. Only one that painted none has its word breaks
@@ -887,7 +934,7 @@ internal object AndroidStructureTreeReader {
                         painters += null
                     }
                 }
-                val look = lookOf(position, raised(position, baseline, lineSize))
+                val look = marked(lookOf(position, raised(position, baseline, lineSize)), position, marking)
                 visual.append(unicode)
                 repeat(unicode.length) { painters += look }
                 previous = position
@@ -936,6 +983,53 @@ internal object AndroidStructureTreeReader {
                 lift < -RAISED_SHARE * lineSize -> -1
                 else -> 0
             }
+        }
+
+        /**
+         * The rules the page drew under this line's words or through them,
+         * each with what it does to them.
+         *
+         * A PDF has no underline and no strike: the producer draws a hair
+         * of a rule where the words are, and nothing in the file says what
+         * it belongs to. Where it sits against the baseline, how thick it
+         * is, and that it hugs the ink rather than running to the margins
+         * are what tell it from a paragraph's border and a table's line.
+         */
+        private fun marking(
+            page: Int,
+            ordered: List<Glyph>,
+            baseline: Float,
+            lineSize: Float,
+        ): List<Pair<PdfRule, PdfMarks.Mark>> {
+            val rules = marksByPageIndex[page].orEmpty()
+            if (rules.isEmpty() || lineSize <= 0f) return emptyList()
+            val ink = ordered.filter { !it.position.unicode.isNullOrBlank() }
+            if (ink.isEmpty()) return emptyList()
+            val left = ink.minOf { it.position.xDirAdj }
+            val right = ink.maxOf { it.position.xDirAdj + it.position.widthDirAdj }
+            return rules.mapNotNull { rule ->
+                val drawn = PdfRule(page + 1, rule.y, rule.left, rule.right, rule.thickness)
+                PdfMarks.of(drawn, baseline, lineSize, left, right)?.let { drawn to it }
+            }
+        }
+
+        /** [look], told whether any of [marking] covers the glyph [position] painted. */
+        private fun marked(
+            look: PdfLook,
+            position: TextPosition,
+            marking: List<Pair<PdfRule, PdfMarks.Mark>>,
+        ): PdfLook {
+            if (marking.isEmpty()) return look
+            val left = position.xDirAdj
+            val right = left + position.widthDirAdj
+            var underline = look.underline
+            var struck = look.struck
+            for ((rule, mark) in marking) {
+                if (!PdfMarks.covers(rule, left, right)) continue
+                if (mark == PdfMarks.Mark.UNDERLINE) underline = true else struck = true
+            }
+            return if (underline == look.underline && struck == look.struck) look
+            else look.copy(underline = underline, struck = struck)
         }
 
         private fun lookOf(position: TextPosition, raised: Int): PdfLook = PdfLook(

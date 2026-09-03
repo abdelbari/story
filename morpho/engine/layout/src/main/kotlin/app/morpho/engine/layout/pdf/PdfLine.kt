@@ -59,6 +59,14 @@ data class PdfLook(
     val link: String? = null,
     /** Packed 0xRRGGBB of the highlight drawn over the glyph, or null for none. */
     val highlightRgb: Int? = null,
+    /**
+     * Whether the page drew a line under the glyph, or through it. A PDF
+     * has no underline and no strike: a producer draws one, as a hair of
+     * a rule where the words are, and a reader that keeps only the words
+     * loses both.
+     */
+    val underline: Boolean = false,
+    val struck: Boolean = false,
 )
 
 /** A stretch of a line's text set in one look. */
@@ -126,6 +134,13 @@ data class PdfRule(
     val y: Float,
     val left: Float,
     val right: Float,
+    /**
+     * How thick the line is, in points. A hair under a word is an
+     * underline; a band as deep as the type is a colour drawn behind it,
+     * and reading that as a line struck through the words would say the
+     * document had withdrawn what it had in fact emphasised.
+     */
+    val thicknessPt: Float = 0f,
 )
 
 /**

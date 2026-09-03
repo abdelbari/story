@@ -6,6 +6,7 @@ import app.morpho.engine.layout.pdf.PdfColumns
 import app.morpho.engine.layout.pdf.PdfDrawing
 import app.morpho.engine.layout.pdf.PdfLine
 import app.morpho.engine.layout.pdf.PdfLook
+import app.morpho.engine.layout.pdf.PdfMarks
 import app.morpho.engine.layout.pdf.PdfPageSheet
 import app.morpho.engine.layout.pdf.PdfRule
 import app.morpho.engine.layout.pdf.PdfRun
@@ -177,6 +178,7 @@ internal class PositionTextStripper : PDFTextStripper() {
         paintOrder.clear()
         colors.clear()
         ruleCatcher.rules.clear()
+        ruleCatcher.marks.clear()
         paintedSoFar = 0
         links = runCatching { PageLinks(document) }.getOrNull()
         highlights = runCatching { PageHighlights(document) }.getOrNull()
@@ -190,8 +192,9 @@ internal class PositionTextStripper : PDFTextStripper() {
         // an email address starts, visually, with a Latin letter.
         val base = Bidi.directionOfLanguage(runCatching { document.documentCatalog.language }.getOrNull())
             ?: Bidi.dominantDirection(pending.joinToString(separator = "\n") { it.visual })
+        val marks = ruleCatcher.marks.groupBy { it.page }
         for (line in pending) {
-            val logical = ExtractedText.toLogical(line.visual, line.painters, base)
+            val logical = ExtractedText.toLogical(line.visual, marked(line, marks), base)
             val text = logical.text.trim()
             if (text.isEmpty()) continue
             // Trimming the text moves the run boundaries with it.
@@ -209,6 +212,42 @@ internal class PositionTextStripper : PDFTextStripper() {
         }
         pending.clear()
         return captured.toList()
+    }
+
+    /**
+     * [line]'s glyphs, each told whether the page drew a line under it or
+     * through it.
+     *
+     * The rules are known only once the page has been read — a producer
+     * may draw them before its text or after it — so this runs at the end
+     * rather than as each glyph is measured, which is where the look of a
+     * glyph is otherwise settled.
+     */
+    private fun marked(line: PendingLine, byPage: Map<Int, List<PdfRule>>): List<PdfLook?> {
+        val rules = byPage[line.page] ?: return line.painters
+        val ink = line.visual.indices.filter { !line.visual[it].isWhitespace() }
+        if (ink.isEmpty()) return line.painters
+        val inkLeft = ink.minOf { line.starts[it] }
+        val inkRight = ink.maxOf { line.ends[it] }
+        // Every rule that marks this line at all, before any glyph is
+        // asked about: a page of rules is otherwise walked once per glyph.
+        val marking = rules.mapNotNull { rule ->
+            PdfMarks.of(rule, line.baselineY, line.maxFontSize, inkLeft, inkRight)?.let { rule to it }
+        }
+        if (marking.isEmpty()) return line.painters
+        return line.painters.mapIndexed { index, look ->
+            if (look == null) return@mapIndexed null
+            val left = line.starts[index]
+            val right = line.ends[index]
+            var underline = look.underline
+            var struck = look.struck
+            for ((rule, mark) in marking) {
+                if (!PdfMarks.covers(rule, left, right)) continue
+                if (mark == PdfMarks.Mark.UNDERLINE) underline = true else struck = true
+            }
+            if (underline == look.underline && struck == look.struck) look
+            else look.copy(underline = underline, struck = struck)
+        }
     }
 
     /** The rules drawn on the pages of the last [capture]. */

@@ -9,6 +9,8 @@ object PdfRuns {
         text = text,
         bold = look?.bold ?: false,
         italic = look?.italic ?: false,
+        underline = look?.underline ?: false,
+        strikethrough = look?.struck ?: false,
         fontFamily = look?.fontFamily,
         fontSizePt = look?.fontSizePt?.takeIf { it > 0f },
         superscript = look?.raised == 1,
@@ -58,15 +60,17 @@ object PdfRuns {
      * the page itself does not draw.
      *
      * What a space does show is kept: it takes its width from its size, a
-     * highlight paints across it, a link underlines it, and a raised one
-     * sits off the line. A stretch differing in any of those is a run of
-     * its own.
+     * highlight paints across it, a link underlines it, a rule drawn under
+     * or through the words carries on across it, and a raised one sits off
+     * the line. A stretch differing in any of those is a run of its own.
      */
     private fun showsNothing(current: PdfLook?, look: PdfLook?): Boolean {
         if (current == null || look == null) return false
         return current.fontSizePt == look.fontSizePt &&
             current.highlightRgb == look.highlightRgb &&
             current.link == look.link &&
+            current.underline == look.underline &&
+            current.struck == look.struck &&
             current.raised == look.raised
     }
 }

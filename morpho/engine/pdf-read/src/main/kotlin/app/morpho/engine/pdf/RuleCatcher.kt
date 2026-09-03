@@ -37,10 +37,28 @@ internal class RuleCatcher(private val page: () -> PDPage?, private val pageNumb
     /** Shorter than this and a line is a tick or a hyphen, not a rule. */
     private val minLengthPt = 20f
 
+    /** Shorter than this and a hair marks nothing: no word is this narrow. */
+    private val minMarkLengthPt = 3f
+
+    /** However many hairs a page draws, no more than this are kept to mark words by. */
+    private val mostMarks = 20_000
+
     /** Off horizontal by more than this and a line is a slope, not a rule. */
     private val levelPt = 0.5f
 
+    /** What a pen of no width draws: the thinnest line a page can hold. */
+    private val HAIRLINE_PT = 0.5f
+
     val rules = mutableListOf<PdfRule>()
+
+    /**
+     * Every horizontal hair the page drew, however short — the line under
+     * one underlined word, the stroke through a struck-out price. These
+     * are too short to be rules of the page and would confuse a table's
+     * reading, so they are kept apart and asked only about the words they
+     * lie on.
+     */
+    val marks = mutableListOf<PdfRule>()
 
     /** The box every painted path covered, rules among them. */
     val drawings = mutableListOf<PdfDrawing>()
@@ -77,13 +95,13 @@ internal class RuleCatcher(private val page: () -> PDPage?, private val pageNumb
             val from = current
             val to = point(engine, operands, 0) ?: return@operator
             reaches(to)
-            if (from != null) segment(from, to)
+            if (from != null) segment(from, to, penWidth(engine))
             current = to
         })
         engine.addOperator(operator("h") { _ ->
             val from = current
             val to = subpathStart
-            if (from != null && to != null) segment(from, to)
+            if (from != null && to != null) segment(from, to, penWidth(engine))
             current = to
         })
         engine.addOperator(operator("re") { operands ->
@@ -99,7 +117,10 @@ internal class RuleCatcher(private val page: () -> PDPage?, private val pageNumb
             val top = minOf(a[1], b[1])
             val bottom = maxOf(a[1], b[1])
             if (bottom - top <= maxThicknessPt) {
-                pendingSlivers += rule((top + bottom) / 2, minOf(a[0], b[0]), maxOf(a[0], b[0]))
+                pendingSlivers += rule(
+                    (top + bottom) / 2, minOf(a[0], b[0]), maxOf(a[0], b[0]),
+                    thickness = bottom - top,
+                )
             }
             current = null
             subpathStart = null
@@ -132,7 +153,23 @@ internal class RuleCatcher(private val page: () -> PDPage?, private val pageNumb
         override fun process(operator: Operator, operands: List<COSBase>) = body(operands)
     }
 
-    private fun rule(y: Float, left: Float, right: Float) = PdfRule(pageNumber(), y, left, right)
+    private fun rule(y: Float, left: Float, right: Float, thickness: Float) =
+        PdfRule(pageNumber(), y, left, right, thickness)
+
+    /**
+     * How thick a stroked line is drawn, in page points: the pen's width
+     * through whatever the page is scaled by. A hairline — a width of
+     * nought, which means the thinnest the device can draw — counts as
+     * the hair it is.
+     */
+    private fun penWidth(engine: PDFStreamEngine): Float {
+        val state = runCatching { engine.graphicsState }.getOrNull() ?: return HAIRLINE_PT
+        val width = runCatching { state.lineWidth }.getOrNull() ?: return HAIRLINE_PT
+        if (width <= 0f) return HAIRLINE_PT
+        val ctm = runCatching { state.currentTransformationMatrix }.getOrNull() ?: return width
+        val scale = kotlin.math.sqrt(abs(ctm.scaleX * ctm.scaleY - ctm.shearX * ctm.shearY))
+        return if (scale.isFinite() && scale > 0f) width * scale else width
+    }
 
     private fun number(operand: COSBase): Float? = (operand as? COSNumber)?.floatValue()
 
@@ -154,14 +191,21 @@ internal class RuleCatcher(private val page: () -> PDPage?, private val pageNumb
         )
     }
 
-    private fun segment(from: FloatArray, to: FloatArray) {
+    private fun segment(from: FloatArray, to: FloatArray, thickness: Float) {
         if (abs(from[1] - to[1]) > levelPt) return
-        pendingSegments += rule((from[1] + to[1]) / 2, minOf(from[0], to[0]), maxOf(from[0], to[0]))
+        pendingSegments += rule(
+            (from[1] + to[1]) / 2, minOf(from[0], to[0]), maxOf(from[0], to[0]), thickness,
+        )
     }
 
     private fun paint(strokes: Boolean, fills: Boolean) {
         if (strokes) rules += pendingSegments.filter { it.right - it.left >= minLengthPt }
         if (fills) rules += pendingSlivers.filter { it.right - it.left >= minLengthPt }
+        if (marks.size < mostMarks) {
+            val painted = (if (strokes) pendingSegments else emptyList()) +
+                (if (fills) pendingSlivers else emptyList())
+            marks += painted.filter { it.right - it.left >= minMarkLengthPt }
+        }
         // A path that was painted covered what it covered, whether or not
         // any of it was a rule. A path merely closed off — the "n" that
         // sets a clip and draws nothing — covered nothing.
