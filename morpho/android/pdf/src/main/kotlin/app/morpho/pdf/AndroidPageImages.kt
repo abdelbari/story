@@ -56,16 +56,24 @@ internal object AndroidPageImages {
     ): PageFurniture.Cropped? {
         if (right - left < 1f || bottom - top < 1f) return null
         return runCatching {
-            val page = PDFRenderer(document).renderImage(pageIndex, SCALE)
-            try {
-                val x = (left * SCALE).roundToInt().coerceIn(0, page.width - 1)
-                val y = (top * SCALE).roundToInt().coerceIn(0, page.height - 1)
-                val w = ((right - left) * SCALE).roundToInt().coerceIn(1, page.width - x)
-                val h = ((bottom - top) * SCALE).roundToInt().coerceIn(1, page.height - y)
-                val crop = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val sheet = sheetPixels(document, pageIndex) ?: return@runCatching null
+            val x = (left * SCALE).roundToInt().coerceIn(0, sheet[0] - 1)
+            val y = (top * SCALE).roundToInt().coerceIn(0, sheet[1] - 1)
+            val w = ((right - left) * SCALE).roundToInt().coerceIn(1, sheet[0] - x)
+            val h = ((bottom - top) * SCALE).roundToInt().coerceIn(1, sheet[1] - y)
+            val crop = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            run {
                 val canvas = Canvas(crop)
                 canvas.drawColor(Color.WHITE)
-                canvas.drawBitmap(page, -x.toFloat(), -y.toFloat(), null)
+                // The band is drawn, not the page. A whole sheet at this
+                // resolution is eighteen megabytes, and a head and a foot
+                // want two of them; a phone that runs out of room for that
+                // answers with no running head at all, which is the one
+                // answer a reader cannot make sense of.
+                canvas.save()
+                canvas.translate(-x.toFloat(), -y.toFloat())
+                PDFRenderer(document).renderPageToGraphics(pageIndex, Paint(), canvas, SCALE)
+                canvas.restore()
                 val white = Paint().apply {
                     color = Color.WHITE
                     style = Paint.Style.FILL
@@ -111,10 +119,24 @@ internal object AndroidPageImages {
                     right = left + (kept[2] + 1) / SCALE,
                     bottom = top + (kept[3] + 1) / SCALE,
                 )
-            } finally {
-                page.recycle()
             }
         }.getOrNull()
+    }
+
+    /**
+     * How wide and how tall the page would be if it were drawn whole, in
+     * pixels — what the band's own box is clamped against, since the band
+     * is all that is ever drawn. A turned page measures across what it is
+     * read across, which is the way round the text was read in too.
+     */
+    private fun sheetPixels(document: PDDocument, pageIndex: Int): IntArray? {
+        if (pageIndex < 0 || pageIndex >= document.numberOfPages) return null
+        val page = document.getPage(pageIndex)
+        val box = page.cropBox
+        val turned = page.rotation == 90 || page.rotation == 270
+        val width = ((if (turned) box.height else box.width) * SCALE).roundToInt()
+        val height = ((if (turned) box.width else box.height) * SCALE).roundToInt()
+        return if (width < 1 || height < 1) null else intArrayOf(width, height)
     }
 
     /**

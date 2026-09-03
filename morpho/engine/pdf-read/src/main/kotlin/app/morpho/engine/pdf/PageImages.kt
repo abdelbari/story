@@ -51,15 +51,29 @@ internal object PageImages {
     ): PageFurniture.Cropped? {
         if (right - left < 1f || bottom - top < 1f) return null
         return runCatching {
-            val page = PDFRenderer(document).renderImage(pageIndex, SCALE)
-            val x = (left * SCALE).roundToInt().coerceIn(0, page.width - 1)
-            val y = (top * SCALE).roundToInt().coerceIn(0, page.height - 1)
-            val w = ((right - left) * SCALE).roundToInt().coerceIn(1, page.width - x)
-            val h = ((bottom - top) * SCALE).roundToInt().coerceIn(1, page.height - y)
+            val sheet = sheetPixels(document, pageIndex) ?: return@runCatching null
+            val x = (left * SCALE).roundToInt().coerceIn(0, sheet[0] - 1)
+            val y = (top * SCALE).roundToInt().coerceIn(0, sheet[1] - 1)
+            val w = ((right - left) * SCALE).roundToInt().coerceIn(1, sheet[0] - x)
+            val h = ((bottom - top) * SCALE).roundToInt().coerceIn(1, sheet[1] - y)
             val crop = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
             val graphics = crop.createGraphics()
             try {
-                graphics.drawImage(page.getSubimage(x, y, w, h), 0, 0, null)
+                graphics.color = Color.WHITE
+                graphics.fillRect(0, 0, w, h)
+                // The band is drawn, not the page. A whole sheet at this
+                // resolution is eighteen megabytes, and a head and a foot
+                // want two of them; a phone that runs out of room for that
+                // answers with no running head at all, which is the one
+                // answer a reader cannot make sense of.
+                graphics.translate(-x, -y)
+                // The renderer clears the page before drawing it, with the
+                // background this was given: unset, that is a transparent
+                // black which on an opaque image is simply black, and a
+                // header came back as a black strip with its rules on it.
+                graphics.background = Color.WHITE
+                PDFRenderer(document).renderPageToGraphics(pageIndex, graphics, SCALE)
+                graphics.translate(x, y)
                 graphics.color = Color.WHITE
                 for (mask in masks) {
                     val mx = ((mask[0] - left) * SCALE).roundToInt()
@@ -95,6 +109,22 @@ internal object PageImages {
                 bottom = top + (kept[3] + 1) / SCALE,
             )
         }.getOrNull()
+    }
+
+    /**
+     * How wide and how tall the page would be if it were drawn whole, in
+     * pixels — what the band's own box is clamped against, since the band
+     * is all that is ever drawn. A turned page measures across what it is
+     * read across, which is the way round the text was read in too.
+     */
+    private fun sheetPixels(document: PDDocument, pageIndex: Int): IntArray? {
+        if (pageIndex < 0 || pageIndex >= document.numberOfPages) return null
+        val page = document.getPage(pageIndex)
+        val box = page.cropBox
+        val turned = page.rotation == 90 || page.rotation == 270
+        val width = ((if (turned) box.height else box.width) * SCALE).roundToInt()
+        val height = ((if (turned) box.width else box.height) * SCALE).roundToInt()
+        return if (width < 1 || height < 1) null else intArrayOf(width, height)
     }
 
     /**
