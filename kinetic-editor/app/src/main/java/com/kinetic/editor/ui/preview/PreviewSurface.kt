@@ -25,6 +25,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
@@ -147,9 +148,12 @@ private fun PipLayer(engine: PreviewEngine, viewport: TimelineViewportState) {
                     },
                     onRelease = { engine.detachOverlayTexture(overlay.trackId) },
                     modifier = Modifier
-                        .fillMaxSize()
                         // On the box itself, so the rotation pivots on the box's centre.
-                        .rotate(pip.rotationDeg)
+                        // Negated: media3 specifies overlay rotation counter-clockwise,
+                        // Compose rotates clockwise, and a preview that turns the
+                        // opposite way from the render is worse than none.
+                        .fillMaxSize()
+                        .rotate(-pip.rotationDeg)
                         // Between clips the slave player sits paused on its last frame: hide it.
                         .alpha(if (window != null) 1f else 0f),
                 )
@@ -219,17 +223,24 @@ private fun PreviewOverlayLayer(
                     if (timeMs !in p) continue
                     val spec = p.clip.sticker ?: continue
                     val bmp = stickerCache[spec.assetPath] ?: continue
+                    // Width is the requested fraction of the frame, height follows
+                    // the asset's proportions — the same size the export's
+                    // canvas-relative scale produces. See OverlayFactory.
                     val w = size.width * spec.scale
                     val h = w * bmp.height / bmp.width
                     val cx = (spec.anchorX * 0.5f + 0.5f) * size.width
                     val cy = (-spec.anchorY * 0.5f + 0.5f) * size.height
-                    drawImage(
-                        bmp,
-                        srcOffset = IntOffset.Zero,
-                        srcSize = IntSize(bmp.width, bmp.height),
-                        dstOffset = IntOffset((cx - w / 2).toInt(), (cy - h / 2).toInt()),
-                        dstSize = IntSize(w.toInt(), h.toInt()),
-                    )
+                    // Negated for the same reason as the PiP box above: media3
+                    // rotates overlays counter-clockwise, Compose clockwise.
+                    rotate(-spec.rotationDeg, pivot = Offset(cx, cy)) {
+                        drawImage(
+                            bmp,
+                            srcOffset = IntOffset.Zero,
+                            srcSize = IntSize(bmp.width, bmp.height),
+                            dstOffset = IntOffset((cx - w / 2).toInt(), (cy - h / 2).toInt()),
+                            dstSize = IntSize(w.toInt(), h.toInt()),
+                        )
+                    }
                 }
 
                 else -> Unit

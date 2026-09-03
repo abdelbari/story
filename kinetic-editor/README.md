@@ -239,6 +239,9 @@ during pinch-zoom. Instead:
   sequence sets its own `experimentalSetForceAudioTrack` (and the PiP ones
   `experimentalSetForceVideoTrack`): a sequence that opens with a gap, or with
   an item lacking a track that later items carry, fails the export without it.
+- Overlay rotation is specified **counter-clockwise** by media3 and clockwise
+  by Compose, so every preview rotation is negated against its export value.
+  A preview that turns the opposite way from the render is worse than none.
 - TEXT/STICKER tracks → one composition-level `OverlayEffect` with
   alpha-gated, fade-edged windows (composition time == timeline time). Sticker
   scale is folded with the canvas width so it, too, means "fraction of the
