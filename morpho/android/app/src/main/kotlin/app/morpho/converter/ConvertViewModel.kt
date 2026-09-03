@@ -288,6 +288,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         lastWriter = null
         pdfPassword = ""
         pdfPages = null
+        wantsMarkdown = false
         editedBlocks.clear()
         _review.value = null
 
@@ -332,7 +333,15 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         startConversion(asMarkdown = true, again = ::convertToMarkdown)
     }
 
+    /**
+     * Which of the two a picked PDF was asked for. A scan is found out
+     * only after a conversion has been tried, and the reader who asked
+     * for Markdown asked for Markdown either way.
+     */
+    private var wantsMarkdown = false
+
     private fun startConversion(asMarkdown: Boolean, again: () -> Unit) {
+        wantsMarkdown = asMarkdown
         // Two taps inside one frame would otherwise start two conversions
         // at once, for no benefit and to the user's confusion.
         if (_state.value is ConvertUiState.Converting) return
@@ -464,9 +473,10 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * Scanned PDF → on-device OCR (Tesseract, Arabic+English) → Word. Slow
-     * by nature — pages render to bitmaps and get recognized one by one —
-     * but never leaves the device.
+     * Scanned PDF → on-device OCR (Tesseract, Arabic+English) → Word, or
+     * to Markdown where that is what was asked for before the file turned
+     * out to be a scan. Slow by nature — pages render to bitmaps and get
+     * recognized one by one — but never leaves the device.
      */
     fun convertWithOcr() {
         // Two taps inside one frame would otherwise start two conversions
@@ -480,7 +490,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         val epoch = pickEpoch
         viewModelScope.launch(Dispatchers.IO) {
             convertPicked(
-                epoch, uri, source, "docx", DocxWriter.MIME_TYPE,
+                epoch, uri, source,
+                if (wantsMarkdown) "md" else "docx",
+                if (wantsMarkdown) MARKDOWN_MIME else DocxWriter.MIME_TYPE,
                 read = { bytes ->
                     val model = AndroidOcrReader(getApplication()).recognize(
                         bytes = bytes,
@@ -500,7 +512,10 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                     if (!recognized) throw UnconvertibleContent(FailReason.OCR_EMPTY)
                     model
                 },
-                write = { model -> DocxWriter.toByteArray(model) },
+                write = { model ->
+                    if (wantsMarkdown) MarkdownWriter.write(model).toByteArray(Charsets.UTF_8)
+                    else DocxWriter.toByteArray(model)
+                },
             )
         }
     }
