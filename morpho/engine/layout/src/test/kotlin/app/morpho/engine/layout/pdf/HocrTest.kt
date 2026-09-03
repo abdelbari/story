@@ -341,8 +341,18 @@ class HocrTest {
         )
         val lines = RecognizedText.linesOf(words)
         assertEquals(listOf("Introduction", "The form in", "research."), lines.map { it.text })
-        assertEquals(pt(56f), lines[0].maxFontSize, 0.001f)
-        assertEquals(pt(30f), lines[1].maxFontSize, 0.001f)
+        // The sizes are anchored on the document's body rather than left
+        // in the units recognition measured, so the two body lines land on
+        // the body size and the heading keeps its ratio to them: 56 to 30
+        // in the image, 22.5 to 12 on the page.
+        assertEquals(22.5f, lines[0].maxFontSize, 0.001f)
+        assertEquals(12f, lines[1].maxFontSize, 0.001f)
+        assertEquals(
+            56f / 30f,
+            lines[0].maxFontSize / lines[1].maxFontSize,
+            0.02f,
+            "the scale recognition measured did not survive being anchored",
+        )
         assertEquals(pt(200f), lines[1].x, 0.001f)
         assertEquals(pt(442f), lines[1].xEnd, 0.001f)
         assertEquals(

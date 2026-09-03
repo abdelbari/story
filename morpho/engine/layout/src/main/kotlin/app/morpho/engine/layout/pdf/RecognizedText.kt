@@ -1,5 +1,8 @@
 package app.morpho.engine.layout.pdf
 
+import app.morpho.engine.layout.ParagraphKind
+import app.morpho.engine.layout.TypeScale
+
 /**
  * A word recognition found, and the box it sat in on the page.
  *
@@ -66,12 +69,11 @@ object RecognizedText {
      * better than anything downstream could work out again.
      */
     fun linesOf(words: List<RecognizedWord>): List<PdfLine> {
-        val out = mutableListOf<PdfLine>()
+        val out = mutableListOf<List<RecognizedWord>>()
         var run = mutableListOf<RecognizedWord>()
 
         fun flush() {
-            val line = lineOf(run)
-            if (line != null) out += line
+            if (run.isNotEmpty()) out += run
             run = mutableListOf()
         }
 
@@ -84,15 +86,77 @@ object RecognizedText {
             run += word
         }
         flush()
-        return out
+        val inks = out.map(::sizeOf)
+        val rescue = rescueOf(inks)
+        return out.mapIndexedNotNull { at, line -> lineOf(line, pointsOf(inks[at] * rescue)) }
     }
 
-    /** One line, or null where nothing in [words] is worth a line. */
-    private fun lineOf(words: List<RecognizedWord>): PdfLine? {
+    /**
+     * What every measurement of the document has to be scaled by first.
+     *
+     * One, nearly always. [INK_SHARE] is a fact about how type is drawn,
+     * not a fit to anything, so the sizes it gives are the document's own
+     * — but a recogniser that measured something other than the ink would
+     * put every size of the document out together, and there is no real
+     * scan in this project to prove one against. The sign of it is a body
+     * that is not a size a body is ever set in: no paper is set in six
+     * points, and none in thirty.
+     *
+     * Where that happens the document's own middle is put at the size this
+     * converter sets a body at. Every ratio between its sizes survives —
+     * a title is still twice its body — and what is given up is the claim
+     * to know what the original measured, which in that case was never
+     * worth anything.
+     */
+    private fun rescueOf(inks: List<Float>): Float {
+        val body = HeadingSizes.median(inks.filter { it > 0f }) / INK_SHARE
+        if (body <= 0f || body in LEAST_BODY..MOST_BODY) return 1f
+        return TypeScale.sizePt(ParagraphKind.BODY) / body
+    }
+
+    /** Below this, nothing is a document's body text. */
+    private const val LEAST_BODY = 8f
+
+    /** And above it, nothing is either. */
+    private const val MOST_BODY = 18f
+
+    /**
+     * Of a typeface's point size, the share its ink actually covers.
+     *
+     * What recognition measures is the ink: the top of the ascenders to
+     * the foot of the descenders, which is what its own estimate of a
+     * line's type reports. That is not a point size. A point size is the
+     * body the type is cast on, and a typeface is drawn so its ascenders
+     * and descenders together fill about nine tenths of it — a face that
+     * filled its body would set solid, with no room between the lines, so
+     * a text face outside about 0.85 to 1.0 is unusual.
+     *
+     * So the point size is what recognition measured divided by this. It
+     * is a fact about how type is drawn rather than a number fitted to one
+     * document, which matters because there is only one real scan to fit
+     * to. On the paper this project was built for, whose sizes the PDF
+     * itself spells out as 6, 11, 12 and 15 points, it gives 6, 10, 12 and
+     * 14.5 — the document's own scale, back to within a point, where
+     * before every run of a scan came out with no size at all and a title
+     * converted at the size of a footnote.
+     */
+    const val INK_SHARE = 0.9f
+
+    /** [ink] as a point size, to the half point Word keeps sizes in. */
+    private fun pointsOf(ink: Float): Float =
+        (kotlin.math.round(ink / INK_SHARE * 2f) / 2f).coerceIn(LEAST_POINTS, MOST_POINTS)
+
+    /** Smaller than this is not type a reader could be meant to read. */
+    private const val LEAST_POINTS = 4f
+
+    /** Larger than this is a measurement that has gone wrong, not a heading. */
+    private const val MOST_POINTS = 96f
+
+    /** One line set in [size], or null where nothing in [words] is worth a line. */
+    private fun lineOf(words: List<RecognizedWord>, size: Float): PdfLine? {
         if (words.isEmpty()) return null
         val text = words.joinToString(" ") { it.text }
         if (text.isBlank()) return null
-        val looked = words.any { it.bold || it.italic }
         return PdfLine(
             text = text,
             x = words.minOf { it.left },
@@ -101,27 +165,34 @@ object RecognizedText {
             // about the same amount, and what the reading does with this
             // is compare lines with each other.
             baselineY = words.maxOf { it.bottom },
-            maxFontSize = sizeOf(words),
+            maxFontSize = size,
             page = words.first().page,
             xEnd = words.maxOf { it.right },
             // One segment a word, which is what a table's columns are
             // found from: the gaps between them across a run of lines.
             segments = words.map { PdfSegment(it.text, it.left, it.right) },
-            // Runs only where recognition said something about the type.
-            // Empty means "nothing was captured", which is not the same
-            // as "every word is plain", and the reading treats them
-            // differently.
-            runs = if (!looked) emptyList() else words.mapIndexed { at, word ->
+            // Every word carries the size its line was measured at, so a
+            // scanned paper's footnotes come out small and its title
+            // large. Recognition can name no typeface — the fast models
+            // report no font at all — so none is claimed, and the reader
+            // gets the converter's own rather than a guess at the
+            // original's.
+            runs = words.mapIndexed { at, word ->
                 PdfRun(
                     text = word.text + if (at < words.size - 1) " " else "",
-                    look = PdfLook(bold = word.bold, italic = word.italic),
+                    look = PdfLook(fontSizePt = size, bold = word.bold, italic = word.italic),
                 )
             },
         )
     }
 
     /**
-     * How big the type of a line is, from the boxes its words came in.
+     * How big the type of a line is, as recognition measured it.
+     *
+     * The answer is in the units recognition works in, which are the
+     * pixels of the image turned into points at the resolution the page
+     * was rendered. That is the ink, not the point size type is cast on;
+     * [INK_SHARE] is what turns one into the other.
      *
      * A word's box is as tall as the tallest thing in it, so "man" boxes
      * at about half the height of "Tagged" in the same type — near enough

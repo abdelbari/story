@@ -94,23 +94,130 @@ class RecognizedTextTest {
     fun `the size of a line is the tallest word that is more than one letter`() {
         // A word's box is as tall as the tallest thing in it, so a lone
         // "l" or a full stop is all extreme and would decide the answer
-        // on a short line.
+        // on a short line. The two body lines here are ten tall and the
+        // third is twenty, so the body sets the scale and the third comes
+        // back at twice it — a lone tall letter on a body line must not
+        // make that line a heading.
         val lines = RecognizedText.linesOf(
             listOf(
                 word("l", 72f, 90f, 75f, 112f, startsLine = true),
-                word("man", 80f, 100f, 110f, 112f),
-                word("Tagged", 114f, 96f, 160f, 116f),
+                word("man", 80f, 102f, 110f, 112f),
+                word("body", 72f, 122f, 110f, 132f, startsLine = true),
+                word("text", 114f, 122f, 150f, 132f),
+                word("Tagged", 72f, 146f, 160f, 166f, startsLine = true),
             )
         )
-        assertEquals(20f, lines[0].maxFontSize, "the tallest real word is 20 tall")
+        assertEquals(11f, lines[0].maxFontSize, "a lone tall letter decided a body line")
+        assertEquals(11f, lines[1].maxFontSize)
+        assertEquals(22f, lines[2].maxFontSize, "a line of twice the ink is twice the type")
     }
 
     @Test
     fun `a line of nothing but single letters is still measured`() {
         val lines = RecognizedText.linesOf(
-            listOf(word("A", 72f, 100f, 84f, 118f, startsLine = true))
+            listOf(
+                word("A", 72f, 100f, 84f, 118f, startsLine = true),
+                word("ordinary", 72f, 130f, 150f, 139f, startsLine = true),
+                word("ordinary", 72f, 150f, 150f, 159f, startsLine = true),
+            )
         )
-        assertEquals(18f, lines[0].maxFontSize)
+        assertEquals(10f, lines[1].maxFontSize, "an ordinary line reads as ordinary type")
+        assertEquals(20f, lines[0].maxFontSize, "a line of one letter is measured, not skipped")
+    }
+
+    @Test
+    fun `the ink a line covers is read as the point size it was set in`() {
+        // Recognition measures the ink — the top of the ascenders to the
+        // foot of the descenders — and that is not a point size. A point
+        // size is the body the type is cast on, and a typeface fills about
+        // nine tenths of it, so nine tenths is what turns one into the
+        // other.
+        fun page(inks: List<Float>) = RecognizedText.linesOf(
+            inks.mapIndexed { at, ink ->
+                word("line$at", 72f, at * 40f, 300f, at * 40f + ink, startsLine = true)
+            }
+        ).map { it.maxFontSize }
+
+        // 10.8 points of ink is a line set in 12, which is what a 12-point
+        // line of an ordinary text face really measures.
+        assertEquals(listOf(12f), page(listOf(10.8f)))
+        assertEquals(listOf(9f, 12f, 16f), page(listOf(8.1f, 10.8f, 14.4f)))
+        // The ratios recognition measured survive the conversion, because
+        // it is one multiplication and not a fit to anything.
+        val scale = page(listOf(5.4f, 10.8f, 21.6f))
+        assertEquals(listOf(6f, 12f, 24f), scale)
+        assertEquals(2f, scale[1] / scale[0], 0.001f)
+        assertEquals(2f, scale[2] / scale[1], 0.001f)
+    }
+
+    @Test
+    fun `a measurement that has gone wrong is not written as a size`() {
+        // Nothing a page could be set in is a fortieth of a point or a
+        // foot tall, and a run Word is asked to set at either is a
+        // document that will not open the same way twice.
+        val lines = RecognizedText.linesOf(
+            listOf(
+                word("tiny", 72f, 100f, 90f, 100.02f, startsLine = true),
+                word("ordinary", 72f, 120f, 200f, 130.8f, startsLine = true),
+                word("ordinary", 72f, 140f, 200f, 150.8f, startsLine = true),
+                word("ordinary", 72f, 160f, 200f, 170.8f, startsLine = true),
+                word("vast", 72f, 200f, 300f, 1400f, startsLine = true),
+            )
+        )
+        assertEquals(listOf(4f, 12f, 12f, 12f, 96f), lines.map { it.maxFontSize })
+    }
+
+    @Test
+    fun `a document measured in something other than ink is put back on its feet`() {
+        // The point size comes from a fact about how type is drawn, so it
+        // needs no document to calibrate it — but a recogniser that
+        // measured something else would put every size of a document out
+        // together, and there is no real scan here to prove one against.
+        // A body of two points is the sign of it. The document's middle
+        // then goes to the size a body is set at, and the scale it was
+        // written in survives whole.
+        val lines = RecognizedText.linesOf(
+            listOf(
+                word("title", 72f, 100f, 300f, 112f, startsLine = true),
+                word("body", 72f, 120f, 200f, 126f, startsLine = true),
+                word("body", 72f, 140f, 200f, 146f, startsLine = true),
+                word("small", 72f, 160f, 200f, 163f, startsLine = true),
+            )
+        )
+        assertEquals(listOf(24f, 12f, 12f, 6f), lines.map { it.maxFontSize })
+    }
+
+    @Test
+    fun `every word of a scanned line carries the size its line was set in`() {
+        // Without this a scanned paper's title and its footnotes both
+        // convert at the size of its body, which is what a reader sees
+        // first and what "no sizes" meant.
+        val lines = RecognizedText.linesOf(
+            listOf(
+                word("Introduction", 72f, 100f, 300f, 120f, startsLine = true),
+                word("The", 72f, 140f, 100f, 150f, startsLine = true),
+                word("body.", 104f, 140f, 150f, 150f),
+                word("also", 72f, 170f, 110f, 180f, startsLine = true),
+                word("body.", 114f, 170f, 160f, 180f),
+            )
+        )
+        assertEquals(listOf(22f, 11f, 11f), lines.map { it.maxFontSize })
+        for (line in lines) {
+            assertEquals(
+                List(line.segments.size) { line.maxFontSize },
+                line.runs.map { it.look?.fontSizePt },
+                "\"${line.text}\" did not carry its size onto its words",
+            )
+            assertEquals(
+                line.text,
+                line.runs.joinToString("") { it.text }.trimEnd(),
+                "the runs of a line have to be the line",
+            )
+        }
+        assertTrue(
+            lines.all { it.runs.all { run -> run.look?.fontFamily == null } },
+            "recognition can name no typeface, so none may be claimed",
+        )
     }
 
     @Test
