@@ -230,7 +230,13 @@ object HtmlWriter {
             }
         }
         val styleAttr = if (styles.isEmpty()) "" else """ style="${styles.joinToString(";")}""""
-        sb.append("<").append(tag).append(classAttr).append(dirAttr).append(styleAttr).append(">")
+        // The first name this place answers to becomes the anchor a
+        // contents page jumps to, so the preview's contents page works
+        // the way the document's does.
+        val idAttr = paragraph.bookmarks.firstNotNullOfOrNull(::anchorId)
+            ?.let { """ id="$it"""" }
+            .orEmpty()
+        sb.append("<").append(tag).append(classAttr).append(idAttr).append(dirAttr).append(styleAttr).append(">")
         val stops = paragraph.style.tabStopsPt?.filter { it > 0f }?.sorted().orEmpty()
         if (stops.isNotEmpty() && paragraph.runs.any { '\t' in it.text }) {
             appendTabbed(sb, paragraph.runs, stops, effective)
@@ -316,7 +322,17 @@ object HtmlWriter {
         // A link the source carried: the preview is a page, so it behaves
         // like one. The look stays the run's own — an address a document
         // prints in black stays black.
-        run.link?.let { html = "<a href=\"${escape(it)}\">$html</a>" }
+        run.link?.let { target ->
+            // A link into the document reaches a place in this same page,
+            // by the name that place was given; one that leaves it is
+            // written as it stands.
+            val href = if (target.startsWith("#")) {
+                anchorId(target.removePrefix("#"))?.let { "#$it" }
+            } else {
+                escape(target)
+            }
+            if (href != null) html = "<a href=\"$href\">$html</a>"
+        }
         // A mark that carries a note leads to it: HTML has no notes of its
         // own, so they are gathered at the end, as a printed page gathers
         // endnotes, and the mark is what takes a reader there.
@@ -325,6 +341,17 @@ object HtmlWriter {
         }
         sb.append(html)
     }
+
+    /**
+     * [name] as an id this page can carry and a link can reach: one word,
+     * and the same word every time the name is put through it, so the
+     * link and the place it points at meet. Null when the name is empty.
+     */
+    private fun anchorId(name: String): String? = name
+        .map { if (it.isLetterOrDigit() || it == '_' || it == '-') it else '-' }
+        .joinToString("")
+        .takeIf { it.isNotEmpty() }
+        ?.let { "bm-$it" }
 
     /** Every note in the document, numbered in the order its mark appears. */
     private fun numberNotes(blocks: List<Block>): Map<TextRun, Int> {

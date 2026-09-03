@@ -36,6 +36,13 @@ data class Paragraph(
     val runs: List<TextRun>,
     val style: ParagraphStyle = ParagraphStyle(),
     override val confidence: Float = 1f,
+    /**
+     * The names a document gave this place, so that a link elsewhere can
+     * point at it: the bookmarks behind a table of contents, a "see
+     * section 4", an index. Without them a converted thesis keeps its
+     * contents page and every line of it leads nowhere.
+     */
+    val bookmarks: List<String> = emptyList(),
 ) : Block {
     val text: String get() = runs.joinToString(separator = "") { it.text }
 }

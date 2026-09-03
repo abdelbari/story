@@ -242,11 +242,18 @@ object DocxWriter {
         }
     }
 
+    /**
+     * Both ends of every link: the addresses that leave the file, which
+     * need a relationship each, and the bookmarks inside it, which a link
+     * reaches by name and which need an id each.
+     */
     private class LinkPlan(document: DocumentModel) {
         class Entry(val target: String, val relId: String, val part: String)
 
         val entries = mutableListOf<Entry>()
         private val byPartAndTarget = HashMap<Pair<String, String>, Entry>()
+        /** Word wants a number on every bookmark, unique across the file. */
+        private val bookmarkIds = LinkedHashMap<String, Int>()
 
         init {
             assign(document.blocks, ImagePlan.PART_DOCUMENT)
@@ -258,10 +265,25 @@ object DocxWriter {
 
         fun entriesFor(part: String): List<Entry> = entries.filter { it.part == part }
 
+        /** The name and id of each bookmark on [paragraph], ready to write. */
+        fun bookmarksOn(paragraph: Paragraph): List<Pair<String, Int>> =
+            paragraph.bookmarks.mapNotNull { raw ->
+                bookmarkName(raw)?.let { name -> bookmarkIds[name]?.let { name to it } }
+            }
+
         private fun assign(blocks: List<Block>, part: String) {
             for (block in blocks) {
                 when (block) {
-                    is Paragraph -> for (run in block.runs) run.link?.let { register(it, part) }
+                    is Paragraph -> {
+                        for (name in block.bookmarks) {
+                            bookmarkName(name)?.let { bookmarkIds.getOrPut(it) { bookmarkIds.size } }
+                        }
+                        // A link into the document itself needs no relationship:
+                        // it names a bookmark, not a place outside the file.
+                        for (run in block.runs) {
+                            run.link?.takeIf { !it.startsWith("#") }?.let { register(it, part) }
+                        }
+                    }
                     is Table -> for (row in block.rows) for (cell in row.cells) assign(cell.blocks, part)
                     is ImageBlock -> {}
                 }
@@ -271,6 +293,24 @@ object DocxWriter {
         private fun register(target: String, part: String) {
             byPartAndTarget.getOrPut(part to target) {
                 Entry(target, "rIdLnk" + (entries.size + 1), part).also { entries += it }
+            }
+        }
+
+        companion object {
+            /**
+             * [raw] as Word will accept it as a bookmark name: letters,
+             * digits and underscores, starting with a letter or an
+             * underscore, and no longer than Word's limit. Null when
+             * nothing of the name survives that.
+             *
+             * A link and the place it points at are put through this same
+             * function, so whatever it does to a name it does to both and
+             * the two still meet.
+             */
+            fun bookmarkName(raw: String): String? {
+                val kept = raw.map { if (it.isLetterOrDigit() || it == '_') it else '_' }.joinToString("")
+                val started = if (kept.firstOrNull()?.isDigit() == true) "_$kept" else kept
+                return started.take(40).takeIf { it.isNotEmpty() && it != "_".repeat(it.length) }
             }
         }
     }
@@ -477,6 +517,12 @@ object DocxWriter {
         sb.append("<w:p>")
         val largest = paragraph.runs.maxOfOrNull { it.fontSizePt ?: 0f } ?: 0f
         appendParagraphProperties(sb, paragraph.style, effectiveDirection, numbering.numIdFor(paragraph), largest)
+        // The names this place answers to, opened and closed around its
+        // words so that a contents page or a cross-reference lands on it.
+        val bookmarks = links.bookmarksOn(paragraph)
+        for ((name, id) in bookmarks) {
+            sb.append("""<w:bookmarkStart w:id="$id" w:name="${xmlEscape(name)}"/>""")
+        }
         // Runs that point at the same place are one link, as a reader sees
         // it: an address split across runs by a change of face is still one
         // address to click.
@@ -490,12 +536,21 @@ object DocxWriter {
             }
             var last = index
             while (last + 1 < paragraph.runs.size && paragraph.runs[last + 1].link == target) last++
-            val relId = links.relIdFor(target, part)
-            if (relId != null) sb.append("""<w:hyperlink r:id="$relId">""")
+            // A link into the document itself points at a bookmark rather
+            // than at a place on the web: written as a relationship it would
+            // send a reader looking for a website called "#introduction".
+            val anchor = target.takeIf { it.startsWith("#") }
+                ?.let { LinkPlan.bookmarkName(it.removePrefix("#")) }
+            val relId = if (anchor == null) links.relIdFor(target, part) else null
+            when {
+                anchor != null -> sb.append("""<w:hyperlink w:anchor="${xmlEscape(anchor)}">""")
+                relId != null -> sb.append("""<w:hyperlink r:id="$relId">""")
+            }
             for (i in index..last) appendRun(sb, paragraph.runs[i], effectiveDirection, images, document, notes)
-            if (relId != null) sb.append("</w:hyperlink>")
+            if (anchor != null || relId != null) sb.append("</w:hyperlink>")
             index = last + 1
         }
+        for ((_, id) in bookmarks) sb.append("""<w:bookmarkEnd w:id="$id"/>""")
         sb.append("</w:p>")
     }
 

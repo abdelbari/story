@@ -274,13 +274,21 @@ object DocxReader {
         val blocks = mutableListOf<Block>()
         // A page break somebody typed belongs to whatever comes after it.
         var brokenTo = false
+        // So does a bookmark opened between paragraphs, which is how Word
+        // writes one that was put around several of them at once.
+        var openedNames = mutableListOf<String>()
 
-        /** [block], starting a page where a break was typed before it. */
+        /** [block], starting a page and answering to the names opened before it. */
         fun add(block: Block) {
             val broken = brokenTo && block is Paragraph
             brokenTo = brokenTo && !broken
-            blocks += if (broken) {
-                (block as Paragraph).copy(style = block.style.copy(pageBreakBefore = true))
+            blocks += if (block is Paragraph) {
+                val named = block.copy(
+                    style = if (broken) block.style.copy(pageBreakBefore = true) else block.style,
+                    bookmarks = openedNames + block.bookmarks,
+                )
+                openedNames = mutableListOf()
+                named
             } else {
                 block
             }
@@ -323,7 +331,10 @@ object DocxReader {
                         inline = inline, notes = notes, styles = styles, fromTable = fromTable,
                     ).forEach(::add)
                 }
-                else -> {} // sectPr, bookmarks, anything the reader does not know
+                "bookmarkStart" -> attr(child, "name")
+                    ?.takeIf { it.isNotBlank() && it != "_GoBack" }
+                    ?.let { openedNames += it }
+                else -> {} // sectPr, bookmarkEnd, anything the reader does not know
             }
         }
         return blocks
@@ -499,8 +510,19 @@ object DocxReader {
             inherited = runProperties,
         )
         if (runs.isEmpty()) return null
-        return Paragraph(runs = runs, style = style, confidence = 1f)
+        return Paragraph(runs = runs, style = style, confidence = 1f, bookmarks = bookmarksOf(p))
     }
+
+    /**
+     * The names bookmarked on [p]: what a table of contents, a
+     * cross-reference or an index points at. Word's own `_GoBack` marks
+     * where the writer was last typing and means nothing to a reader.
+     */
+    private fun bookmarksOf(p: Element): List<String> =
+        children(p)
+            .filter { it.namespaceURI == W && it.localName == "bookmarkStart" }
+            .mapNotNull { attr(it, "name") }
+            .filter { it.isNotBlank() && it != "_GoBack" }
 
     /**
      * Runs directly in [parent] plus those inside run containers; a PAGE

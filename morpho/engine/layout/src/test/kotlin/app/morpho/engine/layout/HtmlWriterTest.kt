@@ -124,6 +124,27 @@ class HtmlWriterTest {
     }
 
     @Test
+    fun `a contents line leads to the heading it names`() {
+        // The preview is the app's own reading of a document: a thesis's
+        // contents page has to work there too, not only in Word.
+        val model = DocumentModel(
+            listOf(
+                Paragraph(listOf(TextRun("1. Introduction", link = "#_Toc 1"))),
+                Paragraph(
+                    listOf(TextRun("Introduction")),
+                    ParagraphStyle(kind = ParagraphKind.HEADING_1),
+                    bookmarks = listOf("_Toc 1"),
+                ),
+            )
+        )
+        val doc = parse(HtmlWriter.write(model))
+        val href = elements(doc, "a").single().getAttribute("href")
+        val id = elements(doc, "h1").single().getAttribute("id")
+        assertTrue(id.isNotEmpty(), "the heading must be somewhere to arrive at")
+        assertEquals("#" + id, href, "the line and the heading must meet")
+    }
+
+    @Test
     fun `markup in text is neutralized`() {
         val model = DocumentModel(listOf(body("<script>alert('x')</script> & done")))
         val html = HtmlWriter.write(model)

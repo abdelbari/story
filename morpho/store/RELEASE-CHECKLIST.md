@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 485 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 492 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -98,6 +98,11 @@ Work through, in this order — each exercises a path nothing else covers:
 - [ ] **A paper with equations in it.** Nothing can hold an equation as
       an equation, but every formula must still be there, written out in
       the line it stood in, rather than gone.
+- [ ] **A document with a contents page** — a thesis or a manual whose
+      first page lists its chapters, written in Word itself. Every line of
+      that page must still jump to its chapter after the conversion, in
+      Word and in the app's preview, rather than trying to open a website.
+      Check a cross-reference too — a "see section 4" in the body.
 - [ ] **A Word document with footnotes and endnotes**, written in Word
       itself rather than by Morpho. Every note must be in the converted file
       under a mark that is numbered in reading order.
