@@ -107,6 +107,58 @@ class LegacyPictureTest {
     }
 
     @Test
+    fun `a picture written both ways at once is one picture`() {
+        // Word writes a shape twice: the way it prefers, and a fallback
+        // for readers that do not know it. Both hold the same picture,
+        // and reading both puts it into the document twice.
+        val body = """<w:p><w:r><mc:AlternateContent """ +
+            """xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">""" +
+            """<mc:Choice Requires="wps"><w:drawing><wp:inline """ +
+            """xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">""" +
+            """<wp:extent cx="1524000" cy="762000"/><a:graphic """ +
+            """xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData>""" +
+            """<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">""" +
+            """<pic:blipFill><a:blip r:embed="rId5"/></pic:blipFill></pic:pic>""" +
+            """</a:graphicData></a:graphic></wp:inline></w:drawing></mc:Choice>""" +
+            """<mc:Fallback><w:pict><v:shape style="width:120pt;height:60pt">""" +
+            """<v:imagedata r:id="rId5"/></v:shape></w:pict></mc:Fallback>""" +
+            """</mc:AlternateContent></w:r></w:p>"""
+        val model = DocxReader.read(docx(body))
+        val pictures = model.blocks.filterIsInstance<ImageBlock>() +
+            model.blocks.filterIsInstance<Paragraph>().flatMap { p -> p.runs.mapNotNull { it.image } }
+        assertEquals(1, pictures.size, "the picture was read once for each way it was written")
+    }
+
+    @Test
+    fun `the preview an embedded object shows for itself is kept`() {
+        // An equation from the old editor, a chart pasted from a
+        // spreadsheet: the thing itself cannot be carried across, and the
+        // picture it shows for itself is what a reader of the document
+        // sees. Dropped, the page simply has a hole in it.
+        val body = """<w:p><w:r><w:object w:dxaOrig="2400" w:dyaOrig="1200">""" +
+            """<v:shape style="width:120pt;height:60pt"><v:imagedata r:id="rId5"/></v:shape>""" +
+            """</w:object></w:r></w:p>"""
+        val model = DocxReader.read(docx(body))
+        val pictures = model.blocks.filterIsInstance<ImageBlock>() +
+            model.blocks.filterIsInstance<Paragraph>().flatMap { p -> p.runs.mapNotNull { it.image } }
+        assertEquals(1, pictures.size, "the object showed nothing at all: ${model.blocks}")
+        assertEquals(120f, pictures.single().widthPt)
+    }
+
+    @Test
+    fun `a text box is text, not a picture of one`() {
+        val body = """<w:p><w:r><w:pict><v:shape style="width:120pt;height:60pt">""" +
+            """<v:textbox><w:txbxContent><w:p><w:r><w:t>inside the box</w:t></w:r></w:p>""" +
+            """</w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"""
+        val model = DocxReader.read(docx(body))
+        assertTrue(model.blocks.none { it is ImageBlock }, "the text box became a picture: ${model.blocks}")
+        assertTrue(
+            model.blocks.filterIsInstance<Paragraph>().any { it.text == "inside the box" },
+            "the words in the box were lost: ${model.blocks}",
+        )
+    }
+
+    @Test
     fun `a shape holding no picture at all is not one`() {
         val body = """<w:p><w:r><w:pict><v:rect style="width:12pt;height:12pt"/></w:pict></w:r></w:p>"""
         assertTrue(DocxReader.read(docx(body)).blocks.none { it is ImageBlock })

@@ -522,9 +522,43 @@ object DocxReader {
     }
 
     /** PNG/JPEG drawings in a paragraph, emitted after its text. */
-    private fun parseImages(p: Element, media: MediaStore): List<ImageBlock> =
-        descendantsNS(p, W, "drawing").mapNotNull { imageOf(it, media) } +
-            descendantsNS(p, W, "pict").mapNotNull { legacyImageOf(it, media) }
+    private fun parseImages(p: Element, media: MediaStore): List<ImageBlock> = picturesIn(p, media)
+
+    /**
+     * Every picture under [element], each counted once.
+     *
+     * Word writes a shape twice where it can: the way it prefers, and a
+     * fallback drawn the old way for a reader that does not know the new
+     * one. Both hold the same picture, so a walk that gathers every
+     * `w:drawing` and every `w:pict` it can see puts it into the document
+     * twice — which is what the same walk would do to a text box, and why
+     * [textBoxesIn] has always chosen one branch and left the other.
+     */
+    private fun picturesIn(element: Element, media: MediaStore, depth: Int = 0): List<ImageBlock> {
+        if (depth > MAX_NESTING_DEPTH) return emptyList()
+        val found = mutableListOf<ImageBlock>()
+        for (child in elementChildren(element)) {
+            when (child.localName) {
+                "AlternateContent" -> {
+                    val chosen = elementChildren(child).firstOrNull { it.localName == "Choice" }
+                        ?: elementChildren(child).firstOrNull { it.localName == "Fallback" }
+                    if (chosen != null) found += picturesIn(chosen, media, depth + 1)
+                }
+                "drawing" -> imageOf(child, media)?.let(found::add)
+                // A picture drawn the old way, and the preview picture an
+                // embedded object shows for itself — an equation from the
+                // old editor, a chart pasted from a spreadsheet. The thing
+                // itself cannot be carried; the picture of it can, and is
+                // what a reader of the document sees.
+                "pict", "object" -> legacyImageOf(child, media)?.let(found::add)
+                // A text box holds text rather than a picture of it, and is
+                // read where the blocks are read.
+                "txbxContent" -> {}
+                else -> found += picturesIn(child, media, depth + 1)
+            }
+        }
+        return found
+    }
 
     /**
      * The picture a legacy `w:pict` holds.
@@ -1375,8 +1409,9 @@ object DocxReader {
         inherited: Map<String, Element> = emptyMap(),
     ): TextRun? {
         if (media != null) {
-            val picture = firstChild(r, "drawing")?.let { imageOf(it, media) }
-                ?: firstChild(r, "pict")?.let { legacyImageOf(it, media) }
+            // A picture in a run is the run: whichever way it is drawn, and
+            // once however many ways the file draws it.
+            val picture = picturesIn(r, media).firstOrNull()
             if (picture != null) return TextRun("", image = picture)
         }
         // The note a mark refers to lives in a part of its own; the mark
