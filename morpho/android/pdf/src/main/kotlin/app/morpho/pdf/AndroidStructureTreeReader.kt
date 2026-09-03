@@ -245,8 +245,13 @@ internal object AndroidStructureTreeReader {
     private const val MOST_MARKS = 20_000
     /** A rule this many type sizes below a paragraph's last baseline, or above its first, belongs to it. */
     private const val RULE_REACH = 1.6f
-    /** A rule nearer than this share of the type size to a baseline is that line's own underscoring. */
-    private const val RULE_CLEARANCE = 0.4f
+    /**
+     * A rule nearer than this share of the type size to a baseline is that
+     * line's own mark — an underline, a strike — rather than a border of
+     * the paragraph. [PdfMarks] reads those, and owns the number so the
+     * two readings cannot drift apart and claim the same rule twice.
+     */
+    private val RULE_CLEARANCE = PdfMarks.CLEARANCE
     /** The type size assumed of a paragraph that measured none. */
     private const val DEFAULT_SIZE_PT = 12f
     private const val CONFIDENCE = 0.9f

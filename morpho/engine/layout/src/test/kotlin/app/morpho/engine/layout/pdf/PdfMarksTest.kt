@@ -99,4 +99,21 @@ class PdfMarksTest {
         assertEquals(PdfMarks.Mark.UNDERLINE, PdfMarks.of(rule(103f), baseline, 12f, inkLeft, inkRight))
         assertNull(PdfMarks.of(rule(103f), baseline, 8f, inkLeft, inkRight))
     }
+
+    @Test
+    fun `no rule is a mark and a border at once`() {
+        // A rule far enough from the baseline belongs to the paragraph and
+        // is drawn as its border; nearer than that it belongs to the words.
+        // Both bands lie strictly inside the one clearance the two
+        // readings share, so a page's single rule is never read twice —
+        // once as a line through the words and once as a box round them.
+        val clearance = PdfMarks.CLEARANCE * size
+        for (offset in listOf(clearance, clearance + 1f, clearance + 6f)) {
+            assertNull(mark(rule(baseline + offset)), "a rule ${offset}pt below was read as a mark")
+            assertNull(mark(rule(baseline - offset)), "a rule ${offset}pt above was read as a mark")
+        }
+        // And what is inside it still reads as the mark it is.
+        assertEquals(PdfMarks.Mark.UNDERLINE, mark(rule(baseline + clearance - 1.5f)))
+        assertEquals(PdfMarks.Mark.STRIKE, mark(rule(baseline - clearance + 1f)))
+    }
 }

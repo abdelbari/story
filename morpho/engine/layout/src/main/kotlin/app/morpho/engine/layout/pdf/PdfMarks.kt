@@ -25,6 +25,19 @@ object PdfMarks {
     enum class Mark { UNDERLINE, STRIKE }
 
     /**
+     * How near a baseline a rule has to be, as a share of the type size,
+     * to belong to the words rather than to the paragraph.
+     *
+     * This is the one number the two readings share. Inside it a rule is
+     * a mark on the line — an underline, a strike — and outside it a rule
+     * is a border drawn above the paragraph or below it. Both bands below
+     * lie strictly inside it, so no rule is ever read as a mark and as a
+     * border at once, which would give a converted document a struck-out
+     * line inside a boxed paragraph where the page drew one plain rule.
+     */
+    const val CLEARANCE = 0.4f
+
+    /**
      * How far under the baseline an underline sits, as a share of the type
      * size. Word draws one about a sixth of the size down; a rule further
      * off is a border under the paragraph, not a line under the words.
@@ -34,12 +47,13 @@ object PdfMarks {
 
     /**
      * How far above the baseline a strike crosses, as a share of the type
-     * size: through the middle of the letters, which is between a fifth
-     * and half the size up. Higher than that and the rule is above the
-     * line rather than through it.
+     * size: through the middle of the letters, which is about a third of
+     * the size up. Higher than that and the rule is above the line rather
+     * than through it — and past [CLEARANCE] it is the paragraph's own
+     * border, which is read elsewhere.
      */
     private const val THROUGH_LOWEST = 0.18f
-    private const val THROUGH_HIGHEST = 0.52f
+    private const val THROUGH_HIGHEST = 0.38f
 
     /**
      * How thick a mark can be, as a share of the type size. A rule as deep

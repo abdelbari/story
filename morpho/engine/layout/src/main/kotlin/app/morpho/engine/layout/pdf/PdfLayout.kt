@@ -146,8 +146,14 @@ object PdfLayout {
     private const val COLUMN_SHIFT_PT = 6f
     /** How far a paragraph looks for a rule of its own, in its own line pitch. */
     private const val RULE_REACH = 1.6f
-    /** A rule this much of a line's own height away from a baseline is the paragraph's, not the line's. */
-    private const val RULE_CLEARANCE = 0.4f
+    /**
+     * A rule this much of a line's own height away from a baseline is the
+     * paragraph's, not the line's. Nearer than this it is a mark on the
+     * words — an underline, a strike — which [PdfMarks] reads, and which
+     * owns the number so the two readings cannot drift apart and claim
+     * the same rule twice.
+     */
+    private val RULE_CLEARANCE = PdfMarks.CLEARANCE
     /** A rule must cross this share of the text block to be one at all. */
     private const val RULE_LEAST_SHARE = 0.25f
 
