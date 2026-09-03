@@ -517,18 +517,13 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * The OCR language set follows the app language — a second model rides
-     * along so mixed documents still read: English with the RTL locale,
-     * Arabic with the English one. A per-scan language picker is a later
-     * refinement.
+     * The OCR language set follows the app language. Which set that is
+     * belongs beside the packs it names, where a test can hold the two to
+     * each other: a set naming a pack the app does not ship fails nowhere
+     * but on the phone, and takes recognition down with it.
      */
-    private fun ocrLanguages(): String = when (Locale.getDefault().language) {
-        "ar" -> "ara+eng"
-        "fr" -> "fra+eng"
-        "es" -> "spa+eng"
-        "de" -> "deu+eng"
-        else -> "eng+ara"
-    }
+    private fun ocrLanguages(): String =
+        AndroidOcrReader.languagesFor(Locale.getDefault().language)
 
     /** Text, Markdown or Word input → a real .pdf file via the save dialog. */
     fun exportPdf() {

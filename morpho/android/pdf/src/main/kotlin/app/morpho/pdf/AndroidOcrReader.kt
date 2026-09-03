@@ -190,6 +190,45 @@ class AndroidOcrReader(private val context: Context) {
         /** Arabic first — it is the app's reason to exist — with Latin text. */
         const val DEFAULT_LANGUAGES = "ara+eng"
 
+        /**
+         * What each app language recognises with, by the code a locale
+         * gives for it.
+         *
+         * A second model rides along so a mixed document still reads:
+         * English with the RTL locale, Arabic with every other one. The
+         * first named is the one Tesseract leans on, which is why the
+         * pairs are ordered rather than sorted.
+         *
+         * This is a table rather than a `when` because the packs it names
+         * are files that have to be in the module's assets, and a branch
+         * naming one that is not there does not fail a build or a review —
+         * it fails on the phone, at `assets.open`, taking not that
+         * language but recognition itself down for everyone with that
+         * locale. As a table the two can be held to each other, which is
+         * what [app.morpho.port.OcrLanguageTest] does.
+         */
+        val LANGUAGES_BY_LOCALE: Map<String, String> = mapOf(
+            "ar" to DEFAULT_LANGUAGES,
+            "fr" to "fra+eng",
+            "es" to "spa+eng",
+            "de" to "deu+eng",
+        )
+
+        /**
+         * The set to recognise with where the phone is set to [language] —
+         * an ISO-639 code as `Locale.getLanguage` gives it.
+         *
+         * A language with no pack of its own reads with English first and
+         * Arabic behind it: the app's own two, in the order that suits a
+         * reader whose phone is in neither. A per-scan language picker is
+         * a later refinement.
+         */
+        fun languagesFor(language: String): String =
+            LANGUAGES_BY_LOCALE[language] ?: OTHERWISE
+
+        /** What a phone set to none of the four reads with. */
+        const val OTHERWISE = "eng+ara"
+
         /** OCR output is a guess by construction; the heatmap should show it. */
         const val OCR_CONFIDENCE = 0.5f
 
