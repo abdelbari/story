@@ -97,6 +97,31 @@ class WrappedRunsTest {
     }
 
     @Test
+    fun `custom xml round whole paragraphs keeps the paragraphs`() {
+        // At the level of the body a wrapper holds paragraphs rather than
+        // runs, and walking past one loses every paragraph it holds.
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out).use { zip ->
+            zip.putNextEntry(ZipEntry("word/document.xml"))
+            zip.write(
+                (
+                    """<w:document xmlns:w="$w"><w:body>""" +
+                        """<w:p>${run("before")}</w:p>""" +
+                        """<w:customXml w:element="held">""" +
+                        """<w:p>${run("inside one")}</w:p>""" +
+                        """<w:p>${run("inside two")}</w:p>""" +
+                        """</w:customXml>""" +
+                        """<w:p>${run("after")}</w:p>""" +
+                        "</w:body></w:document>"
+                    ).toByteArray(Charsets.UTF_8)
+            )
+            zip.closeEntry()
+        }
+        val texts = DocxReader.read(out.toByteArray()).blocks.filterIsInstance<Paragraph>().map { it.text }
+        assertEquals(listOf("before", "inside one", "inside two", "after"), texts)
+    }
+
+    @Test
     fun `a wrapper with nothing to say about direction says nothing`() {
         val read = paragraph("""<w:sdt><w:sdtContent>${run("held")}</w:sdtContent></w:sdt>""")
         assertEquals("held", read.text)

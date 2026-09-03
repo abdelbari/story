@@ -498,6 +498,12 @@ object DocxReader {
                 // A content control wraps what it holds rather than
                 // replacing it: a cover page, a table of contents, the
                 // fields of a template. What is inside is the document.
+                // Custom XML wraps whole paragraphs the same way, and
+                // walking past one loses every paragraph it holds.
+                "customXml" -> parseBlocks(
+                    child, numbering, media, depth + 1,
+                    inline = inline, notes = notes, styles = styles, fromTable = fromTable,
+                ).forEach(::add)
                 "sdt" -> firstChild(child, "sdtContent")?.let { held ->
                     parseBlocks(
                         held, numbering, media, depth + 1,
