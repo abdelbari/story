@@ -128,10 +128,11 @@ Work through, in this order — each exercises a path nothing else covers:
       or a scanner. They must be in Word's own header and footer rather
       than in the middle of the reading, and the page number must count on
       from the paper's own first number. A head of plain text comes across
-      as text. A head that no reader can read — drawn as artwork, or set in
-      a font the file does not name the characters of — comes across as a
-      photograph of the band it sits in, which must show the whole of it
-      and none of the page's own first line. The one case that will still
+      as text. A head that is not text — drawn as outlines rather than
+      letters, which is how the Arabic paper's own head and the words of
+      its foot are drawn — comes across as a photograph of the band it
+      sits in, which must show the whole of it and none of the page's own
+      first line. The one case that will still
       be missed is a head that neither repeats identically from page to
       page nor has a rule or a picture in it.
 - [ ] **A report whose title page carries no running head.** Word must
