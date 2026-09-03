@@ -189,6 +189,46 @@ class OoxmlHardeningTest {
     }
 
     @Test
+    fun `a damaged Word file is refused, never fatal`() {
+        // Half a download, an attachment cut short, a byte lost in
+        // transit: reading one may fail, and it must fail as an exception
+        // the app can catch and report — not as an error nothing catches,
+        // and not by going round for ever. Fixed seed, so a failure can be
+        // repeated exactly.
+        val whole = DocxWriter.toByteArray(
+            DocumentModel(
+                (1..20).map { Paragraph(listOf(TextRun("Line $it of an ordinary document."))) }
+            )
+        )
+        val random = java.util.Random(20260903L)
+        org.junit.jupiter.api.assertTimeoutPreemptively(java.time.Duration.ofSeconds(60)) {
+            for (round in 0 until 45) {
+                val broken = whole.copyOf()
+                val damaged = when (round % 3) {
+                    0 -> broken.copyOf(1 + random.nextInt(broken.size - 1))
+                    1 -> broken.also { file ->
+                        repeat(1 + random.nextInt(20)) {
+                            file[random.nextInt(file.size)] = random.nextInt(256).toByte()
+                        }
+                    }
+                    else -> broken.also { file ->
+                        val at = random.nextInt(file.size)
+                        val length = minOf(file.size - at, 1 + random.nextInt(200))
+                        java.util.Arrays.fill(file, at, at + length, 0)
+                    }
+                }
+                try {
+                    DocxReader.read(damaged)
+                } catch (expected: Exception) {
+                    // Refused, which is the app's cue to say so.
+                } catch (fatal: Throwable) {
+                    throw AssertionError("round $round: reading a damaged file threw $fatal", fatal)
+                }
+            }
+        }
+    }
+
+    @Test
     fun `garbage bytes and malformed xml both throw IllegalArgumentException`() {
         assertThrows(IllegalArgumentException::class.java) {
             DocxReader.read(byteArrayOf(1, 2, 3, 4, 5))

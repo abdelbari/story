@@ -32,6 +32,70 @@ import java.time.Duration
 class MalformedPdfTest {
 
     @Test
+    fun `a damaged file is refused or read, and nothing else`() {
+        // A file people convert is a file that may be half a download, a
+        // truncated attachment, a byte flipped in transit. Reading one may
+        // fail — but it must fail as an exception the app can catch and
+        // report, not as an error nothing catches, and not by going round
+        // for ever. The damage is made from a fixed seed so a failure can
+        // be repeated exactly.
+        val whole = paperPdf()
+        val random = java.util.Random(20260903L)
+        assertTimeoutPreemptively(Duration.ofSeconds(90)) {
+            for (round in 0 until 45) {
+                val broken = whole.copyOf()
+                val damaged = when (round % 3) {
+                    // Cut short, as a download that stopped.
+                    0 -> broken.copyOf(1 + random.nextInt(broken.size - 1))
+                    // Struck here and there, as bytes lost in transit.
+                    1 -> broken.also { file ->
+                        repeat(1 + random.nextInt(20)) {
+                            file[random.nextInt(file.size)] = random.nextInt(256).toByte()
+                        }
+                    }
+                    // A stretch of it gone, as a bad sector reads.
+                    else -> broken.also { file ->
+                        val at = random.nextInt(file.size)
+                        val length = minOf(file.size - at, 1 + random.nextInt(500))
+                        java.util.Arrays.fill(file, at, at + length, 0)
+                    }
+                }
+                try {
+                    PdfReader().extract(damaged)
+                } catch (expected: Exception) {
+                    // A file that cannot be read is refused, which is the app's cue to say so.
+                } catch (fatal: Throwable) {
+                    throw AssertionError("round $round: reading a damaged file threw $fatal", fatal)
+                }
+            }
+        }
+    }
+
+    /** Two pages of ordinary text, as small as a real document gets. */
+    private fun paperPdf(): ByteArray {
+        PDDocument().use { doc ->
+            repeat(2) { page ->
+                val sheet = PDPage(PDRectangle.A4)
+                doc.addPage(sheet)
+                PDPageContentStream(doc, sheet).use { content ->
+                    var y = 740f
+                    for (line in 1..12) {
+                        content.beginText()
+                        content.setFont(PDType1Font.HELVETICA, 12f)
+                        content.newLineAtOffset(72f, y)
+                        content.showText("Page ${page + 1}, line $line of the document.")
+                        content.endText()
+                        y -= 18f
+                    }
+                }
+            }
+            val out = ByteArrayOutputStream()
+            doc.save(out)
+            return out.toByteArray()
+        }
+    }
+
+    @Test
     fun `an outline that leads round in a circle does not go round for ever`() {
         val pdf = pdf { document, page ->
             val outline = PDDocumentOutline()
