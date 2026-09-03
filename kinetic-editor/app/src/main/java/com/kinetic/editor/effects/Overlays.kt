@@ -51,6 +51,10 @@ object OverlayFactory {
             when (track.type) {
                 TrackType.TEXT -> for (p in state.placements(track)) {
                     val spec = p.clip.text ?: continue
+                    // Blank text has no layout to rasterise, and TextOverlay
+                    // would throw building a zero-width bitmap from it. A clip
+                    // whose field the user emptied simply draws nothing.
+                    if (spec.text.isEmpty()) continue
                     overlays.add(TimedTextOverlay(spec, p.startMs * 1000L, p.endMs * 1000L))
                     any = true
                 }
@@ -107,7 +111,7 @@ private class TimedTextOverlay(
      * few dozen small objects at export start than an allocation per frame.
      */
     private val prefixes: List<SpannableString>? =
-        if (spec.anim == OverlayAnim.TYPE && spec.text.length <= MAX_TYPED) {
+        if (spec.anim == OverlayAnim.TYPE && spec.text.length in 1..MAX_TYPED) {
             (0..spec.text.length).map { n -> SpannableString(styled.subSequence(0, n)) }
         } else {
             null
@@ -119,7 +123,8 @@ private class TimedTextOverlay(
     override fun getText(presentationTimeUs: Long): SpannableString {
         val chars = stateAt(presentationTimeUs).visibleChars
         if (chars < 0 || prefixes == null) return styled
-        return prefixes[chars.coerceIn(0, prefixes.size - 1)]
+        // Never index 0: see OverlayAnim.TYPE for why an empty layout is fatal.
+        return prefixes[chars.coerceIn(1, prefixes.size - 1)]
     }
 
     override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {

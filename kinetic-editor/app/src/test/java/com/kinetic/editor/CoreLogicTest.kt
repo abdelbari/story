@@ -452,7 +452,10 @@ class CoreLogicTest {
         assertEquals(0f, overlayAnimAt(OverlayAnim.RISE, 2_000_000L, 0, end, 0).dy, 1e-3f)
 
         val n = 10
-        assertEquals(0, overlayAnimAt(OverlayAnim.TYPE, 0, 0, end, n).visibleChars)
+        // One character, not none: an empty layout would crash the export, not
+        // merely render nothing. See OverlayAnim.TYPE.
+        assertEquals(1, overlayAnimAt(OverlayAnim.TYPE, 0, 0, end, n).visibleChars)
+        assertEquals(0, overlayAnimAt(OverlayAnim.TYPE, 0, 0, end, 0).visibleChars)
         assertEquals(n, overlayAnimAt(OverlayAnim.TYPE, 350_000L, 0, end, n).visibleChars)
         assertEquals(n, overlayAnimAt(OverlayAnim.TYPE, 2_000_000L, 0, end, n).visibleChars)
         // Typing is the entrance, so it must not also fade in — the others do.

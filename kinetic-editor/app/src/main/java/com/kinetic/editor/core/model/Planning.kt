@@ -253,11 +253,16 @@ fun overlayAnimAt(
         OverlayAnim.POP -> OverlayAnimState(edge, 0.6f + 0.4f * easeOutBack(enter), 0f, -1)
         OverlayAnim.RISE -> OverlayAnimState(edge, 1f, -RISE_NDC * (1f - easeOutCubic(enter)), -1)
         // Typing IS the entrance, so it does not also fade in; it still fades out.
+        // At least one character once the clip has started: media3 rasterises
+        // text through a StaticLayout, and a zero-width layout makes
+        // Bitmap.createBitmap throw — an empty first frame would not look
+        // empty, it would end the export.
         OverlayAnim.TYPE -> OverlayAnimState(
             alpha = exit,
             scale = 1f,
             dy = 0f,
-            visibleChars = kotlin.math.ceil(charCount * enter).toInt().coerceIn(0, charCount),
+            visibleChars = kotlin.math.ceil(charCount * enter).toInt()
+                .coerceIn(if (charCount > 0) 1 else 0, charCount),
         )
     }
 }
