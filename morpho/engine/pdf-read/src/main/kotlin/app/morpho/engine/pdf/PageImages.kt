@@ -66,6 +66,8 @@ internal object PageImages {
                 // want two of them; a phone that runs out of room for that
                 // answers with no running head at all, which is the one
                 // answer a reader cannot make sense of.
+                val placed = graphics.transform
+                val clipped = graphics.clip
                 graphics.translate(-x, -y)
                 // The renderer clears the page before drawing it, with the
                 // background this was given: unset, that is a transparent
@@ -73,7 +75,18 @@ internal object PageImages {
                 // header came back as a black strip with its rules on it.
                 graphics.background = Color.WHITE
                 PDFRenderer(document).renderPageToGraphics(pageIndex, graphics, SCALE)
-                graphics.translate(x, y)
+                // The renderer lays the page's own transform over this one
+                // and clips to whatever it drew last, and leaves both
+                // behind. Undoing the band's shift by shifting back would
+                // compound with that transform instead of cancelling it,
+                // and the leftover clip keeps paint off the picture
+                // wherever the page's last drawing was not — so every mask
+                // below went somewhere other than where it was asked for,
+                // or nowhere at all, and silently either way. Both are put
+                // back as they were found, which is what the Android twin's
+                // canvas save and restore already does.
+                graphics.transform = placed
+                graphics.clip = clipped
                 graphics.color = Color.WHITE
                 for (mask in masks) {
                     val mx = ((mask[0] - left) * SCALE).roundToInt()

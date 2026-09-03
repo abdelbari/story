@@ -102,6 +102,26 @@ class PageImagesTest {
     }
 
     @Test
+    fun `what a mask covers is painted out, wherever the page last drew`() {
+        page().use { doc ->
+            // The head, with the head painted out: nothing is left, so the
+            // band is refused as blank. This is what tells a running head
+            // that is only its words from one that also carries a logo, or
+            // letters drawn as outlines — so a mask that quietly lands
+            // somewhere else makes every head look like the second kind.
+            // The renderer leaves its own transform and its own clip on the
+            // graphics it was handed, and both did exactly that.
+            val mask = listOf(floatArrayOf(60f, 20f, 520f, 50f))
+            assertNull(PageImages.crop(doc, 0, 60f, 20f, 520f, 50f, mask, trim = true))
+            // A mask over half the band leaves the other half.
+            val half = PageImages.crop(doc, 0, 60f, 20f, 520f, 50f, listOf(floatArrayOf(60f, 20f, 200f, 50f)))
+            assertNotNull(half)
+            val shades = pixels(half!!.image.bytes)
+            assertTrue(shades.any { it != 0xFFFFFF }, "the words outside the mask went too")
+        }
+    }
+
+    @Test
     fun `a page that is not there is refused rather than guessed at`() {
         page().use { doc ->
             assertNull(PageImages.crop(doc, 7, 60f, 20f, 520f, 50f))
