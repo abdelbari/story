@@ -42,6 +42,26 @@ class TwinParityTest {
     )
 
     /**
+     * The readers that also exist twice but cannot be transformed into
+     * each other: one draws with Graphics2D and the other with a Canvas,
+     * one is handed a document and the other an Android context. What they
+     * can share is the numbers that decide what they do, and those must
+     * agree — a threshold tuned on one side and not the other crops a
+     * running head one way on a laptop and another on a phone, which is
+     * the drift this whole file exists to catch.
+     */
+    private val handMade = listOf("PageImages", "PdfReader", "ImageCapture")
+
+    /**
+     * The readers that exist once, on the phone, and have nothing to be
+     * compared with: recognition runs only there — the engine has no
+     * Tesseract and no bitmaps to give it — so there is no second copy to
+     * drift from. Listed so that a reader is never uncovered by accident,
+     * only on purpose.
+     */
+    private val phoneOnly = listOf("OcrReader")
+
+    /**
      * Every name the transform rewrites: the twins refer to each other by
      * their own names, so each has to be renamed inside all of them.
      */
@@ -73,6 +93,44 @@ class TwinParityTest {
             }
         }
         assertEquals(emptyList<String>(), adrift, "an Android reader has drifted from its engine twin")
+    }
+
+    @Test
+    fun `every reader the app has is one this test knows about`() {
+        // A reader added to the app and not to the lists above would be
+        // covered by nothing at all, which is how the last drift lasted as
+        // long as it did.
+        val known = (twinned + handMade + phoneOnly).map { "Android$it.kt" }.toSet()
+        val found = app.list().orEmpty().filter { it.endsWith(".kt") }.toSortedSet()
+        assertEquals(
+            emptyList<String>(),
+            found.filterNot { it in known },
+            "an Android reader is held to neither full parity nor its numbers",
+        )
+    }
+
+    @Test
+    fun `the readers that cannot be transformed still agree on their numbers`() {
+        val adrift = mutableListOf<String>()
+        for (name in handMade) {
+            val ours = numbers(File(engine, "$name.kt"))
+            val theirs = numbers(File(app, "Android$name.kt"))
+            for (key in (ours.keys + theirs.keys).sorted()) {
+                val a = ours[key]
+                val b = theirs[key]
+                if (a != b) adrift += "$name.$key: the engine says $a and the phone says $b"
+            }
+        }
+        assertEquals(emptyList<String>(), adrift, "a number the two readers share has drifted")
+    }
+
+    /** Every named constant [file] declares, by the name it declares it under. */
+    private fun numbers(file: File): Map<String, String> {
+        if (!file.isFile) return emptyMap()
+        val declared = Regex("const val (\\w+)\\s*(?::\\s*\\w+)?\\s*=\\s*(.+)")
+        return file.readLines().mapNotNull { line ->
+            declared.find(stripLineComment(line))?.let { it.groupValues[1] to it.groupValues[2].trim() }
+        }.toMap()
     }
 
     /** [source] with the library, the package and the readers' names as the twin writes them. */
