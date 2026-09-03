@@ -111,8 +111,35 @@ object DocxReader {
     private const val MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
     private const val EMU_PER_PX = 9525L
     private val MIME_BY_EXTENSION = mapOf("png" to "image/png", "jpeg" to "image/jpeg", "jpg" to "image/jpeg")
-    /** Elements that hold runs without changing them; a hyperlink is handled on its own, since it says where its runs point. */
-    private val RUN_CONTAINERS = setOf("ins", "smartTag", "sdt", "sdtContent")
+    /**
+     * Elements that hold a paragraph's runs and are not the runs.
+     *
+     * A hyperlink and a field are handled on their own, since each says
+     * something about the runs it holds. These say nothing: what is
+     * inside them is the document's text and belongs to it. A wrapper the
+     * reader does not know is walked past in silence, and its words never
+     * reach the document at all — which is how a paragraph can come back
+     * empty from a file that plainly has words in it.
+     *
+     * Two wrappers are deliberately not here. `w:del` holds text somebody
+     * deleted with changes tracked, and `w:moveFrom` holds text that has
+     * been moved away: both are what the document used to say. Reading
+     * them back in would put a struck clause and a moved paragraph into a
+     * document that no longer has them, which is the worst kind of wrong
+     * a converter can be.
+     */
+    private val RUN_CONTAINERS = setOf(
+        // Tracked changes: an insertion is in the document, and so is text
+        // moved to where it now stands.
+        "ins", "moveTo",
+        // Wrappers a producer puts round runs to carry something of its
+        // own: a smart tag, a content control, custom XML of a template.
+        "smartTag", "sdt", "sdtContent", "customXml",
+        // A direction override — which is what a producer marking a
+        // right-to-left run writes, so an Arabic document is exactly the
+        // kind that loses text by this being missed.
+        "dir", "bdo",
+    )
 
     fun read(bytes: ByteArray): DocumentModel = read(ByteArrayInputStream(bytes))
 
@@ -720,7 +747,25 @@ object DocxReader {
                         ?: attr(child, "anchor")?.let { "#$it" }
                     runs += if (target != null) inner.map { it.copy(link = target) } else inner
                 }
-                in RUN_CONTAINERS -> runs += collectRuns(child, paragraphRtl, depth + 1, media, inline, notes, styles, inherited)
+                in RUN_CONTAINERS -> {
+                    // A direction override says which way its runs read
+                    // whatever the paragraph around them does, and the
+                    // face they are set in follows from that.
+                    val turned = if (child.localName == "dir" || child.localName == "bdo") {
+                        when (attr(child, "val")?.lowercase()) {
+                            "rtl" -> TextDirection.RTL
+                            "ltr" -> TextDirection.LTR
+                            else -> null
+                        }
+                    } else {
+                        null
+                    }
+                    val inner = collectRuns(
+                        child, turned?.let { it == TextDirection.RTL } ?: paragraphRtl,
+                        depth + 1, media, inline, notes, styles, inherited,
+                    )
+                    runs += if (turned == null) inner else inner.map { it.copy(direction = turned) }
+                }
                 else -> {}
             }
         }
