@@ -57,6 +57,84 @@ class PageFurnitureTest {
     }
 
     @Test
+    fun `a number in the margin that only matches by accident is left alone`() {
+        // Measured on a paper printed from a browser, which heads every
+        // page with the moment it was printed and foots it with the page.
+        // The hour in "1:04 AM" is the number of page one, and written as
+        // a field it says a different hour on every page. What tells it
+        // from the page number is not what it reads on one page but
+        // whether that place keeps step across them.
+        val lines = (1..6).flatMap { page ->
+            listOf(
+                line("9/3/26, 1:04 AM", page, 30f),
+                line("The words of page $page.", page, 400f),
+                line("$page/6", page, 775f, x = 500f, xEnd = 540f),
+            )
+        }
+        val split = PageFurniture.of(lines, sheets(6))
+        val head = split.header.single() as Paragraph
+        assertEquals("9/3/26, 1:04 AM", head.text, "the head is not the document's to renumber")
+        assertTrue(head.runs.none { it.field != null }, head.runs.toString())
+        val foot = split.footer.single() as Paragraph
+        assertEquals(listOf(RunField.PAGE_NUMBER), foot.runs.mapNotNull { it.field })
+        assertEquals("1", foot.runs.first { it.field != null }.text)
+        assertEquals("1/6", foot.text, "and the rest of the foot is the rest of the foot")
+    }
+
+    @Test
+    fun `the page's number is the number that counts, not the first that matches`() {
+        // "Page 4 of 60" — the four advances and the sixty does not, and
+        // the four is not the first number on the line either.
+        val lines = (1..5).flatMap { page ->
+            listOf(
+                line("Report 2024: Page $page of 60", page, 775f),
+                line("The words of page $page.", page, 400f),
+            )
+        }
+        val split = PageFurniture.of(lines, sheets(5))
+        val foot = split.footer.single() as Paragraph
+        assertEquals(listOf(RunField.PAGE_NUMBER), foot.runs.mapNotNull { it.field })
+        assertEquals("1", foot.runs.first { it.field != null }.text)
+        assertEquals("Report 2024: Page 1 of 60", foot.text)
+    }
+
+    @Test
+    fun `a head and a foot that both hold numbers each keep their own`() {
+        // The head carries the chapter, the foot the page. Only one of
+        // them counts the pages, and the other must come through whole.
+        val lines = (1..4).flatMap { page ->
+            listOf(
+                line("Chapter 3", page, 30f),
+                line("The words of page $page.", page, 400f),
+                line("${page + 9}", page, 775f),
+            )
+        }
+        val split = PageFurniture.of(lines, sheets(4))
+        val head = split.header.single() as Paragraph
+        assertEquals("Chapter 3", head.text)
+        assertTrue(head.runs.none { it.field != null }, "the chapter is not the page")
+        val foot = split.footer.single() as Paragraph
+        assertEquals(listOf(RunField.PAGE_NUMBER), foot.runs.mapNotNull { it.field })
+        assertEquals(10, split.firstPageNumber)
+    }
+
+    @Test
+    fun `a page numbered in Arabic digits keeps the digits it was numbered in`() {
+        val arabic = listOf("١", "٢", "٣", "٤")
+        val lines = (1..4).flatMap { page ->
+            listOf(
+                line(arabic[page - 1], page, 775f),
+                line("The words of page $page.", page, 400f),
+            )
+        }
+        val split = PageFurniture.of(lines, sheets(4))
+        val foot = split.footer.single() as Paragraph
+        val field = foot.runs.first { it.field == RunField.PAGE_NUMBER }
+        assertEquals("١", field.text, "a page that showed ١ did not show 1")
+        assertEquals(1, split.firstPageNumber)
+    }
+
+    @Test
     fun `a number that does not count the pages is left as it is`() {
         // A year, a volume, an ISSN: it repeats, but it does not advance.
         val lines = (1..4).flatMap { page ->

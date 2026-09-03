@@ -800,22 +800,49 @@ object PageFurniture {
 
     /**
      * A number the pages count with: the same digits, in the same place on
-     * every page, whose value advances by one from page to page. What is
-     * kept is the step, since the page it was read from is not page one.
+     * every page, whose value advances by one from page to page.
+     *
+     * The step is kept, since the page it was read from is not page one —
+     * and so is the place, which is the part that keeps the field off
+     * every other number in the margin. A running head reading
+     * "9/3/26, 1:04 AM" holds a 1, and on page one it is the page's own
+     * number by value; written as a field it would say a different hour on
+     * every page of the document. What tells the two apart is not what a
+     * number says on one page but whether that place keeps step across
+     * them, so the place is what is carried.
      */
-    private class Counted(val offset: Int)
+    private class Counted(
+        val offset: Int,
+        /** Which line down the page, as the running lines are grouped. */
+        val band: Int,
+        /** Which number of that line, counting every run of digits in it. */
+        val at: Int,
+    )
+
+    /** One number in one place, and the step it would make of the pages. */
+    private data class Place(val band: Int, val at: Int, val offset: Int)
+
+    /** Which line down the page [line] is, as the running lines are grouped. */
+    private fun bandOf(line: PdfLine): Int = (line.baselineY / SAME_PLACE_PT).toInt()
 
     private fun pageNumber(running: Set<PdfLine>): Counted? {
         // A page's number may be written anywhere in its furniture, so
-        // every number on every furniture line is a candidate, and the one
-        // that keeps step with the pages is the number.
-        val offsets = running
-            .flatMap { line -> DIGIT_RUN.findAll(line.text).mapNotNull { value(it.value) }.map { it - line.page } }
+        // every number on every furniture line is a candidate — but a
+        // candidate is a place rather than a value, and the place that
+        // keeps step with the pages is the number. A date in a running
+        // head holds numbers that match a page here and there and never
+        // keep step, so it never wins and, having lost, is left alone.
+        val places = running
+            .flatMap { line ->
+                DIGIT_RUN.findAll(line.text).toList().mapIndexedNotNull { at, run ->
+                    value(run.value)?.let { Place(bandOf(line), at, it - line.page) }
+                }
+            }
             .groupingBy { it }
             .eachCount()
-        val (offset, seen) = offsets.maxByOrNull { it.value } ?: return null
+        val (place, seen) = places.maxByOrNull { it.value } ?: return null
         if (seen < REPEATS_TO_BE_RUNNING) return null
-        return Counted(offset)
+        return Counted(place.offset, place.band, place.at)
     }
 
     /** [text] as a number, whichever digits it is written in. */
@@ -838,34 +865,44 @@ object PageFurniture {
             null
         }
         return Paragraph(
-            runs = counted?.let { numbered(runs, it, line.page) } ?: runs,
+            runs = counted?.let { numbered(runs, it, line) } ?: runs,
             style = ParagraphStyle(alignment = alignment, spaceBeforePt = 0f, spaceAfterPt = 0f),
         )
     }
 
-    /** [runs] with the digits that count the pages replaced by a field. */
-    private fun numbered(runs: List<TextRun>, counted: Counted, page: Int): List<TextRun> {
-        val wanted = (page + counted.offset).toString()
+    /**
+     * [runs] with the digits that count the pages replaced by a field.
+     *
+     * Only the place that was found to keep step, and only where it still
+     * reads as this page's number: a line that is not that line keeps
+     * every digit it showed, and so does a number that has moved.
+     */
+    private fun numbered(runs: List<TextRun>, counted: Counted, line: PdfLine): List<TextRun> {
+        if (bandOf(line) != counted.band) return runs
+        val wanted = line.page + counted.offset
         val out = mutableListOf<TextRun>()
+        // Digit runs are counted across the whole line, since the look of
+        // a running head can change in the middle of one and the count has
+        // to mean the same thing here as it did where the place was found.
+        var seen = 0
         var done = false
         for (run in runs) {
-            val at = if (done) -1 else placeOf(run.text, wanted)
-            if (at < 0) {
+            val numbers = DIGIT_RUN.findAll(run.text).toList()
+            val found = if (done) null else numbers.withIndex().firstOrNull { (which, number) ->
+                seen + which == counted.at && value(number.value) == wanted
+            }?.value
+            seen += numbers.size
+            if (found == null) {
                 out += run
                 continue
             }
             done = true
-            val found = DIGIT_RUN.findAll(run.text).first { value(it.value) == page + counted.offset }
             if (found.range.first > 0) out += run.copy(text = run.text.substring(0, found.range.first))
-            out += run.copy(text = wanted, field = RunField.PAGE_NUMBER)
+            out += run.copy(text = found.value, field = RunField.PAGE_NUMBER)
             if (found.range.last + 1 < run.text.length) {
                 out += run.copy(text = run.text.substring(found.range.last + 1))
             }
         }
         return out
     }
-
-    /** Where in [text] the whole number [wanted] is written, or -1 when it is not. */
-    private fun placeOf(text: String, wanted: String): Int =
-        DIGIT_RUN.findAll(text).firstOrNull { value(it.value)?.toString() == wanted }?.range?.first ?: -1
 }
