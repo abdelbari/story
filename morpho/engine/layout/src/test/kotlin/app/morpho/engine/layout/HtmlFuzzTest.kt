@@ -1,6 +1,7 @@
 package app.morpho.engine.layout
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.xml.sax.InputSource
 import java.io.ByteArrayInputStream
@@ -133,7 +134,46 @@ class HtmlFuzzTest {
             val shown = page.getElementsByTagName("body").item(0)
                 .textContent.replace(Regex("\\s+"), " ").trim()
             assertEquals(textOf(document.blocks), shown, "seed $seed")
+            val misnested = misnested(page.getElementsByTagName("body").item(0))
+            assertTrue(misnested.isEmpty(), "seed $seed: " + misnested.joinToString(", "))
         }
+    }
+
+    /** Blocks HTML does not allow where they stand, which a browser moves. */
+    private val blockTags = setOf(
+        "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "table", "thead", "tbody",
+        "tr", "td", "th", "ul", "ol", "li", "section", "header", "footer", "hr",
+        "blockquote", "pre", "figure",
+    )
+
+    /** Tags that hold text and nothing block-shaped. */
+    private val inlineTags = setOf("span", "a", "em", "strong", "u", "s", "sub", "sup", "b", "i")
+
+    /**
+     * Every block written somewhere HTML does not allow one.
+     *
+     * A paragraph closes at the first block inside it and an inline
+     * element cannot hold one at all, so a browser does not read what
+     * such a page says — it moves the block out and leaves the rest
+     * behind it, which on a phone is a preview whose halves have swapped
+     * places. Parsing as XML proves the tags are balanced and says
+     * nothing about this: a div inside a p is perfectly well-formed XML.
+     */
+    private fun misnested(root: org.w3c.dom.Node): List<String> {
+        val faults = mutableListOf<String>()
+        fun walk(node: org.w3c.dom.Node, inside: List<String>) {
+            val name = (node as? org.w3c.dom.Element)?.tagName?.lowercase()
+            if (name != null && name in blockTags) {
+                if (name != "p" && "p" in inside) faults += "<$name> inside <p>"
+                if (name == "p" && "p" in inside) faults += "<p> inside <p>"
+                inside.lastOrNull()?.takeIf { it in inlineTags }?.let { faults += "<$name> inside <$it>" }
+            }
+            val deeper = if (name == null) inside else inside + name
+            val children = node.childNodes
+            for (index in 0 until children.length) walk(children.item(index), deeper)
+        }
+        walk(root, emptyList())
+        return faults
     }
 
     /**

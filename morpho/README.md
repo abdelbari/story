@@ -311,6 +311,17 @@ for.
   read; but they are given, because a file that quietly loses the half of
   itself carrying the figures says nothing about it, and the reader has no
   way to know. HTML and Word already kept both.
+- **The preview is read the way a browser reads it:** three hundred
+  documents nobody wrote already go through the preview writer and come
+  back as the same words, parsed strictly as XML — which proves the tags
+  are balanced and says nothing about where they stand. A `<div>` inside a
+  `<p>` is perfectly well-formed XML, and a browser does not read it as
+  written: a paragraph closes at the first block inside it, an inline
+  element cannot hold one at all, and what a browser does instead is move
+  the block out and leave the rest behind it — on a phone, a preview whose
+  halves have swapped places. That is now checked too, over the same three
+  hundred, and by an outside HTML5 parser over every document of the
+  corpus. Nothing is misplaced today; nothing was looking.
 - **Every picture of a converted document was unlabelled:** a screen
   reader met it, said "image", and stopped; Word's own accessibility check
   called the document out. Two places already knew what a picture shows
