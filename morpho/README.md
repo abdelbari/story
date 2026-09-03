@@ -624,6 +624,33 @@ for.
   thousand eight hundred paragraphs of the corpus, which is not enough to
   earn a rule that could be wrong somewhere else.
 
+  A third approach was measured since and is the best of the three, and
+  still not enough. The geometric signal is absent, but a textual one is
+  not: an entry in this style opens with a surname, a comma, a given name
+  and a year in brackets within the next seventy characters, and a
+  continuation line does none of that. Anchored at word starts and taking
+  the leftmost opening of any overlapping pair, it finds five places
+  inside the untagged reading's joined paragraphs where an entry begins,
+  four of which land exactly on a paragraph boundary the tags declare.
+  The fifth misses by one word: the surname is "عبد الله", two words, and
+  the rule takes the second — separating them needs a list of the
+  particles Arabic names compound with, عبد and أبو and ابن and آل, which
+  fixes this paper and is tuned on this paper.
+
+  It fires nowhere else in the corpus, in any document, through Word and
+  back. That sounds like the safety evidence the earlier attempts lacked
+  and it is not: eight of those documents are fixtures written for other
+  purposes, whose prose is "Paragraph 1 of page 1, set in the measure of
+  the page", and a rule about names and dates in running text is not
+  tested by text that holds neither. The evidence for the rule is one
+  paper — the one it was found on. A rule that cuts a paragraph in two on
+  the strength of a name pattern, wrong, chops a sentence in half in the
+  middle of somebody's document and says nothing. Five entries recovered
+  in the one bibliography that can be checked does not buy that, and the
+  finding is written here rather than shipped so that a corpus of real
+  bibliographies, when there is one, starts from the signal that works
+  rather than from the two that do not.
+
   Where the file *is* tagged, none of that applies and none of it happens:
   the producer says outright where each paragraph begins, and the tagged
   reading — which is the reading that paper actually gets, and every
