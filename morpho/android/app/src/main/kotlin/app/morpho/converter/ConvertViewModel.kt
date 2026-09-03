@@ -574,7 +574,11 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             }
             val jobName = source.fileName.substringBeforeLast('.').ifEmpty { "document" }
             try {
-                val html = HtmlWriter.write(modelOf(input, source), jobName)
+                // The page this becomes is a PDF, not a preview: it
+                // carries no notes, so that printing a commented
+                // document here gives the same document as writing it
+                // out with the app's own layout, which draws none.
+                val html = HtmlWriter.write(modelOf(input, source), jobName, comments = false)
                 publish(epoch, ConvertUiState.ReadyToPrint(html, jobName))
             } catch (e: UnconvertibleContent) {
                 publish(epoch, ConvertUiState.Failed(e.reason))

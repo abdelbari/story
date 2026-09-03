@@ -73,9 +73,31 @@ class CommentedPreviewTest {
     }
 
     @Test
-    fun `a note nothing is about is not marked in the text and is still read`() {
-        // A note that lost its anchor is still what somebody said. It is
-        // shown at the end rather than dropped without a word.
+    fun `the page this app prints carries no notes at all`() {
+        // The printed page becomes a PDF, and the app's own layout draws
+        // no notes into one. A page that showed the marks but not the
+        // notes would be worse than either: words shaded yellow with
+        // nothing anywhere to say why.
+        val document = DocumentModel(
+            blocks = listOf(
+                Paragraph(listOf(TextRun("Written in "), TextRun("the spring", commentIds = listOf(1))))
+            ),
+            comments = listOf(note),
+        )
+        val printed = HtmlWriter.write(document, title = null, comments = false)
+            .substringAfter("</style>")
+        assertFalse(printed.contains("comment"), printed)
+        assertTrue(printed.contains("the spring"), "the words themselves were lost with the note")
+        // And the preview, which is read rather than printed, keeps them.
+        assertTrue(html(document).substringAfter("</style>").contains("Say which year."))
+    }
+
+    @Test
+    fun `a note nothing is about is shown nowhere rather than shown loose`() {
+        // A note whose words are gone has nothing to be about. Shown at
+        // the end on its own it would be a remark about the document as a
+        // whole, which is not what was written, so it is shown nowhere —
+        // the same rule the Word writer follows.
         val page = html(
             DocumentModel(
                 blocks = listOf(Paragraph(listOf(TextRun("Plain.")))),

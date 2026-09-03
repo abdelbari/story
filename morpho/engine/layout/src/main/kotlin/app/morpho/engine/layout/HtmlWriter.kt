@@ -38,10 +38,20 @@ object HtmlWriter {
      */
     private val remarks = ThreadLocal<Remarks>()
 
-    fun write(document: DocumentModel, title: String? = null): String =
+    /**
+     * [document] as a page.
+     *
+     * With [comments] false the notes people left about it are left out —
+     * both the marks on the words and the notes themselves. That is for
+     * the page this app prints to make a PDF: Word does not print a
+     * document's comments either unless it is asked to, and a printed
+     * page has no margin to put them in. The preview, which is the page
+     * somebody reads before trusting the conversion, keeps them.
+     */
+    fun write(document: DocumentModel, title: String? = null, comments: Boolean = true): String =
         try {
             noteNumbers.set(numberNotes(document.blocks))
-            remarks.set(Remarks.of(document))
+            remarks.set(if (comments) Remarks.of(document) else Remarks.NONE)
             writeDocument(document, title)
         } finally {
             noteNumbers.remove()
@@ -79,9 +89,12 @@ object HtmlWriter {
         fun endingAt(run: TextRun): List<Int> = ends[run].orEmpty()
 
         companion object {
+            /** What a page that shows no notes knows about them. */
+            val NONE = Remarks(emptyMap(), emptyMap(), IdentityHashMap())
+
             fun of(document: DocumentModel): Remarks {
                 val said = document.comments.associateBy { it.id }
-                if (said.isEmpty()) return Remarks(emptyMap(), emptyMap(), IdentityHashMap())
+                if (said.isEmpty()) return NONE
                 val numbers = LinkedHashMap<Int, Int>()
                 val last = LinkedHashMap<Int, TextRun>()
                 fun walk(blocks: List<Block>) {
