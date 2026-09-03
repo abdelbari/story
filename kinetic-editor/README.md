@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 40 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 41 pure-JVM logic tests
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
@@ -40,8 +40,8 @@ environment, so the app has not been assembled by Gradle there. Instead:
   undefined name and a missing import in `EditorScreen`.)
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 40 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 43-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 41 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 44-scenario executable sandbox suite.
 
 ---
 

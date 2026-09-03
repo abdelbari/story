@@ -31,6 +31,7 @@ import com.kinetic.editor.core.mvi.EditorIntent
 import com.kinetic.editor.core.mvi.EditorStore
 import com.kinetic.editor.core.mvi.reduce
 import com.kinetic.editor.effects.ClipGradeProvider
+import com.kinetic.editor.effects.EditorShaders
 import com.kinetic.editor.effects.FxSegment
 import com.kinetic.editor.effects.GradeUniformsBuffer
 import com.kinetic.editor.effects.PreviewFxProvider
@@ -402,6 +403,18 @@ class CoreLogicTest {
 
         val trimmed = reduce(withPip, EditorIntent.TrimClip(pipClip.id, 500, 4_000))
         assertNotEquals(withPip.overlayStructureHash(), trimmed.overlayStructureHash())
+    }
+
+    @Test
+    fun shaderSourcesAreAsciiOnly() {
+        // GLSL ES 1.00 restricts the source character set to ASCII, comments
+        // included. A typographic dash in a comment makes strict drivers reject
+        // the whole program — at runtime, on some devices only, which is the
+        // worst way to find out.
+        for (src in listOf(EditorShaders.VERTEX, EditorShaders.FRAGMENT)) {
+            val offender = src.firstOrNull { it.code > 127 }
+            assertNull("non-ASCII character in shader source: $offender", offender)
+        }
     }
 
     @Test

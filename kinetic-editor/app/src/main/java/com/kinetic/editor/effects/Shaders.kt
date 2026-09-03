@@ -24,7 +24,14 @@ void main() {
     // Transition type ids, mirrored in Kotlin (TransitionType.ordinal).
     // 0 = none, 1 = dip-to-black, 2 = wipe-left, 3 = zoom-punch.
     const val FRAGMENT = """
+// highp where the device offers it: the LUT's tile coordinates are the one
+// computation here that mediump's 10-bit mantissa can visibly band. Fragment
+// highp is optional in GLES 2, and the guard macro is how the spec says to ask.
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
 precision mediump float;
+#endif
 varying vec2 vTexCoords;
 uniform sampler2D uTexSampler;
 uniform sampler2D uLutSampler;
@@ -77,8 +84,13 @@ void main() {
     c *= abs(1.0 - 2.0 * p);
   } else if (uTransType > 1.5 && uTransType < 2.5) {
     // Wipe: a soft black curtain sweeps in over A, sweeps off B.
+    // The edge travels from just off the left of the frame to just off the
+    // right, so at both ends of the transition the frame is untouched. Mapping
+    // it to [0, 1] instead would darken a strip of the left edge on the very
+    // first frame, before the wipe has visibly begun.
     float coverage = 1.0 - abs(1.0 - 2.0 * p);  // 0 -> 1 -> 0
-    c *= smoothstep(coverage - 0.06, coverage + 0.06, uv.x);
+    float edge = mix(-0.07, 1.07, coverage);
+    c *= smoothstep(edge - 0.06, edge + 0.06, uv.x);
   } else if (uTransType > 2.5) {
     // Zoom-punch adds a subtle exposure dip so the warp reads as intentional.
     c *= 1.0 - 0.25 * (1.0 - abs(1.0 - 2.0 * p));
