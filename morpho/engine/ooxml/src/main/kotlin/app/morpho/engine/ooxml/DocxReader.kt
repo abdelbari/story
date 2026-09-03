@@ -115,7 +115,7 @@ object DocxReader {
             val media = MediaStore(parts, "word/_rels/document.xml.rels")
             val body = firstChild(parseXml(documentPart).documentElement, "body")
                 ?: return DocumentModel(blocks = emptyList())
-            val sectPr = firstChild(body, "sectPr")
+            val sectPr = mainSection(body)
             // The notes parts, read first: a mark in the text refers to a
             // note by number, and the note lives out here. A document counts
             // its footnotes and its endnotes apart, so note 1 may be two
@@ -620,6 +620,26 @@ object DocxReader {
     }
 
     /** The section's page size and margins, when it states them. */
+    /**
+     * The section most of the document is written in.
+     *
+     * A document is a run of sections, and each says where it ends: the
+     * properties of a section are written on the last paragraph of it, and
+     * the last section's on the body itself. Reading the body's alone gives
+     * a report of forty portrait pages the shape of the landscape table at
+     * the end of it, so the sections are counted and the page most of them
+     * are set on wins. Ties go to the first, which is where a document
+     * begins.
+     */
+    private fun mainSection(body: Element): Element? {
+        val sections = descendantsNS(body, W, "sectPr")
+        if (sections.size <= 1) return sections.firstOrNull()
+        val bySize = sections.groupBy { section ->
+            firstChild(section, "pgSz")?.let { attr(it, "w") to attr(it, "h") }
+        }
+        return bySize.values.maxByOrNull { it.size }?.first() ?: sections.first()
+    }
+
     private fun parsePageSetup(sectPr: Element): PageSetup? {
         val size = firstChild(sectPr, "pgSz") ?: return null
         val width = twips(attr(size, "w")) ?: return null

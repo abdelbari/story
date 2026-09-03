@@ -305,7 +305,16 @@ object PdfLayout {
         blockByPage: Map<Int, Pair<Float, Float>>,
         lines: List<PdfLine>,
     ): PageSetup? {
-        val sheet = sheets.firstOrNull { it.widthPt > 0f && it.heightPt > 0f } ?: return null
+        // The sheet most of the document is written on, not whichever page
+        // happens to come first: a report of forty portrait pages with one
+        // landscape table in it is a portrait report, and a cover page of
+        // its own size does not make the document that size.
+        val usable = sheets.filter { it.widthPt > 0f && it.heightPt > 0f }
+        val sheet = usable
+            .groupBy { it.widthPt to it.heightPt }
+            .maxByOrNull { (_, pages) -> pages.size }
+            ?.value?.first()
+            ?: return null
         if (blockByPage.isEmpty() || lines.isEmpty()) return null
         // The median page's edges, so one runaway line cannot flatten a margin.
         val left = HeadingSizes.median(blockByPage.values.map { it.first })

@@ -66,4 +66,30 @@ class TurnedPageTest {
         }
         return out.toByteArray()
     }
+
+    @Test
+    fun `a document of many pages takes the shape most of them have`() {
+        // Three upright pages and one on its side: an upright document
+        // with a wide table in it, not a wide document.
+        val out = ByteArrayOutputStream()
+        PDDocument().use { document ->
+            for (index in 0 until 4) {
+                val page = PDPage(if (index == 3) PDRectangle(842f, 595f) else PDRectangle.A4)
+                document.addPage(page)
+                PDPageContentStream(document, page).use { content ->
+                    content.beginText()
+                    content.setFont(PDType1Font.HELVETICA, 12f)
+                    content.newLineAtOffset(72f, 700f)
+                    content.showText("Page " + (index + 1))
+                    content.endText()
+                }
+            }
+            document.save(out)
+        }
+        val setup = PdfReader().extract(out.toByteArray()).pageSetup
+        assertTrue(
+            setup != null && setup.heightPt > setup.widthPt,
+            "the document took the shape of one page in four",
+        )
+    }
 }
