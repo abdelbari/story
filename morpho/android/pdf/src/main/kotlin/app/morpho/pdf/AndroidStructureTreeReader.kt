@@ -520,8 +520,14 @@ internal object AndroidStructureTreeReader {
             val pageHighlights = runCatching { AndroidPageHighlights(doc) }.getOrNull()
             for ((index, page) in doc.pages.withIndex()) {
                 pageIndexByPage[page.cosObject] = index
-                pageWidthByIndex[index] = runCatching { page.mediaBox.width }.getOrDefault(0f)
-                pageHeightByIndex[index] = runCatching { page.mediaBox.height }.getOrDefault(0f)
+                // A page may be written portrait and turned a quarter turn
+                // to be read: the text is measured in the frame it is read
+                // in, so the sheet is the one the reader sees.
+                val turned = ((runCatching { page.rotation }.getOrDefault(0) % 360) + 360) % 360 % 180 != 0
+                val width = runCatching { page.mediaBox.width }.getOrDefault(0f)
+                val height = runCatching { page.mediaBox.height }.getOrDefault(0f)
+                pageWidthByIndex[index] = if (turned) height else width
+                pageHeightByIndex[index] = if (turned) width else height
                 val extractor =
                     ResolvingMarkedContentExtractor(page, pageLinks?.page(index), pageHighlights?.page(index))
                 runCatching { extractor.processPage(page) }
@@ -1748,11 +1754,22 @@ internal object AndroidStructureTreeReader {
                 walkChildren(table, depth)
                 return
             }
+            // A table of Arabic is laid out from the right: the producer
+            // tags its rightmost cell first, which is the order it is read
+            // in, so the cells stand as they are and the widths are
+            // measured the same way round.
+            val rightToLeft =
+                Bidi.dominantDirection(rows.joinToString(" ") { row ->
+                    row.cells.joinToString(" ") { cell ->
+                        cell.blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }
+                    }
+                }) == TextDirection.RTL
             blocks += Table(
                 rows = rows,
                 confidence = CONFIDENCE,
-                columnWidthsPt = columnWidthsOf(cellGlyphs),
+                columnWidthsPt = columnWidthsOf(cellGlyphs, rightToLeft),
                 ruled = texts.ruledLike(cellGlyphs.flatten().flatten()),
+                direction = if (rightToLeft) TextDirection.RTL else TextDirection.LTR,
             )
         }
 
@@ -1775,7 +1792,14 @@ internal object AndroidStructureTreeReader {
          * when the rows do not agree on how many columns there are, or when
          * a column drew nothing to measure.
          */
-        private fun columnWidthsOf(cellGlyphs: List<List<List<Pair<Int, Glyph>>>>): List<Float>? {
+        private fun columnWidthsOf(
+            cells: List<List<List<Pair<Int, Glyph>>>>,
+            rightToLeft: Boolean = false,
+        ): List<Float>? {
+            // The columns are cut apart across the page from the left; a
+            // table read from the right is measured left to right all the
+            // same and its widths turned round at the end.
+            val cellGlyphs = if (rightToLeft) cells.map { it.reversed() } else cells
             val columns = cellGlyphs.firstOrNull()?.size ?: return null
             if (columns < 1 || cellGlyphs.any { it.size != columns }) return null
             val starts = FloatArray(columns) { Float.POSITIVE_INFINITY }
@@ -1795,6 +1819,7 @@ internal object AndroidStructureTreeReader {
             edges += ends.last()
             val widths = edges.zipWithNext { left, right -> right - left }
             return widths.takeIf { widths.all { it > 1f } }
+                ?.let { if (rightToLeft) it.reversed() else it }
         }
 
         /** All text under an element, in tag (logical) order. */

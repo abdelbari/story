@@ -351,8 +351,17 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
     /** Remembers the sheet a page was drawn on, the first time it draws text. */
     private fun rememberSheet() {
         sheets.getOrPut(currentPageNo) {
-            val box = runCatching { document.getPage(currentPageNo - 1).cropBox }.getOrNull()
-            floatArrayOf(box?.width ?: 0f, box?.height ?: 0f)
+            val page = runCatching { document.getPage(currentPageNo - 1) }.getOrNull()
+            val box = page?.cropBox
+            // A page may be written portrait and turned a quarter turn to be
+            // read: the text is measured in the frame it is read in, so the
+            // sheet is the one the reader sees, not the one it was written on.
+            val turned = ((page?.rotation ?: 0) % 360 + 360) % 360 % 180 != 0
+            if (turned) {
+                floatArrayOf(box?.height ?: 0f, box?.width ?: 0f)
+            } else {
+                floatArrayOf(box?.width ?: 0f, box?.height ?: 0f)
+            }
         }
     }
 

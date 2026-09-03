@@ -516,8 +516,14 @@ internal object StructureTreeReader {
             val pageHighlights = runCatching { PageHighlights(doc) }.getOrNull()
             for ((index, page) in doc.pages.withIndex()) {
                 pageIndexByPage[page.cosObject] = index
-                pageWidthByIndex[index] = runCatching { page.mediaBox.width }.getOrDefault(0f)
-                pageHeightByIndex[index] = runCatching { page.mediaBox.height }.getOrDefault(0f)
+                // A page may be written portrait and turned a quarter turn
+                // to be read: the text is measured in the frame it is read
+                // in, so the sheet is the one the reader sees.
+                val turned = ((runCatching { page.rotation }.getOrDefault(0) % 360) + 360) % 360 % 180 != 0
+                val width = runCatching { page.mediaBox.width }.getOrDefault(0f)
+                val height = runCatching { page.mediaBox.height }.getOrDefault(0f)
+                pageWidthByIndex[index] = if (turned) height else width
+                pageHeightByIndex[index] = if (turned) width else height
                 val extractor =
                     ResolvingMarkedContentExtractor(page, pageLinks?.page(index), pageHighlights?.page(index))
                 runCatching { extractor.processPage(page) }
