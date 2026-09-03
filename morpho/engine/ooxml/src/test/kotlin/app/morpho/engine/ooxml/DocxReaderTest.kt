@@ -151,6 +151,52 @@ class DocxReaderTest {
     }
 
     @Test
+    fun `a document that runs right to left says so, and comes back saying it`() {
+        // Word keeps a document's direction once, in its section, and
+        // every paragraph runs that way unless it says otherwise. Written
+        // without it, an Arabic document comes back from Word laid out
+        // from the left: its tables read backwards and its running head
+        // sits at the wrong margin.
+        val model = DocumentModel(
+            listOf(Paragraph(listOf(TextRun("الاستمارة في البحث العلمي")))),
+            defaultDirection = TextDirection.RTL,
+        )
+        val docx = DocxWriter.toByteArray(model)
+        val xml = String(
+            java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(docx)).use { zip ->
+                var found = ByteArray(0)
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    if (entry.name == "word/document.xml") found = zip.readBytes()
+                }
+                found
+            },
+            Charsets.UTF_8,
+        )
+        assertTrue(xml.contains("<w:bidi/></w:sectPr>"), "the section does not say which way it runs")
+        assertEquals(TextDirection.RTL, DocxReader.read(docx).defaultDirection)
+    }
+
+    @Test
+    fun `a paragraph running the other way from its document says so outright`() {
+        // The one English paragraph of an Arabic document — an address, an
+        // abstract, a line of code. Left to the section it comes back
+        // turned round, and a paragraph with nothing at all to say about
+        // direction is exactly what it looked like.
+        val model = PlainTextImporter.import(
+            "الاستمارة في البحث العلمي\n\nUne ligne en français ici.\n\nسطر عربي آخر بعده."
+        )
+        assertEquals(TextDirection.RTL, model.defaultDirection)
+        val back = DocxReader.read(DocxWriter.toByteArray(model))
+        assertEquals(TextDirection.RTL, back.defaultDirection)
+        assertEquals(
+            model.blocks.filterIsInstance<Paragraph>().map { it.style.direction },
+            back.blocks.filterIsInstance<Paragraph>().map { it.style.direction },
+            "the directions the document gave its paragraphs did not come back",
+        )
+    }
+
+    @Test
     fun `table round-trips shape and the arabic cell keeps rtl and language`() {
         val table = roundTrip().blocks.last() as Table
         assertEquals(2, table.rows.size)

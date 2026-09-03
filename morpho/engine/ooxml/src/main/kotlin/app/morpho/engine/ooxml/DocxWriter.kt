@@ -566,7 +566,8 @@ object DocxWriter {
         sb.append("<w:p>")
         val largest = paragraph.runs.maxOfOrNull { it.fontSizePt ?: 0f } ?: 0f
         appendParagraphProperties(
-            sb, paragraph.style, effectiveDirection, numbering.numIdFor(paragraph), largest,
+            sb, paragraph.style, effectiveDirection, document.defaultDirection,
+            numbering.numIdFor(paragraph), largest,
             endsSection?.let { sectPr(document, it) },
         )
         // The names this place answers to, opened and closed around its
@@ -615,6 +616,8 @@ object DocxWriter {
         sb: StringBuilder,
         style: app.morpho.engine.layout.ParagraphStyle,
         effectiveDirection: TextDirection,
+        /** Which way the section round this paragraph runs, which it inherits unless it says otherwise. */
+        inherited: TextDirection,
         numId: Int?,
         largestSizePt: Float = 0f,
         /** The properties of the section this paragraph ends, written last as the schema wants. */
@@ -642,12 +645,18 @@ object DocxWriter {
             Alignment.START, null -> null
         }
         val rtl = effectiveDirection == TextDirection.RTL
+        // A paragraph running the other way from its section has something
+        // to say even when it has nothing else: left to the section, the
+        // one English paragraph of an Arabic document comes back turned
+        // round.
+        val turnedBack = !rtl && inherited == TextDirection.RTL
         val spacing = spacingXml(style, largestSizePt)
         val indent = indentXml(style)
         val tabs = style.tabStopsPt?.filter { it > 0f }?.takeIf { it.isNotEmpty() }
         val rules = style.ruleAbove || style.ruleBelow
 
-        if (styleId == null && numId == null && jc == null && !rtl && spacing == null && indent == null &&
+        if (styleId == null && numId == null && jc == null && !rtl && !turnedBack &&
+            spacing == null && indent == null &&
             tabs == null && !rules && !style.pageBreakBefore && sectionProperties == null
         ) return
 
@@ -672,7 +681,14 @@ object DocxWriter {
             for (stop in tabs.sorted()) sb.append("""<w:tab w:val="left" w:pos="${twips(stop)}"/>""")
             sb.append("</w:tabs>")
         }
+        // A paragraph that runs the other way from the section it stands
+        // in has to say so. Word reads a paragraph with nothing to say
+        // about direction as running the way its section does, so in a
+        // right-to-left document the one English paragraph — an address,
+        // an abstract, a line of code — comes back turned round unless it
+        // is written as left-to-right outright.
         if (rtl) sb.append("<w:bidi/>")
+        else if (turnedBack) sb.append("<w:bidi w:val=\"0\"/>")
         spacing?.let(sb::append)
         indent?.let(sb::append)
         if (jc != null) sb.append("""<w:jc w:val="$jc"/>""")
@@ -1110,6 +1126,15 @@ object DocxWriter {
         // Word reads a section whose children are out of order as no
         // section at all.
         if (page?.differentFirstPage == true) sb.append("<w:titlePg/>")
+        // Which way the document runs. Word keeps it here, once, for the
+        // whole section — every paragraph then runs that way unless it
+        // says otherwise — and a document written without it comes back
+        // from Word laid out from the left however much Arabic is in it:
+        // its tables read backwards and its running head sits at the
+        // wrong margin. It goes after w:titlePg, which is where the
+        // schema puts it, and a section whose children are out of order
+        // is a section Word will not read at all.
+        if (document.defaultDirection == TextDirection.RTL) sb.append("<w:bidi/>")
         return sb.append("</w:sectPr>").toString()
     }
 

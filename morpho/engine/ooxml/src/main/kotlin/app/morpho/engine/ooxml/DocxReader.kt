@@ -141,6 +141,16 @@ object DocxReader {
                     sections = sectionShapes(body),
                 ),
                 defaultLanguage = styles.language,
+                // Which way the document runs, as its section says. Word
+                // marks a right-to-left document with one element in its
+                // section properties, and a reader that never asked hands
+                // back an Arabic document laid out from the left: its
+                // tables read backwards, its running head sits at the
+                // wrong margin, and every paragraph that did not say so
+                // for itself is turned round.
+                defaultDirection = sectPr?.let { held ->
+                    if (isOn(firstChild(held, "bidi"))) TextDirection.RTL else TextDirection.LTR
+                } ?: TextDirection.LTR,
                 pageSetup = sectPr?.let(::parsePageSetup),
                 header = sectPr?.let { furniture(it, "headerReference", parts, media, numbering, styles, at) }.orEmpty(),
                 footer = sectPr?.let { furniture(it, "footerReference", parts, media, numbering, styles, at) }.orEmpty(),
@@ -729,7 +739,13 @@ object DocxReader {
         val pageBreakBefore = isOn(properties["pageBreakBefore"])
         return ParagraphStyle(
             kind = kind,
-            direction = if (isOn(properties["bidi"])) TextDirection.RTL else null,
+            // Present and off is a paragraph saying outright that it runs
+            // left to right, which in a right-to-left document is the only
+            // way to say it; absent is a paragraph with nothing to say,
+            // which runs the way its section does.
+            direction = properties["bidi"]?.let {
+                if (isOn(it)) TextDirection.RTL else TextDirection.LTR
+            },
             listMarker = listMarker,
             listLevel = if (listMarker == null) 0 else listLevel,
             listFormat = counting?.format?.takeIf { listMarker == ListMarker.NUMBERED },
