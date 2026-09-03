@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 400 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 405 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -89,6 +89,9 @@ Work through, in this order — each exercises a path nothing else covers:
       sub-clauses, or bullets under bullets. Each level must keep its own
       marker and sit in from the one above, in the preview, in the exported
       PDF and in Word.
+- [ ] **A Word document with footnotes and endnotes**, written in Word
+      itself rather than by Morpho. Every note must be in the converted file
+      under a mark that is numbered in reading order.
 - [ ] **A Word document laid out in text boxes** — a CV or a certificate
       from a template. Every box's text must be in the converted file, once
       each, in the order the boxes are anchored.

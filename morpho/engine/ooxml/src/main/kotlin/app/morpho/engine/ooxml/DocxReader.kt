@@ -4,6 +4,7 @@ import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
+import app.morpho.engine.layout.ListLabels
 import app.morpho.engine.layout.ListMarker
 import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
@@ -89,6 +90,7 @@ object DocxReader {
     /** A running header or footer part, or the relationships of one: word/header1.xml, word/_rels/footer2.xml.rels. */
     private val FURNITURE_PART = Regex("word/(?:_rels/)?(?:header|footer)\\d*\\.xml(?:\\.rels)?")
     private const val NOTES_PART = "word/footnotes.xml"
+    private const val END_NOTES_PART = "word/endnotes.xml"
     private const val EMU_PER_PT = 12700L
     private const val REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
     private const val A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -113,19 +115,14 @@ object DocxReader {
             val body = firstChild(parseXml(documentPart).documentElement, "body")
                 ?: return DocumentModel(blocks = emptyList())
             val sectPr = firstChild(body, "sectPr")
-            // The notes part, read first: a mark in the text refers to a
-            // note by number, and the note lives out here.
-            val notes = parts[NOTES_PART]?.let { bytes ->
-                runCatching {
-                    children(parseXml(bytes).documentElement, "footnote")
-                        .filter { attr(it, "type") == null }
-                        .mapNotNull { note ->
-                            val id = attr(note, "id")?.trim()?.toIntOrNull() ?: return@mapNotNull null
-                            id to parseBlocks(note, numbering, media, depth = 0, styles = styles)
-                        }
-                        .toMap()
-                }.getOrNull()
-            }.orEmpty()
+            // The notes parts, read first: a mark in the text refers to a
+            // note by number, and the note lives out here. A document counts
+            // its footnotes and its endnotes apart, so note 1 may be two
+            // different notes and each is kept under the kind it belongs to.
+            val notes = Notes(
+                notesOf(parts[NOTES_PART], "footnote", numbering, media, styles) +
+                    notesOf(parts[END_NOTES_PART], "endnote", numbering, media, styles)
+            )
             return DocumentModel(
                 blocks = parseBlocks(body, numbering, media, depth = 0, notes = notes, styles = styles),
                 pageSetup = sectPr?.let(::parsePageSetup),
@@ -146,7 +143,10 @@ object DocxReader {
             while (true) {
                 val entry = zip.nextEntry ?: break
                 if (!entry.isDirectory &&
-                    (entry.name in NEEDED_PARTS || entry.name == NOTES_PART || FURNITURE_PART.matches(entry.name))
+                    (
+                        entry.name in NEEDED_PARTS || entry.name == NOTES_PART ||
+                            entry.name == END_NOTES_PART || FURNITURE_PART.matches(entry.name)
+                        )
                 ) {
                     parts[entry.name] = readBounded(zip, entry.name, MAX_PART_BYTES)
                 } else if (!entry.isDirectory && entry.name.startsWith("word/media/")) {
@@ -263,7 +263,7 @@ object DocxReader {
         media: MediaStore,
         depth: Int,
         inline: Boolean = false,
-        notes: Map<Int, List<Block>> = emptyMap(),
+        notes: Notes = Notes(),
         styles: StyleSheet,
         fromTable: Inherited = Inherited.NONE,
     ): List<Block> {
@@ -377,7 +377,7 @@ object DocxReader {
         numbering: Map<String, Map<Int, ListMarker>>,
         media: MediaStore? = null,
         inline: Boolean = false,
-        notes: Map<Int, List<Block>> = emptyMap(),
+        notes: Notes = Notes(),
         styles: StyleSheet,
         fromTable: Inherited = Inherited.NONE,
     ): Paragraph? {
@@ -414,7 +414,7 @@ object DocxReader {
         depth: Int,
         media: MediaStore? = null,
         inline: Boolean = false,
-        notes: Map<Int, List<Block>> = emptyMap(),
+        notes: Notes = Notes(),
         styles: StyleSheet,
         inherited: Map<String, Element> = emptyMap(),
     ): List<TextRun> {
@@ -715,12 +715,65 @@ object DocxReader {
     private fun twips(value: String?): Float? =
         value?.trim()?.toFloatOrNull()?.let { it / 20f }
 
+    /**
+     * Which note a mark refers to: a document counts its footnotes and its
+     * endnotes separately, so the number alone does not say which note.
+     */
+    private data class NoteRef(val kind: String, val id: Int)
+
+    /** The notes of one part, by the reference that names each. */
+    private fun notesOf(
+        bytes: ByteArray?,
+        kind: String,
+        numbering: Map<String, Map<Int, ListMarker>>,
+        media: MediaStore,
+        styles: StyleSheet,
+    ): Map<NoteRef, List<Block>> {
+        if (bytes == null) return emptyMap()
+        return runCatching {
+            children(parseXml(bytes).documentElement, kind)
+                // The separator a page draws above its notes is written as
+                // a note of its own; it is furniture, not a note.
+                .filter { attr(it, "type") == null }
+                .mapNotNull { note ->
+                    val id = attr(note, "id")?.trim()?.toIntOrNull() ?: return@mapNotNull null
+                    NoteRef(kind, id) to parseBlocks(note, numbering, media, depth = 0, styles = styles)
+                }
+                .toMap()
+        }.getOrNull().orEmpty()
+    }
+
+    /**
+     * The notes a document keeps out of its text, and the marks that call
+     * them.
+     *
+     * Word draws a note's number itself, so the run that refers to a note
+     * carries no text at all: a reader that keeps only what is written
+     * loses the mark and the note with it. The marks are counted here as
+     * Word counts them — footnotes 1, 2, 3, endnotes i, ii, iii — in the
+     * order the references appear, which is the order they are read in.
+     */
+    private class Notes(private val byRef: Map<NoteRef, List<Block>> = emptyMap()) {
+        private var footnotes = 0
+        private var endnotes = 0
+
+        /** The note the run's [reference] points at, if it carries one. */
+        fun of(r: Element, reference: String, kind: String): List<Block>? =
+            firstChild(r, reference)
+                ?.let { attr(it, "id")?.trim()?.toIntOrNull() }
+                ?.let { byRef[NoteRef(kind, it)] }
+
+        /** The mark to draw for the next note of [kind], as Word would number it. */
+        fun nextMark(kind: String): String =
+            if (kind == "endnote") ListLabels.roman(++endnotes) else (++footnotes).toString()
+    }
+
     /** A run with no w:t at all (drawings, breaks) carries nothing to keep — unless [media] is given and it draws a picture. */
     private fun parseRun(
         r: Element,
         paragraphRtl: Boolean,
         media: MediaStore? = null,
-        notes: Map<Int, List<Block>> = emptyMap(),
+        notes: Notes = Notes(),
         styles: StyleSheet,
         inherited: Map<String, Element> = emptyMap(),
     ): TextRun? {
@@ -730,13 +783,21 @@ object DocxReader {
         }
         // The note a mark refers to lives in a part of its own; the mark
         // itself is the run's text, when the reference says one follows.
-        val note = firstChild(r, "footnoteReference")
-            ?.let { attr(it, "id")?.trim()?.toIntOrNull() }
-            ?.let { notes[it] }
+        val footnote = notes.of(r, "footnoteReference", "footnote")
+        val note = footnote ?: notes.of(r, "endnoteReference", "endnote")
         // A run of tabs alone is text too: Word sets a line of dates with one.
         val textElements = children(r).filter { it.localName == "t" || it.localName == "tab" }
-        if (textElements.isEmpty()) return null
-        val text = textElements.joinToString(separator = "") { if (it.localName == "tab") "\t" else it.textContent }
+        // A run that refers to a note and writes nothing is Word leaving the
+        // number to itself; the mark it would have drawn is made here, since
+        // a page has to show something for the note to hang from.
+        val drawnMark = if (textElements.isEmpty() && note != null) {
+            notes.nextMark(if (footnote != null) "footnote" else "endnote")
+        } else {
+            null
+        }
+        if (textElements.isEmpty() && drawnMark == null) return null
+        val text = drawnMark
+            ?: textElements.joinToString(separator = "") { if (it.localName == "tab") "\t" else it.textContent }
         // In OOXML the absence of w:rtl means a left-to-right run even inside
         // a bidi paragraph, while the IR's null means "inherit" — so inside an
         // RTL paragraph, LTR is recorded explicitly to keep round-trips true.
@@ -780,7 +841,10 @@ object DocxReader {
             direction = if (rtl) TextDirection.RTL else paragraphDirection,
             fontFamily = family,
             fontSizePt = halfPoints?.takeIf { it > 0f }?.let { it / 2f },
-            superscript = vertical == "superscript",
+            // A mark the reader had to make for itself is raised, whatever
+            // the run says: Word's own style raises it, and a document that
+            // does not name that style still means a footnote mark.
+            superscript = vertical == "superscript" || drawnMark != null,
             subscript = vertical == "subscript",
             colorRgb = color,
             highlightRgb = highlight,
@@ -793,7 +857,7 @@ object DocxReader {
         numbering: Map<String, Map<Int, ListMarker>>,
         media: MediaStore,
         depth: Int,
-        notes: Map<Int, List<Block>> = emptyMap(),
+        notes: Notes = Notes(),
         styles: StyleSheet,
     ): Table? {
         // A cell that continues a merge from the row above holds nothing of
