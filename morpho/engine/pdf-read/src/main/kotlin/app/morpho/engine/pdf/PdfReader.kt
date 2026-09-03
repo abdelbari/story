@@ -104,9 +104,15 @@ class PdfReader {
         // them the way a scan is converted.
         val whole = document.documentCatalog.cosObject
         val partCatalog = part.documentCatalog.cosObject
-        for (item in listOf(COSName.STRUCT_TREE_ROOT, COSName.MARK_INFO)) {
+        for (item in listOf(COSName.STRUCT_TREE_ROOT, COSName.MARK_INFO, COSName.LANG)) {
             whole.getDictionaryObject(item)?.let { partCatalog.setItem(item, it) }
         }
+        // And what the whole document said it was. A part lifted out is a
+        // document with nothing in its information dictionary and no
+        // language on it, so a chapter of an Arabic paper converted on its
+        // own arrived nameless and unproofed — every word of it underlined
+        // in red by a Word that had to guess what language to read it in.
+        runCatching { part.documentInformation = document.documentInformation }
         // Asking for pages a document does not have is asking for nothing;
         // reading its first page beats handing back an empty document.
         if (part.numberOfPages == 0 && last > 0) part.addPage(document.getPage(0))

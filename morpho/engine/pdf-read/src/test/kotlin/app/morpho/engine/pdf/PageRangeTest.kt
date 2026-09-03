@@ -62,6 +62,48 @@ class PageRangeTest {
         assertEquals(3, model.blocks.filterIsInstance<Paragraph>().size)
     }
 
+    @Test
+    fun `a part keeps what the whole document said it was`() {
+        // The part is lifted out as a document of its own, and a document
+        // made here has an empty information dictionary and no language on
+        // it. So a chapter of an Arabic paper converted on its own came
+        // out nameless, by nobody, and with nothing to say what language
+        // to proof it in — every word of it underlined in red by Word.
+        val whole = named()
+        val part = PdfReader().extract(whole, "", 2..3)
+        assertEquals("ar-DZ", part.defaultLanguage)
+        assertEquals("الاستمارة في البحث العلمي", part.properties.title)
+        assertEquals("ربيحة نبار", part.properties.author)
+        assertEquals(
+            PdfReader().extract(whole).properties,
+            part.properties,
+            "the part says something different about itself from the whole",
+        )
+    }
+
+    /** Three pages of a document that names itself and says what it is written in. */
+    private fun named(): ByteArray {
+        val out = ByteArrayOutputStream()
+        PDDocument().use { document ->
+            for (name in listOf("one", "two", "three")) {
+                val page = PDPage(PDRectangle.A4)
+                document.addPage(page)
+                PDPageContentStream(document, page).use { content ->
+                    content.beginText()
+                    content.setFont(PDType1Font.HELVETICA, 12f)
+                    content.newLineAtOffset(72f, 700f)
+                    content.showText("Page $name")
+                    content.endText()
+                }
+            }
+            document.documentCatalog.language = "ar-DZ"
+            document.documentInformation.title = "الاستمارة في البحث العلمي"
+            document.documentInformation.author = "ربيحة نبار"
+            document.save(out)
+        }
+        return out.toByteArray()
+    }
+
     private fun textOf(pdf: ByteArray, pages: IntRange?): List<String> =
         PdfReader().extract(pdf, "", pages).blocks
             .filterIsInstance<Paragraph>()
