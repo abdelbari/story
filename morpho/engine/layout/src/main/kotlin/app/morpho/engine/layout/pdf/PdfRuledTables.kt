@@ -60,7 +60,11 @@ object PdfRuledTables {
      * to hold words, or a border round a figure would be read as a table of
      * one cell and the sheet's own frame as a table of the whole page.
      */
-    fun of(lines: List<PdfLine>, drawings: List<PdfDrawing>): List<PdfTableDetector.Region> {
+    fun of(
+        lines: List<PdfLine>,
+        drawings: List<PdfDrawing>,
+        spelling: LineJoiner.Vocabulary = LineJoiner.Vocabulary.NONE,
+    ): List<PdfTableDetector.Region> {
         if (lines.isEmpty() || drawings.isEmpty()) return emptyList()
         val out = mutableListOf<PdfTableDetector.Region>()
         for ((page, drawn) in drawings.groupBy { it.page }) {
@@ -73,7 +77,7 @@ object PdfRuledTables {
             if (across.size <= LEAST_BANDS || down.size <= LEAST_BANDS) continue
             val uprights = drawn.filter { it.widthPt <= THIN_PT && it.heightPt >= LEAST_SIDE_PT }
             val levels = drawn.filter { it.heightPt <= THIN_PT && it.widthPt >= LEAST_SIDE_PT }
-            gridOf(lines, page, across, down, uprights, levels)?.let { out += it }
+            gridOf(lines, page, across, down, uprights, levels, spelling)?.let { out += it }
         }
         return out.sortedBy { it.start }
     }
@@ -99,6 +103,7 @@ object PdfRuledTables {
         down: List<Float>,
         uprights: List<PdfDrawing>,
         levels: List<PdfDrawing>,
+        spelling: LineJoiner.Vocabulary,
     ): PdfTableDetector.Region? {
         val rows = across.size - 1
         val columns = down.size - 1
@@ -178,7 +183,7 @@ object PdfRuledTables {
                     (column until column + wide).flatMap { cells[held][it] }
                 }
                 cellsOfRow += PdfSegment(
-                    text = LineJoiner.join(joinedByLine(own)),
+                    text = LineJoiner.join(joinedByLine(own), spelling),
                     xStart = down[column],
                     xEnd = down[column + wide],
                 )

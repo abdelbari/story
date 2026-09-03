@@ -45,10 +45,16 @@ object PlainTextImporter {
         val blocks = mutableListOf<Block>()
         val buffer = mutableListOf<String>()
         val tableLines = mutableListOf<String>()
+        // The words this text uses, for the hyphens it broke words on. A
+        // page run through OCR, or a document saved as plain text, breaks
+        // them exactly as the page did.
+        val spelling = LineJoiner.Vocabulary.of(lines)
 
         fun flush() {
             if (buffer.isEmpty()) return
-            blocks += paragraph(LineJoiner.join(buffer), ParagraphKind.BODY, listMarker = null, notes = notes)
+            blocks += paragraph(
+                LineJoiner.join(buffer, spelling), ParagraphKind.BODY, listMarker = null, notes = notes,
+            )
             buffer.clear()
         }
 

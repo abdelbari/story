@@ -223,10 +223,14 @@ object PdfLayout {
         // table — carries over the first kind and not the second.
         val filled = filledPages(lines, sheets, rules)
         val deliberate = deliberateBreaks(lines, filled)
+        // The words this document uses, for the hyphens it broke words
+        // on. Collected once over every line of it, because a word broken
+        // on one page is settled by the page that writes it whole.
+        val spelling = LineJoiner.Vocabulary.of(lines.map { it.text })
         // A table the page ruled says exactly where its cells are, wrapped
         // ones included, so it is asked first; the alignment of cells is
         // left to say what it can about every table the page did not rule.
-        val ruledTables = PdfRuledTables.of(lines, drawings)
+        val ruledTables = PdfRuledTables.of(lines, drawings, spelling)
         val byAlignment = PdfTableDetector.detect(lines)
             .filterNot { aligned -> ruledTables.any { it.start < aligned.end && aligned.start < it.end } }
         val regions = joinRunOns((ruledTables + byAlignment).sortedBy { it.start }, lines, filled)
@@ -330,7 +334,7 @@ object PdfLayout {
                 first.baselineY,
                 paragraph(
                     clusterLines, kind, sureness, blockByPage, next, bodyRules,
-                    flatClusters.getOrNull(index - 1)?.lastOrNull(),
+                    flatClusters.getOrNull(index - 1)?.lastOrNull(), spelling,
                 ),
             )
         }
@@ -1155,8 +1159,9 @@ object PdfLayout {
         next: PdfLine?,
         rules: List<PdfRule> = emptyList(),
         previous: PdfLine? = null,
+        spelling: LineJoiner.Vocabulary = LineJoiner.Vocabulary.NONE,
     ): Paragraph {
-        val text = LineJoiner.join(cluster.map { it.text })
+        val text = LineJoiner.join(cluster.map { it.text }, spelling)
         val direction = Bidi.firstStrongDirection(text)
         val runs =
             if (cluster.any { it.runs.isNotEmpty() }) PdfRuns.toTextRuns(joinRuns(cluster, text))
@@ -1230,10 +1235,11 @@ object PdfLayout {
     }
 
     /**
-     * The cluster's runs against the text [LineJoiner] produced: it puts a
-     * space between two lines it joins and drops the hyphen of a word
-     * broken across them, so the runs are walked in step with the joined
-     * text rather than concatenated blindly.
+     * The cluster's runs against the text [LineJoiner] produced: it puts
+     * a space between two lines it joins, and drops the hyphen of a word
+     * broken across them where the document spells that word whole, so
+     * the runs are walked in step with the joined text rather than
+     * concatenated blindly.
      *
      * Walking them in step means keeping step over those two: a run that
      * does not sit at the cursor is looked for just past it, and only a
