@@ -64,15 +64,23 @@ object ProjectCodec {
         state.tracks.count { it.type == TrackType.VIDEO_MAIN } == 1
     }
 
-    /** Atomic write: a crash mid-save must not leave a truncated project behind. */
-    fun save(file: File, state: TimelineState) {
+    /**
+     * Atomic write: a crash mid-save must not leave a truncated project behind.
+     *
+     * Returns false instead of throwing. This is called from an autosave
+     * collector, and an exception there (a full disk is the realistic one) would
+     * cancel the collector and silently end autosaving for the whole session —
+     * the one failure mode a save routine must not have.
+     */
+    fun save(file: File, state: TimelineState): Boolean = runCatching {
         val tmp = File(file.parentFile, "${file.name}.tmp")
         tmp.writeText(encode(state))
         if (!tmp.renameTo(file)) {
             file.writeText(tmp.readText())
             tmp.delete()
         }
-    }
+        true
+    }.getOrDefault(false)
 
     fun load(file: File): TimelineState? =
         if (file.exists()) decode(runCatching { file.readText() }.getOrDefault("")) else null

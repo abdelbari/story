@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 38 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 39 pure-JVM logic tests
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
@@ -40,8 +40,8 @@ environment, so the app has not been assembled by Gradle there. Instead:
   undefined name and a missing import in `EditorScreen`.)
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 38 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 41-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 39 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 42-scenario executable sandbox suite.
 
 ---
 
@@ -269,6 +269,21 @@ Volume fades deserve a note: the model stores a general keyframe envelope, but
 the UI exposes fade-in/fade-out durations, because that is what nearly every
 volume edit actually is. `fadeKeyframes`/`readFades` convert between the two, so
 the sliders reflect whatever envelope a clip really has.
+
+## 5b. Lifecycle
+
+`MainActivity.onStop` → `EditorViewModel.onEnterBackground`, which is the only
+place three otherwise-missing guarantees live: playback stops (an editor that
+keeps decoding over whatever the user switched to is both a bug and a codec
+leak), an in-progress voiceover is sealed (capture from a backgrounded app has
+no foreground service behind it, so the platform may hand it silence), and the
+project is written immediately, because autosave is debounced and a
+backgrounded process can be killed with no further notice. `onStop` rather than
+`onPause`, so playback survives a permission dialog or the volume panel.
+
+The take's timeline anchor lives in the ViewModel rather than the screen for
+the same reason: backgrounding has to be able to seal a recording without the
+UI handing the position back.
 
 ## 6. Persistence (`core/model/ProjectCodec.kt`)
 

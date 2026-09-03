@@ -230,9 +230,11 @@ class ExportWorker(
          * (or leave) while the render runs, and the export must render what was
          * on screen when they pressed the button.
          */
-        fun enqueue(context: Context, state: TimelineState, spec: ExportSpec) {
+        fun enqueue(context: Context, state: TimelineState, spec: ExportSpec): Boolean {
             val snapshot = File(context.filesDir, "export_project.json")
-            ProjectCodec.save(snapshot, state)
+            // No snapshot, no render: the worker would only fail later, after the
+            // UI had already told the user an export was under way.
+            if (!ProjectCodec.save(snapshot, state)) return false
             WorkManager.getInstance(context).enqueueUniqueWork(
                 WORK_NAME,
                 ExistingWorkPolicy.REPLACE,
@@ -246,6 +248,7 @@ class ExportWorker(
                     )
                     .build(),
             )
+            return true
         }
     }
 }

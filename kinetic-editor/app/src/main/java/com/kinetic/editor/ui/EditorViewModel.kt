@@ -225,9 +225,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /* ------------------------------ voiceover ------------------------------ */
 
+    /**
+     * Where on the timeline the take being recorded will land. It belongs here
+     * rather than in the screen: the recording outlives any composable, and
+     * backgrounding the app has to be able to seal the take without the UI
+     * handing the position back.
+     */
+    private var voiceoverStartMs = 0L
+
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
-    fun startVoiceover() {
+    fun startVoiceover(atMs: Long) {
         preview.pause()
+        voiceoverStartMs = atMs
         val file = File(
             getApplication<Application>().filesDir,
             "voiceover_${System.currentTimeMillis()}.wav",
@@ -235,7 +244,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (!recorder.start(file)) _notice.value = "Microphone unavailable"
     }
 
-    fun stopVoiceover(atMs: Long) {
+    fun stopVoiceover() {
         viewModelScope.launch {
             val rec = recorder.stop()
             if (rec == null) {
@@ -250,7 +259,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     hasAudio = true,
                     fps = 0f,
                 ),
-                atMs = atMs,
+                atMs = voiceoverStartMs,
             )
         }
     }
@@ -260,14 +269,41 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun startExport() {
         preview.pause()
         val state = store.timeline.value
+        if (state.mainTrack.clips.isEmpty()) {
+            // Say so now rather than reporting a failed render a moment later.
+            _notice.value = "Add a video before exporting"
+            return
+        }
         // Enqueueing snapshots the document to disk first; not on the main thread.
         viewModelScope.launch(Dispatchers.IO) {
-            ExportWorker.enqueue(
+            val queued = ExportWorker.enqueue(
                 getApplication(),
                 state,
                 ExportSpec(width = state.outputWidth, height = state.outputHeight),
             )
+            if (!queued) _notice.value = "Couldn't start the export — no space to save the project"
         }
+    }
+
+    /* ------------------------------ lifecycle ------------------------------ */
+
+    /**
+     * The app is no longer on screen. Three things must happen here, none of
+     * which the system does for us:
+     *
+     *  - playback stops. Otherwise the editor keeps decoding and playing audio
+     *    over whatever the user switched to, and holds codecs other apps want.
+     *  - an in-progress voiceover is sealed. Capturing from a backgrounded app
+     *    has no foreground service behind it, so the platform may hand it
+     *    silence; ending the take keeps what was actually recorded.
+     *  - the project is written now. Autosave is debounced, and a backgrounded
+     *    process can be killed without any further notice.
+     */
+    fun onEnterBackground() {
+        preview.pause()
+        if (recorder.isRecording.value) stopVoiceover()
+        val state = store.timeline.value
+        viewModelScope.launch(Dispatchers.IO) { ProjectCodec.save(projectFile, state) }
     }
 
     private companion object {

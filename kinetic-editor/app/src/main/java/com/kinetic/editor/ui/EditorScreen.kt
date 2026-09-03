@@ -31,7 +31,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -348,7 +347,6 @@ private fun ToolBar(
 ) {
     val context = LocalContext.current
     val state by vm.store.timeline.collectAsState()
-    var voiceoverStartMs by remember { mutableLongStateOf(0L) }
 
     // OpenDocument (not PickVisualMedia/GetContent): only its grants can be made
     // persistable, which a saved project needs to reopen its media later.
@@ -367,10 +365,7 @@ private fun ToolBar(
     val micPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) {
-            voiceoverStartMs = viewport.playheadMs
-            vm.startVoiceover()
-        }
+        if (granted) vm.startVoiceover(viewport.playheadMs)
     }
 
     // The render runs as a foreground job whose progress lives in the shade;
@@ -398,13 +393,12 @@ private fun ToolBar(
         }
         ToolButton(if (recording) "■ Stop" else "● Rec") {
             if (recording) {
-                vm.stopVoiceover(voiceoverStartMs)
+                vm.stopVoiceover()
             } else if (
                 ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
             ) {
-                voiceoverStartMs = viewport.playheadMs
-                vm.startVoiceover()
+                vm.startVoiceover(viewport.playheadMs)
             } else {
                 micPermission.launch(Manifest.permission.RECORD_AUDIO)
             }

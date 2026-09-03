@@ -48,9 +48,11 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * Pure-JVM tests for the document/engine math. Runs without Robolectric:
@@ -374,6 +376,15 @@ class CoreLogicTest {
         assertEquals(1f, spec.scale, 1e-3f)
         assertEquals(30f, spec.rotationDeg, 1e-3f)
         assertEquals("sticker:s", EditorIntent.SetSticker(stickerClip.id, spec).coalesceKey)
+    }
+
+    @Test
+    fun saveReportsFailureInsteadOfThrowing() {
+        // Autosave collects in a coroutine: a throw here would cancel the
+        // collector and end autosaving for the rest of the session.
+        val unwritable = File("/proc/kinetic-does-not-exist/project.json")
+        assertFalse(ProjectCodec.save(unwritable, TimelineState.empty()))
+        assertNull(ProjectCodec.load(unwritable))
     }
 
     @Test
