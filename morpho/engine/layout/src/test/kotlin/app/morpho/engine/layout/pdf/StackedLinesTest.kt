@@ -47,6 +47,42 @@ class StackedLinesTest {
     }
 
     @Test
+    fun `a column of any shape is drawn once through, whole`() {
+        // What the drawing actually needs, and what the fixed column
+        // above only shows for one shape: sweeping a cell down the pages
+        // it runs onto puts every line in exactly one band. A line in two
+        // bands is a line printed twice, and a line in none is a line
+        // nobody ever sees — a contract's notes column, a CV's history,
+        // gone with nothing to say so.
+        val random = kotlin.random.Random(20260903)
+        repeat(2000) {
+            val heights = List(random.nextInt(1, 30)) { random.nextInt(1, 40).toFloat() }
+            val bottoms = heights.runningReduce { a, b -> a + b }
+            val room = listOf(0f, 0.5f, 1f, 7f, 12f, 40f, 41f, 500f).random(random)
+
+            val bands = mutableListOf<Pair<Float, Float>>()
+            var at = 0f
+            var passes = 0
+            while (StackedLines.more(bottoms, at)) {
+                val next = StackedLines.cut(bottoms, at, room)
+                assertTrue(next > at, "a cut with room $room did not move past $at")
+                bands += at to next
+                at = next
+                assertTrue(++passes <= bottoms.size, "cutting with room $room did not end")
+            }
+            assertEquals(bottoms.last(), at, "the column was not drawn to its end")
+            for (bottom in bottoms) {
+                val held = bands.count { (from, to) -> bottom > from && bottom <= to }
+                assertEquals(
+                    1,
+                    held,
+                    "with room $room a line ending at $bottom landed in $held bands of $bands",
+                )
+            }
+        }
+    }
+
+    @Test
     fun `every cut moves the column on, whatever the room`() {
         // The property the drawing depends on: repeated cutting ends.
         for (room in listOf(0f, 1f, 11.9f, 12f, 13f, 47f, 48f, 1000f)) {
