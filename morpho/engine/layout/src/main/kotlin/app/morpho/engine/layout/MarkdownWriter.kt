@@ -116,6 +116,22 @@ object MarkdownWriter {
             java.util.Base64.getEncoder().encodeToString(image.bytes) + ")"
 
     /**
+     * Whether [text] is a note's mark rather than words carrying a note.
+     *
+     * A mark is what a page prints where the note is called from: a
+     * number, a star, a dagger, a letter, in a character or three. It is
+     * replaced by Markdown's own reference because it says the same thing
+     * that reference says. Anything longer is the document's own words.
+     */
+    private fun isAMark(text: String): Boolean {
+        val mark = text.trim()
+        return mark.isEmpty() || (mark.length <= MOST_MARK_CHARACTERS && mark.none { it.isWhitespace() })
+    }
+
+    /** However long a note's mark is, no longer than this: past it, they are words. */
+    private const val MOST_MARK_CHARACTERS = 3
+
+    /**
      * The document's notes, labelled and in the order their marks appear.
      *
      * A label is the mark the document itself used — a star, a dagger, a
@@ -241,10 +257,16 @@ object MarkdownWriter {
                 continue
             }
             // A mark that carries a note becomes the reference to it: the
-            // mark is the run's own text, so it is what the reference
-            // replaces, and the note itself waits at the end.
+            // mark is the run's own text — a "1", a "*", a "†" — so it is
+            // what the reference replaces, and the note itself waits at
+            // the end. A run carrying words as well as a note is a
+            // different thing, and its words are kept in front of the
+            // reference rather than replaced by it: Markdown cannot label
+            // a reference the way HTML labels the link it makes, and a
+            // writer that dropped them would lose text outright.
             val label = notes.labelOf(run)
             if (label != null) {
+                if (!isAMark(run.text)) sb.append(escape(run.text))
                 sb.append("[^").append(label).append("]")
                 index++
                 continue

@@ -365,4 +365,28 @@ class MarkdownWriterTest {
         )
         assertEquals("before ![image](data:image/png;base64,AQID) after\n", md)
     }
+
+    @Test
+    fun `a note on words keeps the words in front of the reference`() {
+        // A note's mark is the run's own text — a "1", a "*", a "†" — and
+        // Markdown's own reference says the same thing, so it replaces it.
+        // A run carrying words as well as a note is a different thing:
+        // Markdown cannot label a reference the way HTML labels a link,
+        // and replacing the words would lose them outright.
+        val note = listOf(Paragraph(listOf(TextRun("The note itself."))))
+        val marked = MarkdownWriter.write(
+            DocumentModel(
+                listOf(Paragraph(listOf(TextRun("A claim"), TextRun("1", note = note), TextRun(" and on."))))
+            )
+        )
+        assertTrue(marked.contains("A claim[^1] and on."), "the mark was not replaced by the reference")
+
+        val worded = MarkdownWriter.write(
+            DocumentModel(
+                listOf(Paragraph(listOf(TextRun("before "), TextRun("noted words", note = note), TextRun(" after"))))
+            )
+        )
+        assertTrue(worded.contains("before noted words[^1] after"), "the words carrying the note were dropped")
+        assertTrue(worded.contains("[^1]: The note itself."))
+    }
 }
