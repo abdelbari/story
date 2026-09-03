@@ -73,8 +73,12 @@ object Links {
 
     private fun refineBlock(block: Block): Block = when (block) {
         is Paragraph -> block.copy(runs = refineRuns(block.runs))
+        // Copied, never rebuilt: a row knows whether it is the head of
+        // its table and a cell knows how many columns and rows it covers
+        // and what colour it is filled with, and a fresh one knows none of
+        // it — a merged cell would come out of here unmerged.
         is Table -> block.copy(rows = block.rows.map { row ->
-            TableRow(row.cells.map { cell -> TableCell(cell.blocks.map(::refineBlock)) })
+            row.copy(cells = row.cells.map { cell -> cell.copy(blocks = cell.blocks.map(::refineBlock)) })
         })
         is ImageBlock -> block
     }

@@ -8,6 +8,15 @@ package app.morpho.engine.layout
  * the first strongly-directional character, so mixed Arabic/Latin documents
  * come out with each paragraph tagged correctly.
  *
+ * A pipe table — a header row, a row of dashes under it, and the rows
+ * themselves — is read as a [Table], which is what [MarkdownWriter] writes
+ * one as: without this, a document's tables come back from Markdown as
+ * paragraphs full of pipe characters, and the app cannot read its own
+ * output. The row of dashes may say how each column is set (`:---`,
+ * `---:`, `:---:`), and the header row is marked as one, so a long table
+ * repeats it. Lines that look like a table but carry no row of dashes are
+ * left as the text they are.
+ *
  * Inline Markdown emphasis — `**bold**`, `*italic*`, `***bold italic***` — is
  * parsed by [InlineEmphasisParser] into styled [TextRun]s inside body
  * paragraphs, headings and list items, with each run's direction detected from
@@ -25,11 +34,26 @@ object PlainTextImporter {
         val lines = text.replace("\r\n", "\n").replace('\r', '\n').split("\n")
         val blocks = mutableListOf<Block>()
         val buffer = mutableListOf<String>()
+        val tableLines = mutableListOf<String>()
 
         fun flush() {
             if (buffer.isEmpty()) return
             blocks += paragraph(LineJoiner.join(buffer), ParagraphKind.BODY, listMarker = null)
             buffer.clear()
+        }
+
+        /** The rows gathered so far, as a table — or as the text they turned out to be. */
+        fun flushTable() {
+            if (tableLines.isEmpty()) return
+            val gathered = tableLines.toList()
+            tableLines.clear()
+            val table = tableOf(gathered)
+            if (table != null) {
+                blocks += table
+            } else {
+                gathered.forEach { buffer += it }
+                flush()
+            }
         }
 
         // What each open level of the current list is indented by. A file
@@ -48,6 +72,15 @@ object PlainTextImporter {
         for (rawLine in lines) {
             val line = rawLine.trimEnd()
             val trimmed = line.trim()
+            // A run of rows is gathered whole: whether it is a table at all
+            // is decided by the row of dashes under its head, which is one
+            // line further on than a walk of single lines can see.
+            if (looksLikeRow(trimmed)) {
+                flush()
+                tableLines += trimmed
+                continue
+            }
+            flushTable()
             when {
                 trimmed.isEmpty() -> flush()
 
@@ -89,6 +122,7 @@ object PlainTextImporter {
                 }
             }
         }
+        flushTable()
         flush()
 
         val rtlCount = blocks.count { it is Paragraph && it.style.direction == TextDirection.RTL }
@@ -99,6 +133,79 @@ object PlainTextImporter {
         // An address typed into a text file is an address; a reader who
         // converts one to Word expects to be able to click it.
         return Links.refine(Bidi.refine(DocumentModel(blocks = blocks, defaultDirection = defaultDirection)))
+    }
+
+    /** Whether a line is shaped like a row of a pipe table. */
+    private fun looksLikeRow(trimmed: String): Boolean =
+        trimmed.startsWith("|") && trimmed.length > 1 && trimmed.indexOf('|', 1) > 0
+
+    /**
+     * The gathered rows as a table, or null when they are not one: a table
+     * is a head, a row of dashes saying how many columns it has, and the
+     * rows themselves.
+     */
+    private fun tableOf(lines: List<String>): Table? {
+        if (lines.size < 2) return null
+        val head = cellsOf(lines[0])
+        val dashes = cellsOf(lines[1])
+        if (head.isEmpty() || dashes.size != head.size) return null
+        val isDashes = dashes.all { cell ->
+            cell.isNotEmpty() && cell.all { it == '-' || it == ':' } && cell.contains('-')
+        }
+        if (!isDashes) return null
+        val alignments = dashes.map(::alignmentOf)
+        val rows = (listOf(head) + lines.drop(2).map(::cellsOf)).mapIndexed { index, cells ->
+            TableRow(
+                cells = cells.mapIndexed { column, text ->
+                    TableCell(listOf(cell(text, alignments.getOrNull(column))))
+                },
+                // A Markdown table's first row is its head, by construction.
+                repeatsAsHeader = index == 0,
+            )
+        }
+        return Table(rows)
+    }
+
+    /** How a column is set, as the row of dashes says it. */
+    private fun alignmentOf(dashes: String): Alignment? = when {
+        dashes.startsWith(":") && dashes.endsWith(":") -> Alignment.CENTER
+        dashes.endsWith(":") -> Alignment.END
+        dashes.startsWith(":") -> Alignment.START
+        else -> null
+    }
+
+    /**
+     * A row's cells: what stands between the pipes, with an escaped pipe
+     * counting as a character of a cell rather than as the end of one.
+     */
+    private fun cellsOf(row: String): List<String> {
+        val inner = row.removePrefix("|").let { if (it.endsWith("|")) it.dropLast(1) else it }
+        val cells = mutableListOf<String>()
+        val current = StringBuilder()
+        var index = 0
+        while (index < inner.length) {
+            val character = inner[index]
+            when {
+                character == '\\' && index + 1 < inner.length && inner[index + 1] == '|' -> {
+                    current.append('|')
+                    index++
+                }
+                character == '|' -> {
+                    cells += current.toString().trim()
+                    current.setLength(0)
+                }
+                else -> current.append(character)
+            }
+            index++
+        }
+        cells += current.toString().trim()
+        return cells
+    }
+
+    private fun cell(text: String, alignment: Alignment?): Paragraph {
+        val paragraph = paragraph(text, ParagraphKind.BODY, listMarker = null)
+        return if (alignment == null) paragraph
+        else paragraph.copy(style = paragraph.style.copy(alignment = alignment))
     }
 
     /** How far a line is written in, a tab standing for four spaces. */

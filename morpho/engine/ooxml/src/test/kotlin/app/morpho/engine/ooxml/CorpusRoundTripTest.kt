@@ -66,6 +66,40 @@ class CorpusRoundTripTest {
         return texts
     }
 
+    /**
+     * Every word of a document, cells included. A walk of the top-level
+     * paragraphs alone says a document with a table in it holds only the
+     * prose around it, and the writers would be free to lose the table.
+     */
+    private fun textOf(blocks: List<app.morpho.engine.layout.Block>): String {
+        val out = mutableListOf<String>()
+        fun walk(list: List<app.morpho.engine.layout.Block>) {
+            for (block in list) when (block) {
+                is Paragraph -> out += block.text
+                is app.morpho.engine.layout.Table ->
+                    for (row in block.rows) for (cell in row.cells) walk(cell.blocks)
+                else -> {}
+            }
+        }
+        walk(blocks)
+        return out.joinToString(" ")
+    }
+
+    /** How many paragraphs a document holds, cells included. */
+    private fun paragraphCount(blocks: List<app.morpho.engine.layout.Block>): Int {
+        var count = 0
+        fun walk(list: List<app.morpho.engine.layout.Block>) {
+            for (block in list) when (block) {
+                is Paragraph -> count++
+                is app.morpho.engine.layout.Table ->
+                    for (row in block.rows) for (cell in row.cells) walk(cell.blocks)
+                else -> {}
+            }
+        }
+        walk(blocks)
+        return count
+    }
+
     @Test
     fun `the corpus covers at least eight documents including arabic and mixed-direction ones`() {
         val files = corpusFiles()
@@ -78,16 +112,15 @@ class CorpusRoundTripTest {
     @MethodSource("corpusFiles")
     fun `written docx preserves the model text almost exactly`(name: String) {
         val model = PlainTextImporter.import(corpusText(name))
-        val modelParagraphs = model.blocks.filterIsInstance<Paragraph>()
         val doc = documentXml(DocxWriter.toByteArray(model))
 
-        val expected = modelParagraphs.joinToString(" ") { it.text }
+        val expected = textOf(model.blocks)
         val actual = paragraphTexts(doc).joinToString(" ")
         val similarity = FidelityScorer.textSimilarity(expected, actual)
         assertTrue(similarity >= 0.999, "$name text similarity: $similarity")
         assertTrue(
-            paragraphTexts(doc).size >= modelParagraphs.size,
-            "$name lost paragraphs: ${paragraphTexts(doc).size} < ${modelParagraphs.size}"
+            paragraphTexts(doc).size >= paragraphCount(model.blocks),
+            "$name lost paragraphs: ${paragraphTexts(doc).size} < ${paragraphCount(model.blocks)}"
         )
     }
 
@@ -100,8 +133,8 @@ class CorpusRoundTripTest {
         val structure = FidelityScorer.structureSimilarity(model, readBack)
         assertTrue(structure >= 0.95, "$name structure similarity: $structure")
 
-        val expectedText = model.blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }
-        val actualText = readBack.blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }
+        val expectedText = textOf(model.blocks)
+        val actualText = textOf(readBack.blocks)
         assertEquals(1.0, FidelityScorer.textSimilarity(expectedText, actualText), 1e-9) {
             "$name reader text drifted"
         }

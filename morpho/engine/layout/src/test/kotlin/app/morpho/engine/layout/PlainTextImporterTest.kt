@@ -183,4 +183,74 @@ class PlainTextImporterTest {
         assertEquals(listOf("two words", " here"), para.runs.map { it.text })
         assertTrue(para.runs[0].bold)
     }
+
+    private fun table(model: DocumentModel): Table = model.blocks.filterIsInstance<Table>().single()
+
+    private fun cells(row: TableRow): List<String> =
+        row.cells.map { (it.blocks.single() as Paragraph).text }
+
+    @Test
+    fun `a pipe table is read as a table`() {
+        // What MarkdownWriter writes, read back: without this the app
+        // cannot read its own output, and a document's tables come back
+        // from Markdown as paragraphs full of pipe characters.
+        val model = PlainTextImporter.import(
+            """
+            |Before the table.
+            |
+            || Year | Entries |
+            || --- | --- |
+            || 2019 | 412 |
+            || 2020 | 503 |
+            |
+            |After the table.
+            """.trimMargin()
+        )
+        val table = table(model)
+        assertEquals(3, table.rows.size)
+        assertEquals(listOf("Year", "Entries"), cells(table.rows[0]))
+        assertEquals(listOf("2019", "412"), cells(table.rows[1]))
+        assertEquals(listOf("2020", "503"), cells(table.rows[2]))
+        assertEquals(
+            listOf("Before the table.", "After the table."),
+            paragraphs(model).map { it.text },
+        )
+    }
+
+    @Test
+    fun `the first row of a Markdown table is its head`() {
+        val model = PlainTextImporter.import("| A | B |\n| --- | --- |\n| 1 | 2 |")
+        assertEquals(listOf(true, false), table(model).rows.map { it.repeatsAsHeader })
+    }
+
+    @Test
+    fun `the row of dashes says how each column is set`() {
+        val model = PlainTextImporter.import("| L | R | C |\n| :--- | ---: | :---: |\n| 1 | 2 | 3 |")
+        assertEquals(
+            listOf(Alignment.START, Alignment.END, Alignment.CENTER),
+            table(model).rows[0].cells.map { (it.blocks.single() as Paragraph).style.alignment },
+        )
+    }
+
+    @Test
+    fun `lines of pipes with no row of dashes are the text they are`() {
+        val model = PlainTextImporter.import("| not | a table |\n| still | not one |")
+        assertTrue(model.blocks.filterIsInstance<Table>().isEmpty())
+        val text = paragraphs(model).single().text
+        assertTrue(text.contains("not | a table"), text)
+    }
+
+    @Test
+    fun `a pipe written into a cell stays a character of it`() {
+        val model = PlainTextImporter.import("| Sign | Meaning |\n| --- | --- |\n| \\| | a pipe |")
+        assertEquals(listOf("|", "a pipe"), cells(table(model).rows[1]))
+    }
+
+    @Test
+    fun `a table is styled inside its cells like anything else`() {
+        val model = PlainTextImporter.import("| Word | Note |\n| --- | --- |\n| **bold** | plain |")
+        val cell = table(model).rows[1].cells.first().blocks.single() as Paragraph
+        assertEquals("bold", cell.runs.single().text)
+        assertTrue(cell.runs.single().bold)
+    }
 }

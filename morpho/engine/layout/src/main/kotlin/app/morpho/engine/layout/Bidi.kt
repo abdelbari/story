@@ -352,10 +352,15 @@ object Bidi {
         is Paragraph -> block.copy(
             runs = refineRuns(block.runs, block.style.direction ?: defaultDirection)
         )
+        // Copied, never rebuilt: a row knows whether it is the head of
+        // its table and a cell knows what it covers and what colour it is
+        // filled with, and a fresh one knows none of it.
         is Table -> block.copy(rows = block.rows.map { row ->
-            TableRow(row.cells.map { cell ->
-                TableCell(cell.blocks.map { refineBlock(it, defaultDirection) })
-            })
+            row.copy(
+                cells = row.cells.map { cell ->
+                    cell.copy(blocks = cell.blocks.map { refineBlock(it, defaultDirection) })
+                }
+            )
         })
         is ImageBlock -> block
     }

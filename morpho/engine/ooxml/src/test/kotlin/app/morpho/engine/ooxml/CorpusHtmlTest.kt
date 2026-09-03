@@ -34,8 +34,26 @@ class CorpusHtmlTest {
         val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder()
             .parse(ByteArrayInputStream(html.toByteArray(Charsets.UTF_8)))
         val rendered = doc.getElementsByTagName("body").item(0).textContent
-        val expected = model.blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }
+        val expected = textOf(model.blocks)
         val similarity = FidelityScorer.textSimilarity(expected, rendered)
         assertTrue(similarity >= 0.999, "$name html text similarity: $similarity")
+    }
+
+    /**
+     * Every word of a document, cells included: a walk of the top-level
+     * paragraphs alone would let a table go missing unnoticed.
+     */
+    private fun textOf(blocks: List<app.morpho.engine.layout.Block>): String {
+        val out = mutableListOf<String>()
+        fun walk(list: List<app.morpho.engine.layout.Block>) {
+            for (block in list) when (block) {
+                is Paragraph -> out += block.text
+                is app.morpho.engine.layout.Table ->
+                    for (row in block.rows) for (cell in row.cells) walk(cell.blocks)
+                else -> {}
+            }
+        }
+        walk(blocks)
+        return out.joinToString(" ")
     }
 }

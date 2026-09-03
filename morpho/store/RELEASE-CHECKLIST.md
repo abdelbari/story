@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 537 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 550 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -68,6 +68,11 @@ Work through, in this order — each exercises a path nothing else covers:
       stopping at the bottom edge with the rest of it gone. Use one with
       a picture in a cell — a letterhead's logo, a CV's photo — and check
       the picture is in the exported PDF too.
+- [ ] **A Markdown file with a table in it**, converted to Word. It must
+      arrive as a table, not as paragraphs of pipe characters, with the
+      first row as the header. A table with a merged cell — a heading over
+      two columns — must still cover two, and a coloured header row must
+      keep its colour.
 - [ ] **A document with a table** — one with rules and one that is only
       aligned columns. The columns must keep their widths (a column of
       dates stays narrow), and the second must arrive with no lines
