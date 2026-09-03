@@ -130,6 +130,20 @@ for.
   over a letter Unicode has a single character for becomes that character.
   Every page with no marks on it comes back byte for byte as before, the
   paper this was built for included.
+- **Measured against another engine, on the paper this was built for:**
+  the reading was checked against MuPDF — a PDF engine sharing no code
+  with this one — over the same eleven pages. On six words that recur
+  through the paper, MuPDF is wrong every time it meets them and this
+  reader is right every time: المعلومات, العلمي, المنهج, الأسئلة, هذا,
+  على — 152 occurrences, none of which MuPDF gets right, because that
+  file's ToUnicode map names ل as م and ه as ي and MuPDF believes it.
+  MuPDF also hands back the page's numbers reversed — 48 as "84", 2252 as
+  "2522" — which is the same complaint that started this work. Where the
+  two differ otherwise, it is the running foot: MuPDF reads its digits as
+  text where this reader photographs the band, because the words there are
+  drawn as outlines and the digits alone would say "48 584820220105". The
+  comparison is a measurement, not a gate: MuPDF is not a dependency and
+  nothing in the build depends on it.
 - **A glyph the file will not name is asked of the font, then left out:**
   a browser printing a vowelled Arabic page maps every mark glyph it draws
   to U+0000 — not a character, but the producer declining to answer. Read
