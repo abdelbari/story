@@ -94,6 +94,17 @@ data class ParagraphStyle(
      * the same pages held, instead of drifting a line at a time.
      */
     val pageBreakBefore: Boolean = false,
+    /**
+     * The page this paragraph and the ones after it are set on, when it
+     * begins a part of the document shaped differently from the part
+     * before: the one landscape page a report turns sideways for a wide
+     * table, the appendix on a larger sheet. Null for a paragraph that
+     * carries on the shape already in force, which is nearly all of them.
+     *
+     * A document with one shape throughout has none of these and is
+     * written exactly as it was before they existed.
+     */
+    val sectionSetup: PageSetup? = null,
 )
 
 enum class ParagraphKind { TITLE, HEADING_1, HEADING_2, HEADING_3, BODY }

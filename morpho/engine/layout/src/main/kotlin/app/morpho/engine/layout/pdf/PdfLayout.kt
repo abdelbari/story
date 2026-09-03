@@ -279,7 +279,12 @@ object PdfLayout {
         // A link that led to a page of the PDF is pointed at a place in
         // the document instead: nothing outside a PDF knows what page 12
         // means, so a book's contents page would lead nowhere at all.
-        val blocks = InternalLinks.resolve(paged)
+        val linked = InternalLinks.resolve(paged)
+        // A report of portrait pages with one landscape table in it is a
+        // portrait report, and its landscape page is landscape: where the
+        // sheet changes, so does the section, or the wide page comes back
+        // upright with every line set to the wrong width.
+        val blocks = withSections(linked, paged.map { it.first }, sheets, blockByPage, lines)
         check(textCount + imagesPositioned.size == blocks.size)
 
         val paragraphs = blocks.filterIsInstance<Paragraph>()
@@ -326,6 +331,56 @@ object PdfLayout {
      * The page the document was set on: the first sheet that drew text,
      * with margins where the kept lines reach nearest each edge.
      */
+    /**
+     * [blocks] with each block that opens a part of the document set on a
+     * different sheet saying so. The first block says nothing: the shape
+     * it is set on is the document's own.
+     *
+     * Only a Paragraph can carry it, which is what Word allows; where a
+     * shape changes at a table, the change waits for the paragraph after
+     * it rather than being lost.
+     */
+    private fun withSections(
+        blocks: List<Block>,
+        pageOf: List<Int>,
+        sheets: List<PdfPageSheet>,
+        blockByPage: Map<Int, Pair<Float, Float>>,
+        lines: List<PdfLine>,
+    ): List<Block> {
+        val shapeByPage = sheets
+            .filter { it.widthPt > 0f && it.heightPt > 0f }
+            .associate { it.page to (round(it.widthPt) to round(it.heightPt)) }
+        if (shapeByPage.values.distinct().size < 2) return blocks
+        val setupByShape = HashMap<Pair<Int, Int>, PageSetup?>()
+        fun setupOf(shape: Pair<Int, Int>): PageSetup? = setupByShape.getOrPut(shape) {
+            val pages = shapeByPage.filterValues { it == shape }.keys
+            pageSetup(
+                sheets.filter { it.page in pages },
+                blockByPage.filterKeys { it in pages },
+                lines.filter { it.page in pages },
+            )
+        }
+
+        var inForce: Pair<Int, Int>? = null
+        var waiting: PageSetup? = null
+        return blocks.mapIndexed { index, block ->
+            val shape = shapeByPage[pageOf.getOrNull(index) ?: -1]
+            if (shape != null && shape != inForce) {
+                if (inForce != null) waiting = setupOf(shape)
+                inForce = shape
+            }
+            val setup = waiting
+            if (setup != null && block is Paragraph) {
+                waiting = null
+                block.copy(style = block.style.copy(sectionSetup = setup))
+            } else {
+                block
+            }
+        }
+    }
+
+    private fun round(value: Float): Int = kotlin.math.round(value).toInt()
+
     private fun pageSetup(
         sheets: List<PdfPageSheet>,
         blockByPage: Map<Int, Pair<Float, Float>>,

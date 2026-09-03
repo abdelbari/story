@@ -410,10 +410,27 @@ object DocxWriter {
         val sb = StringBuilder(16 * 1024)
         sb.append(XML_DECL)
         sb.append("""<w:document xmlns:w="$W" xmlns:r="$R_NS"><w:body>""")
-        for (block in document.blocks) {
-            appendBlock(sb, block, document, numbering, images, links, ImagePlan.PART_DOCUMENT, notes)
+        // A document set on more than one sheet is written as sections:
+        // the properties of a section go on the last paragraph of it, and
+        // the last section's go on the body. A document of one shape has
+        // one section and is written exactly as it always was.
+        var inForce = document.pageSetup
+        for ((index, block) in document.blocks.withIndex()) {
+            val starting = (document.blocks.getOrNull(index + 1) as? Paragraph)?.style?.sectionSetup
+            appendBlock(
+                sb, block, document, numbering, images, links, ImagePlan.PART_DOCUMENT, notes,
+                endsSection = if (starting != null) inForce else null,
+            )
+            if (starting != null) {
+                // A section can only end on a paragraph; where one ends on
+                // a table, an empty paragraph carries its properties.
+                if (block !is Paragraph) {
+                    sb.append("<w:p><w:pPr>").append(sectPr(document, inForce)).append("</w:pPr></w:p>")
+                }
+                inForce = starting
+            }
         }
-        sb.append(sectPr(document))
+        sb.append(sectPr(document, inForce))
         sb.append("</w:body></w:document>")
         return sb.toString()
     }
@@ -495,9 +512,12 @@ object DocxWriter {
         links: LinkPlan,
         part: String,
         notes: NotePlan? = null,
+        /** The section this block ends, when the block after it starts another. */
+        endsSection: PageSetup? = null,
     ) {
         when (block) {
-            is Paragraph -> appendParagraph(sb, block, document, numbering, images, links, part, notes)
+            is Paragraph ->
+                appendParagraph(sb, block, document, numbering, images, links, part, notes, endsSection)
             is Table -> appendTable(sb, block, document, numbering, images, links, part, notes)
             is ImageBlock -> appendImage(sb, images.entryFor(block))
         }
@@ -512,11 +532,15 @@ object DocxWriter {
         links: LinkPlan,
         part: String,
         notes: NotePlan? = null,
+        endsSection: PageSetup? = null,
     ) {
         val effectiveDirection = paragraph.style.direction ?: document.defaultDirection
         sb.append("<w:p>")
         val largest = paragraph.runs.maxOfOrNull { it.fontSizePt ?: 0f } ?: 0f
-        appendParagraphProperties(sb, paragraph.style, effectiveDirection, numbering.numIdFor(paragraph), largest)
+        appendParagraphProperties(
+            sb, paragraph.style, effectiveDirection, numbering.numIdFor(paragraph), largest,
+            endsSection?.let { sectPr(document, it) },
+        )
         // The names this place answers to, opened and closed around its
         // words so that a contents page or a cross-reference lands on it.
         // Only a heading's style sets bold; every other run stands alone.
@@ -565,6 +589,8 @@ object DocxWriter {
         effectiveDirection: TextDirection,
         numId: Int?,
         largestSizePt: Float = 0f,
+        /** The properties of the section this paragraph ends, written last as the schema wants. */
+        sectionProperties: String? = null,
     ) {
         val styleId = when {
             style.listMarker != null -> "ListParagraph"
@@ -591,7 +617,7 @@ object DocxWriter {
         val rules = style.ruleAbove || style.ruleBelow
 
         if (styleId == null && numId == null && jc == null && !rtl && spacing == null && indent == null &&
-            tabs == null && !rules && !style.pageBreakBefore
+            tabs == null && !rules && !style.pageBreakBefore && sectionProperties == null
         ) return
 
         sb.append("<w:pPr>")
@@ -619,6 +645,9 @@ object DocxWriter {
         spacing?.let(sb::append)
         indent?.let(sb::append)
         if (jc != null) sb.append("""<w:jc w:val="$jc"/>""")
+        // The section's own properties come last of all, which is where
+        // the schema puts them and where Word looks for them.
+        sectionProperties?.let(sb::append)
         sb.append("</w:pPr>")
     }
 
@@ -974,8 +1003,7 @@ object DocxWriter {
     }
 
     /** Children of w:sectPr in schema order: the header and footer references, the sheet, its margins, the numbering. */
-    private fun sectPr(document: DocumentModel): String {
-        val page = document.pageSetup
+    private fun sectPr(document: DocumentModel, page: PageSetup?): String {
         val sb = StringBuilder("<w:sectPr>")
         if (document.header.isNotEmpty()) sb.append("""<w:headerReference w:type="default" r:id="$HEADER_REL_ID"/>""")
         if (document.footer.isNotEmpty()) sb.append("""<w:footerReference w:type="default" r:id="$FOOTER_REL_ID"/>""")
