@@ -98,4 +98,78 @@ class ColumnsTest {
         val left = lines.first { it.x == 56f }
         assertTrue(flows.getValue(right) < flows.getValue(left), "Arabic columns were read from the left")
     }
+
+    // ------------------------------------------------------------------
+    // Finding the gutter from the marks themselves, which is what a page
+    // whose columns share their baselines needs: every line of such a page
+    // reaches from the first column's margin to the second's, so no line
+    // fails to cross the gutter and a search over whole lines finds
+    // nothing at all.
+    // ------------------------------------------------------------------
+
+    /** A line's marks: letters of the given width, a space between words. */
+    private fun marks(from: Float, to: Float, letter: Float = 5f): List<Pair<Float, Float>> {
+        val out = mutableListOf<Pair<Float, Float>>()
+        var x = from
+        var count = 0
+        while (x + letter <= to) {
+            // A word space every six letters, which is what leaves a page
+            // the small gaps a gutter must not be confused with.
+            if (count > 0 && count % 6 == 0) x += letter
+            if (x + letter > to) break
+            out += x to (x + letter)
+            x += letter
+            count++
+        }
+        return out
+    }
+
+    /** A journal page: both columns set on the same grid, so each line spans the page. */
+    private fun sharedGrid(lines: Int, leftTo: Float = 287f, rightFrom: Float = 308f) =
+        (0 until lines).map { marks(60f, leftTo) + marks(rightFrom, 535f) }
+
+    @Test
+    fun `the gutter of a page whose columns share their baselines is found`() {
+        val strip = PdfColumns.gutterOfMarks(sharedGrid(20))
+        assertTrue(strip != null, "the gutter was not found")
+        val middle = (strip!!.first + strip.second) / 2
+        assertTrue(middle > 285f && middle < 310f, "the gutter is in the wrong place: $strip")
+    }
+
+    @Test
+    fun `a page of one column has no gutter`() {
+        val page = (0 until 20).map { marks(60f, 535f) }
+        assertEquals(null, PdfColumns.gutterOfMarks(page))
+    }
+
+    @Test
+    fun `a title across the page does not hide the gutter under it`() {
+        // Every journal page has a running head or a title across the top,
+        // and one of those inside the strip must not cost the page its
+        // columns — it simply has nothing to say about them.
+        val page = listOf(marks(60f, 535f), marks(60f, 500f)) + sharedGrid(20)
+        assertTrue(PdfColumns.gutterOfMarks(page) != null, "a heading hid the gutter")
+    }
+
+    @Test
+    fun `a table of two columns is not a page of two columns`() {
+        // Its cells hold what they hold and do not run to the margin; cut
+        // apart it would stop being a table at all.
+        val page = (0 until 20).map { marks(60f, 150f) + marks(308f, 400f) }
+        assertEquals(null, PdfColumns.gutterOfMarks(page), "a wide table was taken for two columns")
+    }
+
+    @Test
+    fun `a page with too little on it says nothing`() {
+        assertEquals(null, PdfColumns.gutterOfMarks(sharedGrid(3)))
+        assertEquals(null, PdfColumns.gutterOfMarks(emptyList()))
+        assertEquals(null, PdfColumns.gutterOfMarks(listOf(emptyList())))
+    }
+
+    @Test
+    fun `a gutter narrower than a word space is a word space`() {
+        // Six points between the columns is a gap between words, not a
+        // gutter, and a page set that tight is one column.
+        assertEquals(null, PdfColumns.gutterOfMarks(sharedGrid(20, leftTo = 294f, rightFrom = 300f)))
+    }
 }
