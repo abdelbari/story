@@ -33,6 +33,42 @@ object Links {
     /** Punctuation a sentence leaves at the end of an address, which is the sentence's and not the address's. */
     private const val TRAILING = ".,;:!?)]}»”’'\""
 
+    /** The schemes a converted document may carry outward. */
+    private val OUTWARD = setOf("http", "https", "mailto", "ftp")
+
+    /** A scheme as the standard writes one: a letter, then letters, digits, plus, dot or dash. */
+    private val SCHEME = Regex("^([A-Za-z][A-Za-z0-9+.\\-]*):")
+
+    /**
+     * Whether [target] is an address this converter will write into a
+     * document for somebody else to open.
+     *
+     * Every address [find] makes is one of these by construction — it
+     * writes `mailto:` in front of an email and `https://` in front of a
+     * `www.`. An address read out of a *file* is whatever that file said,
+     * and a file may have been made to say anything: a link annotation on
+     * a crafted PDF, or a relationship in a crafted .docx, is carried
+     * straight through to the converted document. Pointed at a share on
+     * somebody else's machine, that is a document which reaches a
+     * stranger's host the moment it is opened — from an app whose whole
+     * promise is that a document converted here stays here. Pointed at a
+     * scheme the system hands to some other program, it is worse.
+     *
+     * So the schemes a reader chooses to follow are carried and the rest
+     * are not. What is dropped is the address alone: the words keep their
+     * place in the sentence, which is the trade this converter makes
+     * everywhere it cannot vouch for something.
+     *
+     * A name inside the document — written `#somewhere` — goes nowhere
+     * near a network and is carried as it is.
+     */
+    fun writable(target: String): Boolean {
+        val said = target.trim()
+        if (said.startsWith("#")) return said.length > 1
+        val scheme = SCHEME.find(said)?.groupValues?.get(1)?.lowercase() ?: return false
+        return scheme in OUTWARD
+    }
+
     /** One address found in a text, and where it sits. */
     data class Match(val start: Int, val end: Int, val target: String)
 

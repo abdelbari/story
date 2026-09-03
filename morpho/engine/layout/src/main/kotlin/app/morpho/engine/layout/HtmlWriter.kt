@@ -507,10 +507,12 @@ object HtmlWriter {
             // A link into the document reaches a place in this same page,
             // by the name that place was given; one that leaves it is
             // written as it stands.
-            val href = if (target.startsWith("#")) {
-                anchorId(target.removePrefix("#"))?.let { "#$it" }
-            } else {
-                escape(target)
+            val href = when {
+                target.startsWith("#") -> anchorId(target.removePrefix("#"))?.let { "#$it" }
+                // An address this converter will not vouch for is left off
+                // the page; the words stay where they are.
+                Links.writable(target) -> escape(target)
+                else -> null
             }
             if (href != null) html = "<a href=\"$href\">$html</a>"
         }

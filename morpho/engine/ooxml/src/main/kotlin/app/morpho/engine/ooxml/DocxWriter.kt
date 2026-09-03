@@ -6,6 +6,7 @@ import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.Comment
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
+import app.morpho.engine.layout.Links
 import app.morpho.engine.layout.ListMarker
 import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
@@ -393,8 +394,13 @@ object DocxWriter {
                         }
                         // A link into the document itself needs no relationship:
                         // it names a bookmark, not a place outside the file.
+                        // An address this converter will not vouch for gets
+                        // none either, so nothing is written round its words
+                        // and the sentence keeps them — see [Links.writable].
                         for (run in block.runs) {
-                            run.link?.takeIf { !it.startsWith("#") }?.let { register(it, part) }
+                            run.link
+                                ?.takeIf { !it.startsWith("#") && Links.writable(it) }
+                                ?.let { register(it, part) }
                         }
                     }
                     is Table -> for (row in block.rows) for (cell in row.cells) assign(cell.blocks, part)

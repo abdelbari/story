@@ -294,7 +294,11 @@ object MarkdownWriter {
             val held = runs.subList(index, end)
             val link = run.link
             val words = held.joinToString("") { it.text }
-            if (link != null && words.isNotBlank() && !linksToItself(words.trim(), link)) {
+            // An address this converter will not vouch for is not written
+            // out: the words stay and the link goes — see [Links.writable].
+            if (link != null && Links.writable(link) &&
+                words.isNotBlank() && !linksToItself(words.trim(), link)
+            ) {
                 // A link the source carried. An address written out in
                 // full is left as it is: Markdown makes those live on
                 // their own, and "[a@b.com](mailto:a@b.com)" only says the
