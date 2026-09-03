@@ -954,6 +954,26 @@ object DocxReader {
         /** The mark to draw for the next note of [kind], as Word would number it. */
         fun nextMark(kind: String): String =
             if (kind == "endnote") ListLabels.roman(++endnotes) else (++footnotes).toString()
+
+        /**
+         * [blocks] without the mark the note repeats at its head. Word
+         * draws a note's own number itself, but a note marked by hand —
+         * a star, a dagger — has that mark written into it as text, and
+         * it is the same mark the reference carries. Kept, it would be
+         * said twice: once as the mark and once as the note's first
+         * character.
+         */
+        fun withoutMark(blocks: List<Block>, mark: String): List<Block> {
+            val wanted = mark.trim()
+            if (wanted.isEmpty()) return blocks
+            val first = blocks.firstOrNull() as? Paragraph ?: return blocks
+            val opening = first.runs.firstOrNull() ?: return blocks
+            if (opening.text.trim() != wanted) return blocks
+            val rest = first.runs.drop(1)
+            if (rest.isEmpty() || rest.all { it.text.isBlank() }) return blocks
+            val trimmed = listOf(rest.first().let { it.copy(text = it.text.trimStart()) }) + rest.drop(1)
+            return listOf(first.copy(runs = trimmed)) + blocks.drop(1)
+        }
     }
 
     /** A run with no w:t at all (drawings, breaks) carries nothing to keep — unless [media] is given and it draws a picture. */
@@ -1036,7 +1056,9 @@ object DocxReader {
             subscript = vertical == "subscript",
             colorRgb = color,
             highlightRgb = highlight,
-            note = note,
+            // A note that carries its mark as text says it once, on the
+            // run that refers to it, not again at its own head.
+            note = note?.let { notes.withoutMark(it, text) },
         )
     }
 

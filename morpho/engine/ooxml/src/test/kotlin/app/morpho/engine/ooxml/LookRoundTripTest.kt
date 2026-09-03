@@ -14,6 +14,7 @@ import app.morpho.engine.layout.TableRow
 import app.morpho.engine.layout.TableCell
 import app.morpho.engine.layout.TextRun
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -517,6 +518,37 @@ class LookRoundTripTest {
         val parts = entries(DocxWriter.toByteArray(DocumentModel(listOf(Paragraph(listOf(TextRun("plain")))))))
         assertTrue(!parts.containsKey("word/header1.xml") && !parts.containsKey("word/footer1.xml"))
         assertTrue(!parts.getValue("word/document.xml").contains("headerReference"))
+    }
+
+    @Test
+    fun `a light word in a heading stays light`() {
+        // A heading's style is bold, so a run the document does not set
+        // bold inherits it unless the run says otherwise. The numbers of
+        // a paper's numbered headings are often set light while the words
+        // are bold, and they came back bold with nothing in the file to
+        // say they had ever been anything else.
+        val model = DocumentModel(
+            listOf(
+                Paragraph(
+                    listOf(TextRun("2-", bold = false), TextRun("The method", bold = true)),
+                    ParagraphStyle(kind = ParagraphKind.HEADING_2),
+                )
+            )
+        )
+        val xml = documentXml(DocxWriter.toByteArray(model))
+        assertTrue(xml.contains("""<w:b w:val="0"/><w:bCs w:val="0"/>"""), xml)
+        val read = DocxReader.read(DocxWriter.toByteArray(model)).blocks
+            .filterIsInstance<Paragraph>().single()
+        assertEquals(listOf(false, true), read.runs.map { it.bold })
+        assertEquals("2-The method", read.text)
+    }
+
+    @Test
+    fun `a light word in ordinary text says nothing about weight`() {
+        // Only a style that sets bold has to be undone; everywhere else
+        // silence already means light, and saying so would be noise.
+        val model = DocumentModel(listOf(Paragraph(listOf(TextRun("plain words")))))
+        assertFalse(documentXml(DocxWriter.toByteArray(model)).contains("""<w:b w:val="0"/>"""))
     }
 
     @Test

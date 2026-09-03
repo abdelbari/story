@@ -98,6 +98,39 @@ class NotesTest {
         assertEquals(listOf("1", "i"), marks.map { it.text })
     }
 
+    @Test
+    fun `a note marked by hand says its mark once, not twice`() {
+        // Word numbers a note itself, so a note marked by hand — a star,
+        // a dagger — carries that mark as text at its own head as well as
+        // on the run that refers to it. Both kept, the star is said twice
+        // and the note reads "* * the author's address".
+        val doc = read(
+            body = """<w:p><w:r><w:t>Rabiha Nebbar</w:t></w:r>
+                <w:r><w:footnoteReference w:customMarkFollows="1" w:id="2"/><w:t>*</w:t></w:r></w:p>""",
+            footnotes = """<w:footnote w:id="2"><w:p>
+                <w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t xml:space="preserve">* </w:t></w:r>
+                <w:r><w:t>The author's address.</w:t></w:r></w:p></w:footnote>""",
+        )
+        val mark = doc.blocks.filterIsInstance<Paragraph>().first().runs.first { it.note != null }
+        assertEquals("*", mark.text)
+        assertEquals("The author's address.", (mark.note!!.single() as Paragraph).text)
+    }
+
+    @Test
+    fun `a note that opens with the same word as its mark keeps its words`() {
+        // The mark is dropped only where the note's head is the mark and
+        // nothing else; a note whose first word merely starts with it is
+        // left alone.
+        val doc = read(
+            body = """<w:p><w:r><w:t>Text</w:t></w:r>
+                <w:r><w:footnoteReference w:customMarkFollows="1" w:id="2"/><w:t>*</w:t></w:r></w:p>""",
+            footnotes = """<w:footnote w:id="2"><w:p>
+                <w:r><w:t>*starred and said in full.</w:t></w:r></w:p></w:footnote>""",
+        )
+        val mark = doc.blocks.filterIsInstance<Paragraph>().first().runs.first { it.note != null }
+        assertEquals("*starred and said in full.", (mark.note!!.single() as Paragraph).text)
+    }
+
     private fun read(body: String, footnotes: String = "", endnotes: String = ""): DocumentModel {
         val declaration = """<?xml version="1.0" encoding="UTF-8"?>"""
         val parts = mutableListOf(

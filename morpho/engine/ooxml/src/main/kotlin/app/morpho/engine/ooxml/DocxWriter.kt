@@ -519,6 +519,8 @@ object DocxWriter {
         appendParagraphProperties(sb, paragraph.style, effectiveDirection, numbering.numIdFor(paragraph), largest)
         // The names this place answers to, opened and closed around its
         // words so that a contents page or a cross-reference lands on it.
+        // Only a heading's style sets bold; every other run stands alone.
+        val styleIsBold = paragraph.style.kind in BOLD_STYLES
         val bookmarks = links.bookmarksOn(paragraph)
         for ((name, id) in bookmarks) {
             sb.append("""<w:bookmarkStart w:id="$id" w:name="${xmlEscape(name)}"/>""")
@@ -530,7 +532,7 @@ object DocxWriter {
         while (index < paragraph.runs.size) {
             val target = paragraph.runs[index].link
             if (target == null) {
-                appendRun(sb, paragraph.runs[index], effectiveDirection, images, document, notes)
+                appendRun(sb, paragraph.runs[index], effectiveDirection, images, document, notes, styleIsBold)
                 index++
                 continue
             }
@@ -546,7 +548,9 @@ object DocxWriter {
                 anchor != null -> sb.append("""<w:hyperlink w:anchor="${xmlEscape(anchor)}">""")
                 relId != null -> sb.append("""<w:hyperlink r:id="$relId">""")
             }
-            for (i in index..last) appendRun(sb, paragraph.runs[i], effectiveDirection, images, document, notes)
+            for (i in index..last) {
+                appendRun(sb, paragraph.runs[i], effectiveDirection, images, document, notes, styleIsBold)
+            }
             if (anchor != null || relId != null) sb.append("</w:hyperlink>")
             index = last + 1
         }
@@ -667,6 +671,9 @@ object DocxWriter {
     private fun twips(points: Float): Int = (points * 20f).roundToInt().coerceAtLeast(0)
 
     /** Children of w:rPr are emitted in the order the OOXML schema requires. */
+    /** The paragraph styles whose own formatting is bold, which a light run must undo. */
+    private val BOLD_STYLES = setOf(ParagraphKind.HEADING_1, ParagraphKind.HEADING_2, ParagraphKind.HEADING_3)
+
     /** A packed 0xRRGGBB colour as WordprocessingML writes one: six upper-case hex digits, no hash. */
     private fun hexColor(rgb: Int): String = "%06X".format(rgb and 0xFFFFFF)
 
@@ -677,6 +684,8 @@ object DocxWriter {
         images: ImagePlan,
         document: DocumentModel,
         notes: NotePlan? = null,
+        /** Whether the paragraph's style sets bold, which only a heading's does. */
+        styleIsBold: Boolean = false,
     ) {
         run.image?.let { image ->
             sb.append("<w:r>")
@@ -687,10 +696,13 @@ object DocxWriter {
         val rtl = (run.direction ?: paragraphDirection) == TextDirection.RTL
         val family = run.fontFamily?.takeIf { it.isNotBlank() }
         val halfPoints = run.fontSizePt?.takeIf { it > 0f }?.let { (it * 2).roundToInt() }
+        // A run that is light inside a style that is bold has something to
+        // say after all: that it is light.
+        val undoesBold = styleIsBold && !run.bold
         val hasProps = run.bold || run.italic || run.underline || run.strikethrough ||
             rtl || run.language != null ||
             family != null || halfPoints != null || run.superscript || run.subscript ||
-            run.colorRgb != null || run.highlightRgb != null
+            run.colorRgb != null || run.highlightRgb != null || undoesBold
 
         // A field is a run Word fills in; what it last showed goes in as the
         // text, as the cached result a field carries.
@@ -705,7 +717,14 @@ object DocxWriter {
                 val name = xmlEscape(f)
                 sb.append("""<w:rFonts w:ascii="$name" w:hAnsi="$name" w:cs="$name"/>""")
             }
-            if (run.bold) sb.append("<w:b/><w:bCs/>")
+            // A heading's style is bold, so a run the document does not set
+            // bold has to say so outright: the digit of a numbered heading
+            // the page set light comes back bold otherwise, and nothing in
+            // the file says it was ever anything else.
+            when {
+                run.bold -> sb.append("<w:b/><w:bCs/>")
+                styleIsBold -> sb.append("""<w:b w:val="0"/><w:bCs w:val="0"/>""")
+            }
             if (run.italic) sb.append("<w:i/><w:iCs/>")
             if (run.strikethrough) sb.append("<w:strike/>")
             run.colorRgb?.let { sb.append("""<w:color w:val="${hexColor(it)}"/>""") }
