@@ -88,6 +88,7 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
         }
     }
     is EditorIntent.DuplicateClip -> reduceDuplicate(state, intent.clipId)
+    is EditorIntent.DetachAudio -> reduceDetachAudio(state, intent.clipId)
     is EditorIntent.SetTrackMuted -> mapTracks(state) { t ->
         if (t.id == intent.trackId) t.copy(muted = intent.muted) else t
     }
@@ -205,6 +206,40 @@ private fun reduceSplit(state: TimelineState, intent: EditorIntent.SplitClip): T
                 }
             },
         )
+    }
+}
+
+/**
+ * Moves a clip's sound onto the audio track, at the same moment in the
+ * timeline, and silences the video it came from. Both halves matter: leaving
+ * the original audible would double it, and placing the copy anywhere but the
+ * clip's own start would put the sound out of sync with the picture.
+ *
+ * The copy keeps the source's trims and speed, so it plays exactly the samples
+ * the clip was playing — until the user moves it, which is the point.
+ */
+private fun reduceDetachAudio(state: TimelineState, id: ClipId): TimelineState {
+    val (track, clip) = state.findClip(id) ?: return state
+    if (track.type == TrackType.AUDIO || !clip.media.hasAudio) return state
+    val audioTrack = state.tracks.firstOrNull { it.type == TrackType.AUDIO } ?: return state
+    val startMs = state.placements(track).firstOrNull { it.clip.id == id }?.startMs ?: return state
+    val lifted = clip.copy(
+        id = ClipId.random(),
+        startMs = startMs,
+        // Sound only: the visual specs would be meaningless on an audio lane.
+        text = null,
+        sticker = null,
+        pip = null,
+    )
+    return mapTracks(state) { t ->
+        when (t.id) {
+            audioTrack.id -> t.copy(clips = t.clips.add(lifted))
+            track.id -> t.copy(
+                clips = t.clips.map { if (it.id == id) it.copy(volume = 0f) else it }
+                    .toPersistentList(),
+            )
+            else -> t
+        }
     }
 }
 

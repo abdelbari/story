@@ -235,6 +235,9 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
             viewport = viewport,
             recording = recording,
             hasSelection = selected != null,
+            canDetachAudio = selected?.let { (track, c) ->
+                track.type != TrackType.AUDIO && c.media.hasAudio
+            } == true,
         )
     }
 }
@@ -355,6 +358,7 @@ private fun ToolBar(
     viewport: TimelineViewportState,
     recording: Boolean,
     hasSelection: Boolean,
+    canDetachAudio: Boolean,
 ) {
     val context = LocalContext.current
     val state by vm.store.timeline.collectAsState()
@@ -417,6 +421,11 @@ private fun ToolBar(
         ToolButton("Split", enabled = hasSelection) {
             vm.store.selection.value?.let { id ->
                 vm.store.dispatch(EditorIntent.SplitClip(id, viewport.playheadMs))
+            }
+        }
+        ToolButton("Detach", enabled = canDetachAudio) {
+            vm.store.selection.value?.let { id ->
+                vm.store.dispatch(EditorIntent.DetachAudio(id))
             }
         }
         ToolButton("Copy", enabled = hasSelection) {

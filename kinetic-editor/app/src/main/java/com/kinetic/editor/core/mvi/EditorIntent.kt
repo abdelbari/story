@@ -42,6 +42,12 @@ sealed interface EditorIntent {
     /** Copies a clip in place: after it on the main track, beside it elsewhere. */
     data class DuplicateClip(val clipId: ClipId) : EditorIntent
 
+    /**
+     * Lifts a clip's sound onto the audio track and silences the source, so the
+     * two can be trimmed, faded and moved apart from each other.
+     */
+    data class DetachAudio(val clipId: ClipId) : EditorIntent
+
     data class MoveClip(
         val clipId: ClipId,
         val toTrackId: TrackId,

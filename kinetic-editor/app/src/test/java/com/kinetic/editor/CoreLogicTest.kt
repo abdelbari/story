@@ -544,6 +544,33 @@ class CoreLogicTest {
     }
 
     @Test
+    fun detachAudioLiftsTheSoundAndSilencesTheSource() {
+        val a = clip("a", 4_000)
+        val b = clip("b", 3_000)
+        val s0 = stateWith(listOf(a, b))
+        val out = reduce(s0, EditorIntent.DetachAudio(b.id))
+
+        // Silenced, not removed: the picture stays.
+        assertEquals(2, out.mainTrack.clips.size)
+        assertEquals(0f, out.mainTrack.clips[1].volume, 1e-4f)
+
+        val lifted = out.tracks.first { it.type == TrackType.AUDIO }.clips.single()
+        // At the same moment in the timeline, or the sound drifts off the picture.
+        assertEquals(a.durationMs, lifted.startMs)
+        assertEquals(b.trimInMs, lifted.trimInMs)
+        assertEquals(b.trimOutMs, lifted.trimOutMs)
+        assertNotEquals(b.id, lifted.id)
+
+        // Nothing to detach from silent media, or from the audio lane itself.
+        val silent = ClipModel(
+            ClipId("s"), MediaRef("uri://silent", 2_000, true, false, 30f), 0, 2_000,
+        )
+        val quiet = stateWith(listOf(silent))
+        assertTrue(reduce(quiet, EditorIntent.DetachAudio(silent.id)) === quiet)
+        assertTrue(reduce(out, EditorIntent.DetachAudio(lifted.id)) === out)
+    }
+
+    @Test
     fun duplicateLandsBesideTheOriginalWithItsOwnIdentity() {
         val a = clip("a", 4_000)
         val b = clip("b", 3_000)

@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 49 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 50 pure-JVM logic tests
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
@@ -40,8 +40,8 @@ environment, so the app has not been assembled by Gradle there. Instead:
   undefined name and a missing import in `EditorScreen`.)
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 49 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 51-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 50 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 52-scenario executable sandbox suite.
 
 ---
 
@@ -319,7 +319,7 @@ the exporter — the model, the preview and the export path agree on all three.
 | Overlays | picture-in-picture (size, position, rotation, opacity) — every control is the number the export consumes |
 | Looks | eight one-tap filters that set the same grade/LUT fields the sliders edit, so a preset is a starting point rather than a mode |
 | Canvas | 9:16, 16:9, 1:1 and 4:5 presets, each fitted, filled (cropped) or stretched — applied by the same `Presentation` in preview and export |
-| Editing | trim, split, move, reorder, duplicate, delete, per-clip speed |
+| Editing | trim, split, move, reorder, duplicate, delete, per-clip speed, detach audio |
 | Output | background MP4 export with live progress, published to Movies/Kinetic |
 
 Volume fades deserve a note: the model stores a general keyframe envelope, but
