@@ -47,6 +47,9 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
     }
     is EditorIntent.SetGrade -> replaceClip(state, intent.clipId) { it.copy(grade = intent.grade) }
     is EditorIntent.SetLut -> replaceClip(state, intent.clipId) { it.copy(lut = intent.lut) }
+    is EditorIntent.ApplyFilter -> replaceClip(state, intent.clipId) {
+        it.copy(grade = intent.grade, lut = intent.lut)
+    }
     is EditorIntent.SetTransition -> replaceClip(state, intent.clipId) {
         it.copy(transitionOut = intent.transition)
     }
@@ -66,6 +69,7 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
                 scale = intent.pip.scale.coerceIn(0.05f, 1f),
                 anchorX = intent.pip.anchorX.coerceIn(-1f, 1f),
                 anchorY = intent.pip.anchorY.coerceIn(-1f, 1f),
+                opacity = intent.pip.opacity.coerceIn(0f, 1f),
             ),
         )
     }

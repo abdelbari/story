@@ -29,9 +29,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
@@ -42,7 +40,9 @@ import com.kinetic.editor.core.model.PipSpec
 import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TrackType
+import com.kinetic.editor.core.model.layoutKey
 import com.kinetic.editor.core.model.pipWindowAt
+import com.kinetic.editor.ui.previewStyle
 import com.kinetic.editor.engine.PreviewEngine
 import com.kinetic.editor.ui.timeline.TimelineViewportState
 import kotlinx.coroutines.Dispatchers
@@ -155,7 +155,7 @@ private fun PipLayer(engine: PreviewEngine, viewport: TimelineViewportState) {
                         .fillMaxSize()
                         .rotate(-pip.rotationDeg)
                         // Between clips the slave player sits paused on its last frame: hide it.
-                        .alpha(if (window != null) 1f else 0f),
+                        .alpha(if (window != null) pip.opacity else 0f),
                 )
             }
         }
@@ -199,14 +199,11 @@ private fun PreviewOverlayLayer(
                     if (timeMs !in p) continue
                     val spec = p.clip.text ?: continue
                     val scale = size.width / state.outputWidth
-                    val layout = textCache.getOrPut("${spec.text}:${(spec.textSizePx * scale).toInt()}") {
+                    val layout = textCache.getOrPut(spec.layoutKey((spec.textSizePx * scale).toInt())) {
                         if (textCache.size > 128) textCache.clear()
                         measurer.measure(
                             AnnotatedString(spec.text),
-                            TextStyle(
-                                fontSize = (spec.textSizePx * scale / density).sp,
-                                fontWeight = FontWeight.Bold,
-                            ),
+                            spec.previewStyle((spec.textSizePx * scale / density).sp),
                         )
                     }
                     // NDC anchors: x right-positive, y up-positive, (0,0) center.

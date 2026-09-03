@@ -3,11 +3,13 @@ package com.kinetic.editor.effects
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Typeface
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
+import android.text.style.TypefaceSpan
 import androidx.media3.common.OverlaySettings
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.OverlayEffect
@@ -86,15 +88,22 @@ private class TimedTextOverlay(
 
     // Built once; getText must not allocate per frame.
     private val styled = SpannableString(spec.text).apply {
-        setSpan(
-            ForegroundColorSpan(spec.argb.toInt()),
-            0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+        fun span(what: Any) = setSpan(what, 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        span(ForegroundColorSpan(spec.argb.toInt()))
+        span(AbsoluteSizeSpan(spec.textSizePx.toInt()))
+        // The family name Compose resolves its own FontFamily from, so preview
+        // and render land on the same face rather than two similar ones.
+        span(TypefaceSpan(spec.font.androidFamily))
+        span(
+            StyleSpan(
+                when {
+                    spec.bold && spec.italic -> Typeface.BOLD_ITALIC
+                    spec.bold -> Typeface.BOLD
+                    spec.italic -> Typeface.ITALIC
+                    else -> Typeface.NORMAL
+                },
+            ),
         )
-        setSpan(
-            AbsoluteSizeSpan(spec.textSizePx.toInt()),
-            0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-        )
-        setSpan(StyleSpan(android.graphics.Typeface.BOLD), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
     }
 
     override fun getText(presentationTimeUs: Long): SpannableString = styled

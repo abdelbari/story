@@ -14,6 +14,7 @@ import com.kinetic.editor.core.model.readFades
 import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.ProjectCodec
 import com.kinetic.editor.core.model.StickerSpec
+import com.kinetic.editor.core.model.TextFont
 import com.kinetic.editor.core.model.TextSpec
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.planSequence
@@ -25,6 +26,7 @@ import com.kinetic.editor.core.model.VolumeKeyframe
 import com.kinetic.editor.core.model.audioStructureHash
 import com.kinetic.editor.core.model.overlayStructureHash
 import com.kinetic.editor.core.model.gainAt
+import com.kinetic.editor.core.model.layoutKey
 import com.kinetic.editor.core.model.snapToFrame
 import com.kinetic.editor.core.model.videoStructureHash
 import com.kinetic.editor.core.mvi.EditorIntent
@@ -347,6 +349,12 @@ class CoreLogicTest {
         assertEquals(1f, pip.anchorX, 1e-3f)
         assertEquals(-1f, pip.anchorY, 1e-3f)
         assertEquals(1f, pip.scale, 1e-3f)
+
+        val faded = reduce(
+            s0,
+            EditorIntent.SetPip(plain.id, PipSpec(opacity = -2f)),
+        ).mainTrack.clips[0].pip!!
+        assertEquals(0f, faded.opacity, 1e-3f)
     }
 
     @Test
@@ -403,6 +411,64 @@ class CoreLogicTest {
 
         val trimmed = reduce(withPip, EditorIntent.TrimClip(pipClip.id, 500, 4_000))
         assertNotEquals(withPip.overlayStructureHash(), trimmed.overlayStructureHash())
+    }
+
+    @Test
+    fun textLayoutKeyTracksTheFaceButNotTheColour() {
+        val base = TextSpec("hello")
+        // Colour is applied when the layout is drawn, so it must not split the cache.
+        assertEquals(base.layoutKey(64), base.copy(argb = 0xFF00FF00).layoutKey(64))
+        // Everything that changes the measurement must.
+        assertNotEquals(base.layoutKey(64), base.copy(font = TextFont.SERIF).layoutKey(64))
+        assertNotEquals(base.layoutKey(64), base.copy(bold = false).layoutKey(64))
+        assertNotEquals(base.layoutKey(64), base.copy(italic = true).layoutKey(64))
+        assertNotEquals(base.layoutKey(64), base.copy(text = "hi").layoutKey(64))
+        assertNotEquals(base.layoutKey(64), base.layoutKey(65))
+        // The export resolves these exact strings through TypefaceSpan, and
+        // Compose resolves its own built-in families from the same names.
+        assertEquals("sans-serif", TextFont.SANS.androidFamily)
+        assertEquals("serif", TextFont.SERIF.androidFamily)
+        assertEquals("monospace", TextFont.MONO.androidFamily)
+        assertEquals("cursive", TextFont.CURSIVE.androidFamily)
+    }
+
+    @Test
+    fun textDefaultsAreOmittedFromDiskAndRestoredOnLoad() {
+        val textClip = ClipModel(
+            ClipId("t"), MediaRef("kinetic://text", 3_000, false, false, 0f), 0, 3_000,
+            text = TextSpec("hi"),
+        )
+        val base = TimelineState.empty()
+        val doc = base.copy(
+            tracks = base.tracks.map {
+                if (it.type == TrackType.TEXT) it.copy(clips = persistentListOf(textClip)) else it
+            }.toPersistentList(),
+        )
+        val json = ProjectCodec.encode(doc)
+        // encodeDefaults = false, so this is byte-for-byte the shape a project
+        // saved before TextSpec grew these fields has. Loading it must fill them
+        // in, not fail: an update that ate the user's project would be the worst
+        // possible bug in a persistence layer.
+        assertFalse(json.contains("\"font\""))
+        val spec = ProjectCodec.decode(json)!!
+            .tracks.first { it.type == TrackType.TEXT }.clips[0].text!!
+        assertEquals(TextFont.SANS, spec.font)
+        assertTrue(spec.bold)
+        assertFalse(spec.italic)
+    }
+
+    @Test
+    fun applyFilterSetsGradeAndLutAsOneEdit() {
+        val c = clip("a", 5_000)
+        val s0 = stateWith(listOf(c))
+        val film = LutSpec("luts/teal_orange.png", 0.85f)
+        val graded = reduce(s0, EditorIntent.ApplyFilter(c.id, ColorGradeSpec(saturation = 0f), film))
+        assertEquals(0f, graded.mainTrack.clips[0].grade.saturation, 1e-3f)
+        assertEquals("luts/teal_orange.png", graded.mainTrack.clips[0].lut?.assetPath)
+        // Going back to "None" has to drop the LUT too, or the look sticks.
+        val cleared = reduce(graded, EditorIntent.ApplyFilter(c.id, ColorGradeSpec.NEUTRAL, null))
+        assertNull(cleared.mainTrack.clips[0].lut)
+        assertTrue(cleared.mainTrack.clips[0].grade.isNeutral)
     }
 
     @Test

@@ -67,6 +67,17 @@ sealed interface EditorIntent {
         override val coalesceKey get() = "lut:${clipId.value}"
     }
 
+    /**
+     * A look, applied as one edit. Grade and LUT are separate intents so each
+     * can coalesce a slider drag on its own; a filter sets both at once and
+     * should cost the user a single undo, not two.
+     */
+    data class ApplyFilter(
+        val clipId: ClipId,
+        val grade: ColorGradeSpec,
+        val lut: LutSpec?,
+    ) : EditorIntent
+
     data class SetTransition(val clipId: ClipId, val transition: TransitionSpec?) : EditorIntent
 
     data class SetVolume(val clipId: ClipId, val volume: Float) : EditorIntent {

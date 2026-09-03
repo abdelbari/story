@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 41 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 44 pure-JVM logic tests
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
@@ -40,8 +40,8 @@ environment, so the app has not been assembled by Gradle there. Instead:
   undefined name and a missing import in `EditorScreen`.)
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 41 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 43-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 44 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 46-scenario executable sandbox suite.
 
 ---
 
@@ -258,6 +258,13 @@ during pinch-zoom. Instead:
 - Overlay rotation is specified **counter-clockwise** by media3 and clockwise
   by Compose, so every preview rotation is negated against its export value.
   A preview that turns the opposite way from the render is worse than none.
+- **Type faces are Android's own families, not bundled fonts.** `TextFont`
+  carries the family name (`sans-serif`, `serif`, `monospace`, `cursive`) that
+  the export resolves through `TypefaceSpan` *and* that Compose's built-in
+  `FontFamily`s are themselves defined as — so preview and render pick the
+  identical face rather than two that merely look similar. They also exist on
+  every device and cost nothing to install. Bundled display faces would change
+  nothing but that enum.
 - TEXT/STICKER tracks → one composition-level `OverlayEffect` with
   alpha-gated, fade-edged windows (composition time == timeline time). Sticker
   scale is folded with the canvas width so it, too, means "fraction of the
@@ -288,7 +295,9 @@ the exporter — the model, the preview and the export path agree on all three.
 | Clips | speed presets (0.5–4x), per-clip brightness/contrast/saturation, film LUT toggle |
 | Transitions | dip-to-black, wipe, zoom-punch on any clip boundary |
 | Audio | music and voiceover lanes, per-clip volume, fade in/out, track mute |
-| Overlays | text (editable content, size, position), stickers (size, position, rotation), picture-in-picture (size, position, rotation) — every control is the number the export consumes |
+| Text | editable content (multi-line), four type faces, bold, italic, eight colours, size, position |
+| Overlays | stickers (size, position, rotation), picture-in-picture (size, position, rotation, opacity) — every control is the number the export consumes |
+| Looks | eight one-tap filters that set the same grade/LUT fields the sliders edit, so a preset is a starting point rather than a mode |
 | Canvas | 9:16, 16:9, 1:1 and 4:5 presets; the preview letterboxes the picture into the chosen frame exactly as the export's `Presentation` does |
 | Output | background MP4 export with live progress, published to Movies/Kinetic |
 

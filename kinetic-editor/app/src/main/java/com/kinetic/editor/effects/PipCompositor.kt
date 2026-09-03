@@ -78,6 +78,8 @@ class PipCompositorSettings(
         override fun getOverlayFrameAnchor(): Pair<Float, Float> = CENTRE
 
         override fun getRotationDegrees(): Float = pip.rotationDeg
+
+        override fun getAlphaScale(): Float = pip.opacity
     }
 
     private companion object {

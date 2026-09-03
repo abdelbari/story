@@ -89,7 +89,35 @@ data class TextSpec(
     // Normalized device coords, [-1, 1]; (0, 0) is frame center.
     val anchorX: Float = 0f,
     val anchorY: Float = -0.6f,
+    val font: TextFont = TextFont.SANS,
+    val bold: Boolean = true,
+    val italic: Boolean = false,
 )
+
+/**
+ * The type faces a text clip can use.
+ *
+ * These are the families Android itself ships, not bundled font files, and that
+ * is deliberate: they exist on every device, cost nothing to install, and
+ * [androidFamily] is the *same string* the export's TypefaceSpan resolves that
+ * Compose resolves its own [FontFamily] from — so the preview and the render
+ * pick the identical face rather than two faces that merely look similar.
+ * Bundled faces can be added later without changing anything but this enum.
+ */
+@Serializable
+enum class TextFont(val androidFamily: String, val label: String) {
+    SANS("sans-serif", "Sans"),
+    SERIF("serif", "Serif"),
+    MONO("monospace", "Mono"),
+    CURSIVE("cursive", "Script"),
+}
+
+/**
+ * Everything about a text clip that changes its measured layout, and nothing
+ * that does not: colour is applied when the layout is drawn, so two clips
+ * differing only in colour share one measurement.
+ */
+fun TextSpec.layoutKey(sizePx: Int): String = "$font|$bold|$italic|$sizePx|$text"
 
 /** Placement of a picture-in-picture video overlay. Null on a clip = full frame. */
 @Serializable
@@ -100,6 +128,8 @@ data class PipSpec(
     val anchorY: Float = 0.55f,
     val scale: Float = 0.35f,
     val rotationDeg: Float = 0f,
+    /** 0 = invisible, 1 = opaque. Blended over the main picture. */
+    val opacity: Float = 1f,
 )
 
 @Serializable

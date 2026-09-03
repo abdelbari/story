@@ -6,13 +6,17 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -47,6 +52,8 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,6 +69,8 @@ import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.TrackType
+import com.kinetic.editor.core.model.TextFont
+import com.kinetic.editor.core.model.TextSpec
 import com.kinetic.editor.core.model.TransitionType
 import com.kinetic.editor.core.mvi.EditorIntent
 import kotlinx.collections.immutable.toPersistentList
@@ -459,25 +468,82 @@ private fun ClipInspector(
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
         // A text overlay whose words cannot be changed is not a text tool.
         clip.text?.let { spec ->
+            fun edit(next: TextSpec) = dispatch(EditorIntent.SetText(clip.id, next))
+
             OutlinedTextField(
                 value = spec.text,
-                onValueChange = { dispatch(EditorIntent.SetText(clip.id, spec.copy(text = it))) },
-                singleLine = true,
+                onValueChange = { edit(spec.copy(text = it)) },
+                // Multi-line: a caption is often two or three lines, and both the
+                // preview measurer and the export's layout wrap on \n already.
+                singleLine = false,
+                maxLines = 3,
                 textStyle = TextStyle(color = Color(0xFFEDEDF2), fontSize = 14.sp),
                 label = { Text("Text", fontSize = 11.sp, color = Color(0xFF9A9AA5)) },
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 InspectorSlider("Size", spec.textSizePx, 24f..160f) {
-                    dispatch(EditorIntent.SetText(clip.id, spec.copy(textSizePx = it)))
+                    edit(spec.copy(textSizePx = it))
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                InspectorSlider("X", spec.anchorX, -1f..1f) {
-                    dispatch(EditorIntent.SetText(clip.id, spec.copy(anchorX = it)))
+                InspectorSlider("X", spec.anchorX, -1f..1f) { edit(spec.copy(anchorX = it)) }
+                InspectorSlider("Y", spec.anchorY, -1f..1f) { edit(spec.copy(anchorY = it)) }
+            }
+            // Each face is labelled in its own family, so the picker shows what
+            // it will give you rather than naming it.
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                for (face in TextFont.entries) {
+                    val active = spec.font == face
+                    TextButton(onClick = { edit(spec.copy(font = face)) }) {
+                        Text(
+                            face.label,
+                            fontFamily = face.composeFamily(),
+                            fontSize = 14.sp,
+                            color = if (active) Color.White else Color(0xFF9A9AA5),
+                        )
+                    }
                 }
-                InspectorSlider("Y", spec.anchorY, -1f..1f) {
-                    dispatch(EditorIntent.SetText(clip.id, spec.copy(anchorY = it)))
+                TextButton(onClick = { edit(spec.copy(bold = !spec.bold)) }) {
+                    Text(
+                        "B",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = if (spec.bold) Color(0xFF35C4B5) else Color(0xFF9A9AA5),
+                    )
+                }
+                TextButton(onClick = { edit(spec.copy(italic = !spec.italic)) }) {
+                    Text(
+                        "I",
+                        fontStyle = FontStyle.Italic,
+                        fontSize = 14.sp,
+                        color = if (spec.italic) Color(0xFF35C4B5) else Color(0xFF9A9AA5),
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("Colour", color = Color(0xFF9A9AA5), fontSize = 11.sp)
+                for (argb in TEXT_COLORS) {
+                    val active = spec.argb == argb
+                    Box(
+                        Modifier
+                            .size(24.dp)
+                            .background(Color(argb), CircleShape)
+                            .border(
+                                width = if (active) 2.dp else 1.dp,
+                                color = if (active) Color.White else Color(0x44FFFFFF),
+                                shape = CircleShape,
+                            )
+                            .clickable { edit(spec.copy(argb = argb)) },
+                    )
                 }
             }
         }
@@ -520,6 +586,11 @@ private fun ClipInspector(
                     dispatch(EditorIntent.SetPip(clip.id, spec.copy(anchorY = it)))
                 }
             }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                InspectorSlider("Opacity", spec.opacity, 0f..1f) {
+                    dispatch(EditorIntent.SetPip(clip.id, spec.copy(opacity = it)))
+                }
+            }
         }
 
         // Picture controls only for clips that carry a picture; sound controls
@@ -527,6 +598,28 @@ private fun ClipInspector(
         val hasVideo = clip.media.hasVideo
         val hasAudio = clip.media.hasAudio
         if (hasVideo) {
+            // A filter is a starting point, not a mode: it sets the same grade
+            // and LUT fields the sliders below edit, so the two never disagree.
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text("Filter", color = Color(0xFF9A9AA5), fontSize = 11.sp)
+                for (filter in FILTERS) {
+                    val active = clip.grade == filter.grade &&
+                        clip.lut?.assetPath == filter.lut?.assetPath
+                    TextButton(onClick = {
+                        dispatch(EditorIntent.ApplyFilter(clip.id, filter.grade, filter.lut))
+                    }) {
+                        Text(
+                            filter.label,
+                            fontSize = 12.sp,
+                            color = if (active) Color(0xFF35C4B5) else Color(0xFF9A9AA5),
+                        )
+                    }
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 InspectorSlider("Bright", clip.grade.brightness, -0.5f..0.5f) {
                     dispatch(EditorIntent.SetGrade(clip.id, clip.grade.copy(brightness = it)))
@@ -615,23 +708,6 @@ private fun ClipInspector(
                     )
                 }
             }
-            if (hasVideo) {
-                val lutOn = clip.lut != null
-                TextButton(onClick = {
-                    dispatch(
-                        EditorIntent.SetLut(
-                            clip.id,
-                            if (lutOn) null else LutSpec(FILM_LUT_ASSET, intensity = 0.85f),
-                        ),
-                    )
-                }) {
-                    Text(
-                        if (lutOn) "Film ✓" else "Film",
-                        fontSize = 12.sp,
-                        color = if (lutOn) Color(0xFF35C4B5) else Color(0xFF9A9AA5),
-                    )
-                }
-            }
             // A transition is a cut between neighbours on the main track; nothing
             // else has a cut to sit on.
             if (track.type == TrackType.VIDEO_MAIN) {
@@ -671,6 +747,30 @@ private fun androidx.compose.foundation.layout.RowScope.InspectorSlider(
 }
 
 /** Ships in app/src/main/assets — a 64-cube teal/orange film LUT. */
+/**
+ * The looks offered as one tap. Each is nothing but preset values of the grade
+ * the sliders edit (and, for Film, the bundled LUT), so a filter can always be
+ * adjusted afterwards rather than being an opaque mode.
+ */
+private class Filter(val label: String, val grade: ColorGradeSpec, val lut: LutSpec? = null)
+
+private val FILTERS = listOf(
+    Filter("None", ColorGradeSpec.NEUTRAL),
+    Filter("Vivid", ColorGradeSpec(contrast = 1.20f, saturation = 1.45f)),
+    Filter("Warm", ColorGradeSpec(temperature = 0.35f, saturation = 1.10f)),
+    Filter("Cool", ColorGradeSpec(temperature = -0.35f, saturation = 1.05f)),
+    Filter("Fade", ColorGradeSpec(brightness = 0.08f, contrast = 0.78f, saturation = 0.82f)),
+    Filter("Mono", ColorGradeSpec(saturation = 0f)),
+    Filter("Noir", ColorGradeSpec(contrast = 1.35f, saturation = 0f)),
+    Filter("Film", ColorGradeSpec(contrast = 1.08f, saturation = 0.95f), LutSpec(FILM_LUT_ASSET, 0.85f)),
+)
+
+/** Swatches for text: white and black first, then the app's own accents. */
+private val TEXT_COLORS = listOf(
+    0xFFFFFFFF, 0xFF000000, 0xFFFFC145, 0xFFFF5C7A,
+    0xFF35C4B5, 0xFF6C8CFF, 0xFF9B5CFF, 0xFF3BD16F,
+)
+
 private const val NOTICE_MS = 4_000L
 private const val FILM_LUT_ASSET = "luts/teal_orange.png"
 
