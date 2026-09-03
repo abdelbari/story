@@ -93,6 +93,57 @@ class PdfRuledTablesTest {
         assertTrue(table.ruled, "the page ruled it")
     }
 
+    /**
+     * One row of an Arabic table, as a reader hands it over: the words in
+     * the order they are read, their pieces in the order they sit, which
+     * for Arabic is the other way round.
+     */
+    private fun arabicRow(label: String, words: List<String>, top: Float): PdfLine {
+        var right = 512f
+        val inCell = words.map { text ->
+            val width = text.length * 6f
+            PdfSegment(text, right - width, right).also { right -= width + 4f }
+        }
+        val pieces = (inCell + PdfSegment(label, 66f, 66f + label.length * 6f)).sortedBy { it.xStart }
+        return PdfLine(
+            text = (words + label).joinToString(" "),
+            x = pieces.first().xStart,
+            baselineY = top,
+            maxFontSize = 11f,
+            page = 1,
+            xEnd = pieces.last().xEnd,
+            segments = pieces,
+        )
+    }
+
+    @Test
+    fun `an Arabic cell says what it says, not the reverse of it`() {
+        // A form an institution sends, scanned or not, is a ruled table
+        // of Arabic, and the cells of one were coming back with their
+        // words in reverse: every word right, the sentence not. The
+        // pieces of a line are handed over left to right because what
+        // they are for is the page — the gaps between them are the
+        // columns — and a cell's words are rebuilt out of them.
+        val rows = listOf(
+            "العلمي" to listOf("الاستمارة", "في", "البحث"),
+            "الميدانية" to listOf("أدوات", "جمع", "البيانات"),
+            "الخاتمة" to listOf("عيوب", "الاستمارة", "ومميزاتها"),
+        )
+        val lines = rows.mapIndexed { at, (label, words) ->
+            arabicRow(label, words, top = listOf(108f, 150f, 220f)[at])
+        }
+        val model = PdfLayout.reconstruct(lines, confidence = 0.6f, drawings = grid())
+        val table = model.blocks.filterIsInstance<Table>().single()
+        fun cell(row: Int, column: Int) = table.rows[row].cells[column]
+            .blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }
+        // The first cell of an Arabic row is the rightmost one, which is
+        // where the table's own first column is.
+        assertEquals("الاستمارة في البحث", cell(0, 0))
+        assertEquals("أدوات جمع البيانات", cell(1, 0))
+        assertEquals("عيوب الاستمارة ومميزاتها", cell(2, 0))
+        assertEquals(listOf("العلمي", "الميدانية", "الخاتمة"), (0..2).map { cell(it, 1) })
+    }
+
     @Test
     fun `the paragraphs either side of it are still their own`() {
         val before = PdfLine("a sentence before the table", 60f, 70f, 11f, 1, 300f)

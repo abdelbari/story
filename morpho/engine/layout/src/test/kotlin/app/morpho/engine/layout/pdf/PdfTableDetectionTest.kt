@@ -28,6 +28,81 @@ class PdfTableDetectionTest {
         )
     }
 
+    /**
+     * An Arabic line as a reader hands it over: the words in the order
+     * they are read, their pieces in the order they sit — which for
+     * Arabic is the other way round.
+     */
+    private fun arabicLine(vararg words: String, from: Float = 500f, size: Float = 12f): PdfLine {
+        // Laid out as Arabic sits: the first word read is the rightmost,
+        // each one after it a word-space further left.
+        var right = from
+        val pieces = words.map { text ->
+            val width = text.length * size * 0.5f
+            PdfSegment(text, right - width, right).also { right -= width + size * 0.3f }
+        }
+        return PdfLine(
+            text = words.joinToString(" "),
+            x = pieces.minOf { it.xStart },
+            baselineY = y.also { y += 15f },
+            maxFontSize = size,
+            page = 1,
+            xEnd = pieces.maxOf { it.xEnd },
+            segments = pieces.sortedBy { it.xStart },
+        )
+    }
+
+    @Test
+    fun `a cell of Arabic says what its line says, not the reverse of it`() {
+        // Every reader hands the pieces of a line over left to right,
+        // because what they are for is the page: the gaps between them are
+        // what a column is found from. A cell's words are then rebuilt out
+        // of those pieces, and left in that order an Arabic cell is a
+        // sentence written backwards — every word of it right and the
+        // sentence not, which is the kind of wrong a reader has to read
+        // twice to catch.
+        val line = arabicLine("الاستمارة", "في", "البحث")
+        val cell = PdfTableDetector.cellsOf(line).single()
+        assertEquals("الاستمارة في البحث", cell.text)
+        assertEquals(line.text, cell.text, "the cell has to say what the line says")
+    }
+
+    @Test
+    fun `a line read left to right is untouched`() {
+        val cells = PdfTableDetector.cellsOf(proseLine("the form in scientific research"))
+        assertEquals("the form in scientific research", cells.single().text)
+    }
+
+    @Test
+    fun `what is set in Latin inside an Arabic table is read as Latin`() {
+        // A name, an address, an email: the cell decides for itself, not
+        // the table it stands in, or a correspondent's address comes back
+        // with its parts in the wrong order.
+        val line = PdfLine(
+            text = "Rabiha Nebbar الاسم",
+            x = 60f,
+            baselineY = y.also { y += 15f },
+            maxFontSize = 12f,
+            page = 1,
+            xEnd = 500f,
+            segments = listOf(
+                PdfSegment("Rabiha", 60f, 110f),
+                PdfSegment("Nebbar", 114f, 164f),
+                PdfSegment("الاسم", 440f, 480f),
+            ),
+        )
+        val cells = PdfTableDetector.cellsOf(line)
+        assertEquals(listOf("Rabiha Nebbar", "الاسم"), cells.map { it.text })
+    }
+
+    @Test
+    fun `a cell of one piece has no order to get wrong`() {
+        assertEquals(
+            listOf(PdfSegment("البحث", 100f, 140f)),
+            PdfTableDetector.inReadingOrder(listOf(PdfSegment("البحث", 100f, 140f))),
+        )
+    }
+
     /** Prose: many word chunks with ordinary word gaps. */
     private fun proseLine(text: String, size: Float = 12f, page: Int = 1): PdfLine {
         var x = 72f

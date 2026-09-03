@@ -168,9 +168,15 @@ object RecognizedText {
             maxFontSize = size,
             page = words.first().page,
             xEnd = words.maxOf { it.right },
-            // One segment a word, which is what a table's columns are
+            // One piece a word, which is what a table's columns are
             // found from: the gaps between them across a run of lines.
-            segments = words.map { PdfSegment(it.text, it.left, it.right) },
+            // Left to right, whatever the words do — that is what every
+            // other reader hands over, because what these are for is the
+            // page rather than the sentence, and recognition gives its
+            // words in the order they are read. An Arabic line's pieces
+            // therefore arrive in the reverse of the order they sit in.
+            segments = words.map { PdfSegment(it.text, it.left, it.right) }
+                .sortedBy { it.xStart },
             // Every word carries the size its line was measured at, so a
             // scanned paper's footnotes come out small and its title
             // large. Recognition can name no typeface — the fast models

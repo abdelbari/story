@@ -130,7 +130,13 @@ object PdfRuledTables {
             for (column in 0 until columns) {
                 val own = pieces[column]
                 if (own.isEmpty()) continue
-                cells[row][column] += at to own.sortedBy { it.xStart }.joinToString(" ") { it.text }
+                // In the order the cell is read, not the order it is
+                // painted: the pieces come across the page left to right
+                // whatever the words do, and an Arabic cell left that way
+                // is a sentence written backwards.
+                cells[row][column] += at to PdfTableDetector
+                    .inReadingOrder(own.sortedBy { it.xStart })
+                    .joinToString(" ") { it.text }
                 placed = true
             }
             if (placed) held += at

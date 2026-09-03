@@ -236,6 +236,38 @@ class RecognizedTextTest {
     }
 
     @Test
+    fun `an Arabic line reads in one order and sits in another`() {
+        // Recognition hands its words over in the order they are read,
+        // which for Arabic is right to left across the page. The line has
+        // to say them in that order — and its pieces have to come back
+        // left to right, because that is what every other reader gives
+        // and what the gaps between them are for: finding the columns of
+        // a page and the cells of a table.
+        val lines = RecognizedText.linesOf(
+            listOf(
+                word("الاستمارة", 460f, 100f, 520f, 112f, startsLine = true),
+                word("في", 430f, 100f, 456f, 112f),
+                word("البحث", 380f, 100f, 426f, 112f),
+            )
+        )
+        val line = lines.single()
+        assertEquals("الاستمارة في البحث", line.text, "the line is not read in the order it is read")
+        assertEquals(
+            listOf("البحث", "في", "الاستمارة"),
+            line.segments.map { it.text },
+            "the pieces of a line run left to right whatever the words do",
+        )
+        assertEquals(
+            line.segments.map { it.xStart }.sorted(),
+            line.segments.map { it.xStart },
+        )
+        assertEquals(380f, line.x)
+        assertEquals(520f, line.xEnd)
+        // And the runs still spell the line, in the order it is read.
+        assertEquals("الاستمارة في البحث", line.runs.joinToString("") { it.text }.trimEnd())
+    }
+
+    @Test
     fun `nothing recognised is no lines at all`() {
         assertEquals(emptyList<PdfLine>(), RecognizedText.linesOf(emptyList()))
         assertEquals(

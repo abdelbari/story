@@ -1,6 +1,8 @@
 package app.morpho.engine.layout.pdf
 
 import kotlin.math.abs
+import app.morpho.engine.layout.Bidi
+import app.morpho.engine.layout.TextDirection
 import kotlin.math.max
 
 /**
@@ -53,20 +55,55 @@ object PdfTableDetector {
         }
         val mergeGap = (MERGE_GAP_FONT_FACTOR * line.maxFontSize)
             .coerceIn(MERGE_GAP_MIN_PT, MERGE_GAP_MAX_PT)
-        val cells = mutableListOf<PdfSegment>()
+        // Which pieces make one cell is a question about the page, so it
+        // is settled by walking across the page; what the cell then says
+        // is a question about the words, and is settled separately.
+        val held = mutableListOf<MutableList<PdfSegment>>()
+        var reach = 0f
         for (segment in line.segments.sortedBy { it.xStart }) {
-            val last = cells.lastOrNull()
-            if (last != null && segment.xStart - last.xEnd <= mergeGap) {
-                cells[cells.size - 1] = PdfSegment(
-                    text = last.text + " " + segment.text,
-                    xStart = last.xStart,
-                    xEnd = max(last.xEnd, segment.xEnd),
-                )
+            val last = held.lastOrNull()
+            if (last != null && segment.xStart - reach <= mergeGap) {
+                last += segment
+                reach = max(reach, segment.xEnd)
             } else {
-                cells += segment
+                held += mutableListOf(segment)
+                reach = segment.xEnd
             }
         }
-        return cells
+        return held.map(::cellOf)
+    }
+
+    /** The one piece [pieces] make between them, saying what they say. */
+    private fun cellOf(pieces: List<PdfSegment>) = PdfSegment(
+        text = inReadingOrder(pieces).joinToString(" ") { it.text },
+        xStart = pieces.first().xStart,
+        xEnd = pieces.maxOf { it.xEnd },
+    )
+
+    /**
+     * [pieces] of one cell in the order they are read, given in the order
+     * they sit on the page.
+     *
+     * Every reader hands a line's pieces over left to right, because what
+     * they are for is the page: the gaps between them are what a column is
+     * found from and what tells one cell from the next. The line's own text
+     * is a different thing, put back into the order it is read.
+     *
+     * A cell's text is built out of the pieces rather than cut out of the
+     * line, and left as they came it is an Arabic cell written backwards:
+     * "الاستمارة في البحث" — the form in research — comes back as "البحث في
+     * الاستمارة", research in the form. Every word of it is right and the
+     * sentence is not, which is the kind of wrong a reader has to read
+     * twice to catch.
+     *
+     * The pieces of the cell decide, not the line they came from: a name
+     * or an address set in Latin inside an Arabic table is read the way it
+     * is written, and a cell of one piece has no order to get wrong.
+     */
+    fun inReadingOrder(pieces: List<PdfSegment>): List<PdfSegment> = when {
+        pieces.size < 2 -> pieces
+        Bidi.dominantDirection(pieces.joinToString(" ") { it.text }) != TextDirection.RTL -> pieces
+        else -> pieces.asReversed()
     }
 
     /** Non-overlapping table regions, in line order. */
