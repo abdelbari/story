@@ -126,6 +126,51 @@ class TwoColumnPageTest {
     }
 
     @Test
+    fun `a running head across both columns stays one line`() {
+        // A journal puts its title and the author across the top of every
+        // page. Cut with the columns it would become two half-headings.
+        val bytes = paper(listOf(firstColumn, secondColumn), null).let { _ ->
+            PDDocument().use { doc ->
+                val page = PDPage(PDRectangle.A4)
+                doc.addPage(page)
+                PDPageContentStream(doc, page).use { content ->
+                    content.beginText()
+                    content.setFont(PDType1Font.HELVETICA, 9f)
+                    content.newLineAtOffset(left, 790f)
+                    content.showText("The Journal of Something    ·    Volume 4, Number 2    ·    page 48")
+                    content.endText()
+                    var top = 760f
+                    for ((index, pieces) in listOf(firstColumn, secondColumn).withIndex()) {
+                        val x = left + index * (band + gutter)
+                        var y = top
+                        for (piece in pieces) {
+                            for (line in wrap(piece, PDType1Font.HELVETICA, 10f, band)) {
+                                content.beginText()
+                                content.setFont(PDType1Font.HELVETICA, 10f)
+                                content.newLineAtOffset(x, y)
+                                content.showText(line)
+                                content.endText()
+                                y -= 13f
+                            }
+                            y -= 8f
+                        }
+                    }
+                }
+                val out = ByteArrayOutputStream()
+                doc.save(out)
+                out.toByteArray()
+            }
+        }
+        val model = PdfReader().extract(bytes)
+        val everything = (model.blocks + model.header + model.footer).filterIsInstance<Paragraph>()
+        assertTrue(
+            everything.any { it.text.contains("The Journal of Something") && it.text.contains("page 48") },
+            "the running head was cut in two: ${everything.map { it.text }}",
+        )
+        assertTrue(model.blocks.none { it is Table }, "a page of prose is not a table")
+    }
+
+    @Test
     fun `a page in one column is left as it is`() {
         // The same prose, all of it in one column: nothing to cut.
         val model = PdfReader().extract(paper(listOf(firstColumn + secondColumn), "One column only"))

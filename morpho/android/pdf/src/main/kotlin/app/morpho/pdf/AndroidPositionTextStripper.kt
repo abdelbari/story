@@ -71,13 +71,26 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
             visual.indices.filter { !visual[it].isWhitespace() }.map { starts[it] to ends[it] }
 
         /**
-         * The line cut at [gutter], as the two lines it turns out to be —
-         * or null when all of it lies on one side. Visual order runs left
+         * The line cut across [strip], as the two lines it turns out to be
+         * — or null when it is one line after all. Visual order runs left
          * to right, so the cut is one place in the line.
+         *
+         * A line whose ink reaches into the strip runs across it and is
+         * one line whatever else the page does: a title, a heading over
+         * both columns, the running head at the top of the page. Cutting
+         * one in half would leave two half-headings.
          */
-        fun cutAt(gutter: Float): Pair<PendingLine, PendingLine>? {
-            val at = visual.indices.firstOrNull { starts[it] >= gutter } ?: return null
-            if (at == 0) return null
+        fun cutAt(strip: Pair<Float, Float>): Pair<PendingLine, PendingLine>? {
+            val ink = visual.indices.filter { !visual[it].isWhitespace() }
+            val middle = (strip.first + strip.second) / 2
+            // The line's own clear space at the gutter. A line set in a
+            // column stops at its margin and starts again at the next
+            // column's, leaving the whole gutter clear; a line that runs
+            // across the page leaves a word space at most.
+            val before = ink.filter { ends[it] <= middle }.maxOfOrNull { ends[it] } ?: return null
+            val after = ink.filter { starts[it] >= middle }.minOfOrNull { starts[it] } ?: return null
+            if (after - before < CROSSES_THE_GUTTER * (strip.second - strip.first)) return null
+            val at = ink.first { starts[it] >= after - 0.01f }
             val left = slice(0, at) ?: return null
             val right = slice(at, visual.length) ?: return null
             return left to right
@@ -240,13 +253,13 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         if (byPage.isEmpty()) return
         val cut = mutableListOf<PendingLine>()
         for ((_, lines) in byPage.entries.sortedBy { it.key }) {
-            val gutter = PdfColumns.gutterOfMarks(lines.map { it.marks() })
-            if (gutter == null) {
+            val strip = PdfColumns.gutterOfMarks(lines.map { it.marks() })
+            if (strip == null) {
                 cut += lines
                 continue
             }
             for (line in lines) {
-                val halves = line.cutAt(gutter)
+                val halves = line.cutAt(strip)
                 if (halves == null) cut += line else cut += listOf(halves.first, halves.second)
             }
         }
@@ -473,6 +486,14 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
     }
 
     private companion object {
+        /**
+         * Of the page's gutter, the share a line must leave clear to count
+         * as two lines. A line that leaves less runs across the page — a
+         * title, a heading over both columns, the running head — and is
+         * one line.
+         */
+        const val CROSSES_THE_GUTTER = 0.6f
+
         /** Glyphs further apart vertically than this sit on different lines. */
         const val SAME_LINE_TOLERANCE_PT = 2f
         /** …unless they are within this share of the line's own type of it, which a raised mark is. */
