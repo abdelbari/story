@@ -195,11 +195,12 @@ class OoxmlHardeningTest {
         // the app can catch and report — not as an error nothing catches,
         // and not by going round for ever. Fixed seed, so a failure can be
         // repeated exactly.
-        val whole = DocxWriter.toByteArray(
-            DocumentModel(
-                (1..20).map { Paragraph(listOf(TextRun("Line $it of an ordinary document."))) }
-            )
-        )
+        //
+        // Damaged in its every part, not only its text. This was twenty
+        // plain paragraphs, which never reaches the comments part, the
+        // running head, the notes part or a picture — the code most likely
+        // to fall over on rubbish, and the code most recently written.
+        val whole = DocxWriter.toByteArray(RichDocument.of())
         val random = java.util.Random(20260903L)
         org.junit.jupiter.api.assertTimeoutPreemptively(java.time.Duration.ofSeconds(60)) {
             for (round in 0 until 45) {
@@ -226,6 +227,73 @@ class OoxmlHardeningTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun `every part of a package in turn is spoiled without taking the reader down`() {
+        // A byte flipped at random usually breaks whichever compressed
+        // stream it lands in, and the zip refuses the part before the
+        // reader ever sees it. The sharper case is a package that opens
+        // perfectly and holds one part of nonsense — which is what a
+        // producer that writes a part badly actually gives you. Each part
+        // is spoiled in turn, three ways, so no part of the reading is
+        // taken on trust: not the comments, not the running head, not the
+        // notes, not the relationships that tie them together.
+        val whole = DocxWriter.toByteArray(RichDocument.of())
+        val names = namesIn(whole)
+        assertTrue(
+            names.any { it.endsWith("comments.xml") } && names.any { it.contains("header") },
+            "the fixture stopped covering the parts this is here to spoil: $names",
+        )
+        val spoiled = listOf(
+            "not xml at all" to "<<<not xml at all",
+            "well-formed and meaningless" to """<?xml version="1.0"?><nothing><at all/></nothing>""",
+            "nothing" to "",
+        )
+        org.junit.jupiter.api.assertTimeoutPreemptively(java.time.Duration.ofSeconds(60)) {
+            for (name in names) {
+                for ((what, content) in spoiled) {
+                    val damaged = withPart(whole, name, content.toByteArray(Charsets.UTF_8))
+                    try {
+                        DocxReader.read(damaged)
+                    } catch (expected: Exception) {
+                        // Refused, which is the app's cue to say so.
+                    } catch (fatal: Throwable) {
+                        throw AssertionError("$name as $what threw $fatal", fatal)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Every part [docx] holds, in the order it holds them. */
+    private fun namesIn(docx: ByteArray): List<String> {
+        val names = mutableListOf<String>()
+        ZipInputStream(ByteArrayInputStream(docx)).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                names += entry.name
+                zip.readBytes()
+            }
+        }
+        return names
+    }
+
+    /** [docx] again, with the part called [name] holding [content] instead. */
+    private fun withPart(docx: ByteArray, name: String, content: ByteArray): ByteArray {
+        val out = ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(out).use { writing ->
+            ZipInputStream(ByteArrayInputStream(docx)).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    val bytes = zip.readBytes()
+                    writing.putNextEntry(ZipEntry(entry.name))
+                    writing.write(if (entry.name == name) content else bytes)
+                    writing.closeEntry()
+                }
+            }
+        }
+        return out.toByteArray()
     }
 
     @Test
