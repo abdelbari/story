@@ -80,6 +80,18 @@ object PdfLayout {
     private const val JUSTIFIED_TOLERANCE_SHARE = 0.02f
     /** A line stopping more than this share of the column short of the end margin ends its paragraph. */
     private const val PARAGRAPH_END_SHARE = 0.06f
+
+    /**
+     * How far short of its margin the last line of a page may stop and
+     * the paragraph still be taken to carry on over the page.
+     *
+     * Looser than the share a line within a page is judged by, because a
+     * page is judged once and a line many times: a document set ragged
+     * ends its lines wherever the next word did not fit, which is up to a
+     * word short of the margin, and a page whose last line stops there
+     * has almost certainly been cut off in the middle of a paragraph.
+     */
+    private const val PAGE_END_SHARE = 0.12f
     /** This share of the long lines reaching the end margin means the document is justified. */
     private const val JUSTIFIED_SHARE = 0.55f
     /** A page of fewer lines than this has its margins read at its extremes. */
@@ -175,7 +187,12 @@ object PdfLayout {
         val textLines = stretches.flatten()
         val bodySize = HeadingSizes.median((textLines.ifEmpty { lines }).map { it.maxFontSize })
         val justified = looksJustified(lines, blockByPage)
-        val clusters = stretches.map { cluster(it, blockByPage, justified, flows, outline) }
+        // The pages that filled up, and so the pages whose break was the
+        // producer's doing rather than the page's: a paragraph carries
+        // over the first kind and not the second.
+        val filled = filledPages(lines, sheets)
+        val deliberate = deliberateBreaks(lines, filled)
+        val clusters = stretches.map { cluster(it, blockByPage, justified, flows, outline, filled) }
         val kindBySize = headingKinds(clusters.flatten(), bodySize)
 
         // Every block gets a position anchor (page, y of its first line);
@@ -262,7 +279,6 @@ object PdfLayout {
         // whoever opens the file may not have the face it was set in, and a
         // forced break under a wider face leaves a nearly empty page behind
         // every full one.
-        val deliberate = deliberateBreaks(lines)
         var page = Int.MIN_VALUE
         val paged = (positioned + imagesPositioned)
             .sortedWith(compareBy({ it.page }, { it.flow }, { it.y }))
@@ -303,27 +319,50 @@ object PdfLayout {
     }
 
     /**
-     * The pages whose text stopped well short of where the document's text
-     * could have run: their break was the producer's doing, not the page
-     * filling up. The page after each of them begins a new one.
+     * The pages whose text ran to the foot of the sheet: the page is what
+     * stopped them, not the writing.
+     *
+     * A page is judged against its own sheet rather than against the
+     * deepest text in the document, since a document may put text only at
+     * the top of every page and each of them is then as deep as the
+     * deepest — while none of them is full. What is left below the last
+     * line is compared with what is left above the first: a page is set
+     * with margins of much the same size at top and foot, so a page whose
+     * foot is far emptier than its head stopped before the sheet made it.
+     *
+     * Without a sheet to measure against, or without a page of more than
+     * one line to say what a line's step is, nothing is named filled: with
+     * no evidence either way, a page ends what stood on it.
      */
-    private fun deliberateBreaks(lines: List<PdfLine>): Set<Int> {
-        val lastByPage = lines.groupBy { it.page }.mapValues { (_, pageLines) -> pageLines.maxOf { it.baselineY } }
-        if (lastByPage.size < 2) return emptySet()
-        val bottom = lastByPage.values.max()
+    private fun filledPages(lines: List<PdfLine>, sheets: List<PdfPageSheet>): Set<Int> {
+        val byPage = lines.groupBy { it.page }
+        if (byPage.size < 2) return emptySet()
+        val heightByPage = sheets.associate { it.page to it.heightPt }
         val pitch = HeadingSizes.median(
             lines.sortedWith(compareBy({ it.page }, { it.baselineY }))
                 .zipWithNext { a, b -> if (a.page == b.page) b.baselineY - a.baselineY else 0f }
                 .filter { it > 1f }
         )
         if (pitch <= 0f) return emptySet()
-        val pages = lastByPage.keys.sorted()
-        return pages.drop(1)
-            .filter { page ->
-                val previous = pages[pages.indexOf(page) - 1]
-                (lastByPage[previous] ?: return@filter false) < bottom - EARLY_BREAK_LINES * pitch
+        return byPage.filterKeys { heightByPage[it] != null }
+            .filterValues { pageLines ->
+                val height = heightByPage.getValue(pageLines.first().page)
+                val above = pageLines.minOf { it.baselineY }
+                val below = height - pageLines.maxOf { it.baselineY }
+                below <= above + EARLY_BREAK_LINES * pitch
             }
-            .toSet()
+            .keys
+    }
+
+    /**
+     * The pages whose text stopped well short of where the document's text
+     * could have run: their break was the producer's doing, not the page
+     * filling up. The page after each of them begins a new one.
+     */
+    private fun deliberateBreaks(lines: List<PdfLine>, filled: Set<Int>): Set<Int> {
+        if (filled.isEmpty()) return emptySet()
+        val pages = lines.map { it.page }.distinct().sorted()
+        return pages.drop(1).filterIndexed { index, _ -> pages[index] !in filled }.toSet()
     }
 
 
@@ -480,6 +519,7 @@ object PdfLayout {
         justified: Boolean,
         flows: Map<PdfLine, Int>,
         outline: List<PdfOutlineEntry> = emptyList(),
+        filled: Set<Int> = emptySet(),
     ): List<List<PdfLine>> {
         if (lines.isEmpty()) return emptyList()
         val pitchByPage = lines.groupBy { it.page }.mapValues { (_, pageLines) ->
@@ -496,7 +536,9 @@ object PdfLayout {
             // the outline knows it is a heading, so only the outline can
             // keep it out of the paragraph that follows it.
             if (named(line) || named(previous) ||
-                startsNewParagraph(previous, line, pitchByPage.getValue(line.page), blockByPage, justified, flows)
+                startsNewParagraph(
+                    previous, line, pitchByPage.getValue(line.page), blockByPage, justified, flows, filled,
+                )
             ) {
                 clusters += mutableListOf(line)
             } else {
@@ -569,6 +611,48 @@ object PdfLayout {
         return lefts[edge] to rights[rights.size - 1 - edge]
     }
 
+    /**
+     * Whether the paragraph ended with [previous] at the foot of its page
+     * rather than carrying on into [line] at the head of the next.
+     *
+     * What can be asked across a page is what a line looks like and where
+     * it stops, not how far below the line before it it sits: the gap
+     * between the foot of one page and the head of the next says nothing
+     * about either. So a line that stops short of its measure ended its
+     * paragraph, and one that runs to the margin stopped because the page
+     * did — and the line that follows must begin the way a paragraph's
+     * middle does, at the edge its block starts from rather than indented
+     * in from it, in the same face and weight, and not with the label of
+     * a list item.
+     *
+     * Asked only of a page that filled up: a page whose text stopped
+     * short of where it could have run was ended on purpose, and nothing
+     * carries over one of those. Nor over any page of a document that
+     * never shows what a full page of it looks like.
+     */
+    private fun endsWithItsPage(
+        previous: PdfLine,
+        line: PdfLine,
+        blockByPage: Map<Int, Pair<Float, Float>>,
+    ): Boolean {
+        if (ListLabels.opensWithLabel(line.text)) return true
+        val smaller = min(previous.maxFontSize, line.maxFontSize)
+        if (smaller > 0f && max(previous.maxFontSize, line.maxFontSize) / smaller >= FONT_CHANGE_FACTOR) {
+            return true
+        }
+        if (isBold(listOf(previous)) != isBold(listOf(line))) return true
+        val before = blockByPage[previous.page] ?: return true
+        val after = blockByPage[line.page] ?: return true
+        val rtl = Bidi.firstStrongDirection(previous.text) == TextDirection.RTL
+        if (endGap(previous, before, rtl) > PAGE_END_SHARE * (before.second - before.first)) return true
+        // A first line indented in from its block's edge opens a paragraph
+        // wherever it stands.
+        val startsIn =
+            if (Bidi.firstStrongDirection(line.text) == TextDirection.RTL) after.second - line.xEnd
+            else line.x - after.first
+        return startsIn > INDENT_SHIFT_PT
+    }
+
     private fun endGap(line: PdfLine, block: Pair<Float, Float>, rtl: Boolean): Float =
         (if (rtl) line.x - block.first else block.second - line.xEnd).coerceAtLeast(0f)
 
@@ -579,8 +663,16 @@ object PdfLayout {
         blockByPage: Map<Int, Pair<Float, Float>>,
         justified: Boolean,
         flows: Map<PdfLine, Int>,
+        filled: Set<Int>,
     ): Boolean {
-        if (line.page != previous.page) return true
+        // A paragraph does not end because a page did. Every page of a
+        // book but the last ends in the middle of one, and breaking there
+        // gave a converted document a broken sentence at every page turn
+        // — hundreds of them in a book, each missing the space or the
+        // hyphen that joined its two halves.
+        if (line.page != previous.page) {
+            return previous.page !in filled || endsWithItsPage(previous, line, blockByPage)
+        }
         // The foot of one column and the head of the next are not one
         // paragraph, however close their baselines happen to fall.
         if ((flows[previous] ?: 0) != (flows[line] ?: 0)) return true
