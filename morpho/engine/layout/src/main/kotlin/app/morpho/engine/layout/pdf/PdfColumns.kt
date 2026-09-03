@@ -37,6 +37,20 @@ object PdfColumns {
     private const val PROBES = 48
 
     /**
+     * How many times a page may be cut apart: twice, so up to four
+     * columns. A page set in more than four is a table drawn without rules
+     * rather than a page of prose, and the check that each side fills the
+     * measure it is set in is what tells the two apart.
+     */
+    const val DEEPEST_SPLIT = 2
+
+    /**
+     * The share of a band's lines that may run across a gutter and it
+     * still be one: the headings set over some of the columns beside it.
+     */
+    private const val CROSSING_SHARE = 0.1f
+
+    /**
      * The run of text each line belongs to, by the order it should be read
      * in. Lines of a page in one column all answer 0.
      */
@@ -63,38 +77,34 @@ object PdfColumns {
 
     private fun assign(pageLines: List<PdfLine>, rightToLeft: Boolean, flows: MutableMap<PdfLine, Int>) {
         var next = 0
-        fun band(band: List<PdfLine>) {
-            val gutter = gutterOf(band)
-            if (gutter == null) {
-                for (line in band) flows[line] = next
+        fun band(band: List<PdfLine>, gutters: List<Float>) {
+            // Which column a line stands in is how many gutters it stands
+            // past. A page read from the right takes its columns in the
+            // other order, the rightmost first.
+            val byColumn = band.groupBy { line -> gutters.count { line.x >= it } }
+            val order = byColumn.keys.sorted().let { if (rightToLeft) it.reversed() else it }
+            for (column in order) {
+                for (line in byColumn.getValue(column)) flows[line] = next
                 next++
-                return
             }
-            val first = next
-            val second = next + 1
-            for (line in band) {
-                val nearer = if (line.xEnd <= gutter) first else second
-                flows[line] = if (rightToLeft) (if (nearer == first) second else first) else nearer
-            }
-            next += 2
         }
 
         if (pageLines.size < LEAST_LINES) {
             for (line in pageLines) flows[line] = 0
             return
         }
-        val gutter = gutterOf(pageLines)
-        if (gutter == null) {
+        val gutters = guttersOf(pageLines, depth = 0)
+        if (gutters.isEmpty()) {
             for (line in pageLines) flows[line] = 0
             return
         }
-        // A line that crosses the gutter is full-width, and cuts the page
-        // into bands that are read one after the other.
+        // A line that crosses a gutter runs across the columns beside it,
+        // and cuts the page into bands that are read one after the other.
         val current = mutableListOf<PdfLine>()
         for (line in pageLines) {
-            if (line.x < gutter && line.xEnd > gutter) {
+            if (gutters.any { line.x < it && line.xEnd > it }) {
                 if (current.isNotEmpty()) {
-                    band(current.toList())
+                    band(current.toList(), gutters)
                     current.clear()
                 }
                 flows[line] = next
@@ -103,7 +113,7 @@ object PdfColumns {
                 current += line
             }
         }
-        if (current.isNotEmpty()) band(current.toList())
+        if (current.isNotEmpty()) band(current.toList(), gutters)
     }
 
     /**
@@ -233,6 +243,29 @@ object PdfColumns {
      * or null when the lines are set in one column. The widest such strip
      * wins, and its middle is the gutter.
      */
+    /**
+     * Every gutter of [lines], from the left of the page.
+     *
+     * A page of three columns is a page of two, one of which is a page of
+     * two, so each side is asked the question again. Asked once, the two
+     * columns on the far side of the one gutter it found were read as a
+     * single column, line for line, so a sentence of one ran into a
+     * sentence of the other.
+     *
+     * A line that crosses a gutter is not part of the columns it runs
+     * across, so it is left out of what they are asked — it is the heading
+     * over them, and it cuts the page into bands instead.
+     */
+    private fun guttersOf(lines: List<PdfLine>, depth: Int): List<Float> {
+        if (depth >= DEEPEST_SPLIT) return emptyList()
+        val gutter = gutterOf(lines) ?: return emptyList()
+        return (
+            guttersOf(lines.filter { it.xEnd <= gutter }, depth + 1) +
+                listOf(gutter) +
+                guttersOf(lines.filter { it.x >= gutter }, depth + 1)
+            ).sorted()
+    }
+
     private fun gutterOf(lines: List<PdfLine>): Float? {
         if (lines.size < LEAST_LINES) return null
         val left = lines.minOf { it.x }
@@ -243,12 +276,19 @@ object PdfColumns {
         val to = left + SEARCH_TO * width
         val step = (to - from) / PROBES
         if (step <= 0f) return null
-        // Where the page is clear: a probe no line's ink covers.
+        // A heading set over two of a page's three columns crosses the
+        // gutter between them and no other, so a gutter that no line at
+        // all may cross is one such heading away from not being found —
+        // and the columns under it are then read as one, a line of each in
+        // turn. A few lines may cross; they are the headings, and they cut
+        // the page into bands rather than belonging to a column.
+        val mayCross = (CROSSING_SHARE * lines.size).toInt()
+        // Where the page is clear: a probe almost no line's ink covers.
         var runStart: Float? = null
         var best: Pair<Float, Float>? = null
         var probe = from
         while (probe <= to) {
-            val crossed = lines.any { it.x < probe && it.xEnd > probe }
+            val crossed = lines.count { it.x < probe && it.xEnd > probe } > mayCross
             if (!crossed) {
                 if (runStart == null) runStart = probe
             } else if (runStart != null) {
@@ -267,7 +307,7 @@ object PdfColumns {
         val gutter = (strip.first + strip.second) / 2
         val before = lines.count { it.xEnd <= gutter }
         val after = lines.count { it.x >= gutter }
-        if (before + after < lines.size) return null
+        if (before + after < lines.size - mayCross) return null
         if (before < LEAST_SIDE_SHARE * lines.size || after < LEAST_SIDE_SHARE * lines.size) return null
         return gutter
     }
