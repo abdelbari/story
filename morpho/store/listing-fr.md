@@ -23,6 +23,7 @@ autorisations avant de lui confier quoi que ce soit.
 
 CE QU'ELLE CONVERTIT
 • PDF → Word (.docx)
+• PDF → Markdown (.md)
 • Word (.docx) → Markdown
 • Texte, Markdown et Word → PDF
 • PDF numérisés → Word, par OCR exécuté sur l'appareil

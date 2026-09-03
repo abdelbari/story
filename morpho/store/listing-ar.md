@@ -22,6 +22,7 @@
 
 ما الذي يحوّله
 • PDF ← Word ‏(.docx)
+• PDF ← Markdown ‏(.md)
 • Word ‏(.docx) ← Markdown
 • نصوص وMarkdown وWord ← PDF
 • ملفات PDF الممسوحة ضوئيًا ← Word، عبر تعرّف ضوئي يعمل على الجهاز

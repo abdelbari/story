@@ -22,6 +22,7 @@ comprobarlo tú mismo en la lista de permisos antes de confiarle nada.
 
 QUÉ CONVIERTE
 • PDF → Word (.docx)
+• PDF → Markdown (.md)
 • Word (.docx) → Markdown
 • Texto, Markdown y Word → PDF
 • PDF escaneados → Word, con OCR que se ejecuta en el dispositivo

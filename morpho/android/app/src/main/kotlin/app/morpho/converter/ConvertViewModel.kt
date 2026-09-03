@@ -319,18 +319,34 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun convert() {
+        startConversion(asMarkdown = false, again = ::convert)
+    }
+
+    /**
+     * A PDF to Markdown rather than to Word: the same reading, written for
+     * a notebook, a repository or a static site instead of a word
+     * processor. Going by way of Word to get there is two conversions and
+     * two files for what the reader already holds.
+     */
+    fun convertToMarkdown() {
+        startConversion(asMarkdown = true, again = ::convertToMarkdown)
+    }
+
+    private fun startConversion(asMarkdown: Boolean, again: () -> Unit) {
         // Two taps inside one frame would otherwise start two conversions
         // at once, for no benefit and to the user's confusion.
         if (_state.value is ConvertUiState.Converting) return
 
         val (uri, source) = pickedFile ?: return
-        lastOperation = ::convert
+        lastOperation = again
         _state.value = ConvertUiState.Converting()
         val epoch = pickEpoch
         viewModelScope.launch(Dispatchers.IO) {
             when {
                 source.isPdf -> convertPicked(
-                    epoch, uri, source, "docx", DocxWriter.MIME_TYPE,
+                    epoch, uri, source,
+                    if (asMarkdown) "md" else "docx",
+                    if (asMarkdown) MARKDOWN_MIME else DocxWriter.MIME_TYPE,
                     read = { bytes ->
                         val model =
                             AndroidPdfReader(getApplication()).extract(bytes, pdfPassword, pdfPages)
@@ -339,7 +355,10 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                         if (!hasText) throw UnconvertibleContent(FailReason.SCANNED_PDF)
                         model
                     },
-                    write = { model -> DocxWriter.toByteArray(model) },
+                    write = { model ->
+                        if (asMarkdown) MarkdownWriter.write(model).toByteArray(Charsets.UTF_8)
+                        else DocxWriter.toByteArray(model)
+                    },
                 )
                 source.isWordDocument -> convertPicked(
                     epoch, uri, source, "md", MARKDOWN_MIME,

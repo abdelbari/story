@@ -23,6 +23,7 @@ Berechtigungsliste, bevor Sie ihr etwas anvertrauen.
 
 WAS SIE UMWANDELT
 • PDF → Word (.docx)
+• PDF → Markdown (.md)
 • Word (.docx) → Markdown
 • Text, Markdown und Word → PDF
 • Gescannte PDFs → Word, per OCR auf dem Gerät

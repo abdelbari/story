@@ -22,6 +22,7 @@ app's permission list before you trust it with anything.
 
 WHAT IT CONVERTS
 • PDF → Word (.docx)
+• PDF → Markdown (.md)
 • Word (.docx) → Markdown
 • Text, Markdown and Word → PDF
 • Scanned PDFs → Word, using on-device OCR

@@ -199,6 +199,7 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                         state = state,
                         onPick = { openLauncher.launch(inputMimeTypes) },
                         onConvert = viewModel::convert,
+                        onConvertToMarkdown = viewModel::convertToMarkdown,
                         onExportPdf = viewModel::exportPdf,
                         onPrint = viewModel::printPdf,
                         onRetry = viewModel::retry,
@@ -329,6 +330,7 @@ private fun StateActions(
     state: ConvertUiState,
     onPick: () -> Unit,
     onConvert: () -> Unit,
+    onConvertToMarkdown: () -> Unit,
     onExportPdf: () -> Unit,
     onPrint: () -> Unit,
     onRetry: () -> Unit,
@@ -364,6 +366,12 @@ private fun StateActions(
                 )
             }
             if (state.isPdf) {
+                // A PDF is wanted as Markdown as often as as Word — for a
+                // notebook, a repository, a site — and going by way of
+                // Word to get there is two conversions and two files.
+                TextButton(onClick = onConvertToMarkdown, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.convert_to_markdown))
+                }
                 TextButton(onClick = onChoosePages, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.pages_choose))
                 }

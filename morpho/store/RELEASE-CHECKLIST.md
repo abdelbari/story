@@ -148,6 +148,11 @@ Work through, in this order — each exercises a path nothing else covers:
 - [ ] **A scanned PDF → OCR → Word.** Watch the page counter advance; try
       Cancel mid-way and confirm nothing is saved. Judge the recognition
       quality — this is the number one thing to tune (see §5).
+- [ ] **PDF → Markdown**, from the second button on a picked PDF. The
+      file must be .md, with the document's headings as `#`, its lists as
+      `-` and `1.`, its tables as pipe tables and its notes at the end.
+      Correcting a block in Review Mode and saving must give back
+      Markdown, not Word.
 - [ ] **Word → Markdown** of a document with footnotes. Every note must
       be in the .md — a reference where its mark stood and the note at the
       end — rather than only its mark.
