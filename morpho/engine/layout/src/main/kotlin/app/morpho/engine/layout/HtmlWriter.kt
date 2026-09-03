@@ -371,7 +371,12 @@ object HtmlWriter {
             for (width in widths) sb.append("""<col style="width:${pt(width)}">""")
             sb.append("\n")
         }
-        for (row in table.rows) {
+        // The head of a table is its own part of the table, which is what
+        // makes a browser repeat it when the table runs onto another page.
+        val heads = table.rows.takeWhile { it.repeatsAsHeader }.size
+        if (heads > 0) sb.append("<thead>")
+        for ((index, row) in table.rows.withIndex()) {
+            if (index == heads && heads > 0) sb.append("</thead><tbody>")
             sb.append("<tr>")
             for (cell in row.cells) {
                 sb.append("<td")
@@ -390,6 +395,7 @@ object HtmlWriter {
             }
             sb.append("</tr>\n")
         }
+        if (heads > 0) sb.append(if (heads < table.rows.size) "</tbody>" else "</thead>")
         sb.append("</table>\n")
     }
 

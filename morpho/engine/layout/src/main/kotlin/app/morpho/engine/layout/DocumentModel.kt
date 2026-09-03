@@ -175,7 +175,15 @@ data class Table(
     val direction: TextDirection? = null,
 ) : Block
 
-data class TableRow(val cells: List<TableCell>)
+data class TableRow(
+    val cells: List<TableCell>,
+    /**
+     * Whether the row is the head of its table, repeated at the top of
+     * every page the table runs onto. A long table without its head is a
+     * grid of numbers with nothing to say what they are.
+     */
+    val repeatsAsHeader: Boolean = false,
+)
 
 data class TableCell(
     val blocks: List<Block>,

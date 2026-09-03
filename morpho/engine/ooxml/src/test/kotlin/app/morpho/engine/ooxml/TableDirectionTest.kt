@@ -113,4 +113,39 @@ class TableDirectionTest {
         }
         throw AssertionError(name + " is not in the file")
     }
+
+    @Test
+    fun `the head of a table is known, written and read back`() {
+        val docx = docxOf(
+            """<w:tbl>
+                <w:tr><w:trPr><w:tblHeader/></w:trPr>
+                  <w:tc><w:p><w:r><w:t>Year</w:t></w:r></w:p></w:tc></w:tr>
+                <w:tr><w:tc><w:p><w:r><w:t>2019</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"""
+        )
+        val rows = DocxReader.read(docx).blocks.filterIsInstance<Table>().single().rows
+        assertTrue(rows[0].repeatsAsHeader, "the head of the table was not read as one")
+        assertTrue(!rows[1].repeatsAsHeader, "every row was taken for a head")
+
+        val written = partOf(DocxWriter.toByteArray(DocxReader.read(docx)), "word/document.xml")
+        assertTrue(written.contains("<w:trPr><w:tblHeader/></w:trPr>"), written)
+        assertEquals(1, Regex("<w:tblHeader/>").findAll(written).count())
+    }
+
+    @Test
+    fun `the preview makes the head a head`() {
+        val document = DocumentModel(
+            blocks = listOf(
+                Table(
+                    rows = listOf(
+                        TableRow(listOf(cell("Year")), repeatsAsHeader = true),
+                        TableRow(listOf(cell("2019"))),
+                    )
+                )
+            )
+        )
+        val html = HtmlWriter.write(document, "t")
+        assertTrue(html.contains("<thead>"), html)
+        assertTrue(html.contains("</thead><tbody>"), html)
+        assertTrue(html.contains("</tbody></table>"), html)
+    }
 }

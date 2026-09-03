@@ -1066,9 +1066,13 @@ object DocxReader {
                 at
             }
         }
+        val heads = children(tbl, "tr").map { tr ->
+            isOn(firstChild(firstChild(tr, "trPr"), "tblHeader"))
+        }
         val rows = cells.mapIndexed { rowIndex, row ->
             TableRow(
-                row.mapIndexedNotNull { index, cell ->
+                repeatsAsHeader = heads.getOrElse(rowIndex) { false },
+                cells = row.mapIndexedNotNull { index, cell ->
                     if (cell.continuesMerge) return@mapIndexedNotNull null
                     TableCell(
                         blocks = cell.blocks,

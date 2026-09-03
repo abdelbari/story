@@ -761,8 +761,14 @@ object DocxWriter {
         }
         sb.append("</w:tblGrid>")
 
-        for (row in grid.rows) {
+        for ((index, row) in grid.rows.withIndex()) {
             sb.append("<w:tr>")
+            // The head of a table is drawn again at the top of every page
+            // the table runs onto, which is Word's own doing once it is
+            // told which rows those are.
+            if (table.rows.getOrNull(index)?.repeatsAsHeader == true) {
+                sb.append("<w:trPr><w:tblHeader/></w:trPr>")
+            }
             for (place in row) {
                 val width = widths?.let { all ->
                     (place.column until place.column + place.span).sumOf { all.getOrElse(it) { 0 } }
