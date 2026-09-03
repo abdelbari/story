@@ -109,6 +109,8 @@ object DocxReader {
     private const val WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
     private const val R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
     private const val MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+    /** The language Word wrote its pictures in before DrawingML, and still writes some in. */
+    private const val VML_NS = "urn:schemas-microsoft-com:vml"
     private const val EMU_PER_PX = 9525L
     private val MIME_BY_EXTENSION = mapOf("png" to "image/png", "jpeg" to "image/jpeg", "jpg" to "image/jpeg")
     /**
@@ -521,7 +523,65 @@ object DocxReader {
 
     /** PNG/JPEG drawings in a paragraph, emitted after its text. */
     private fun parseImages(p: Element, media: MediaStore): List<ImageBlock> =
-        descendantsNS(p, W, "drawing").mapNotNull { imageOf(it, media) }
+        descendantsNS(p, W, "drawing").mapNotNull { imageOf(it, media) } +
+            descendantsNS(p, W, "pict").mapNotNull { legacyImageOf(it, media) }
+
+    /**
+     * The picture a legacy `w:pict` holds.
+     *
+     * Word drew pictures this way before DrawingML and still does for
+     * some of them — anything pasted in compatibility mode, an equation
+     * saved as a picture, the output of a good many converters. Looked
+     * for only under `w:drawing`, every one of them is dropped: a
+     * converted document simply has no picture where the original plainly
+     * has one, and nothing says so.
+     *
+     * The size is in the shape's own style rather than in an extent, so
+     * it is read from there and left to the writer where it says nothing
+     * this reader understands.
+     */
+    private fun legacyImageOf(pict: Element, media: MediaStore): ImageBlock? {
+        val data = descendantsNS(pict, VML_NS, "imagedata").firstOrNull() ?: return null
+        val relId = data.getAttributeNS(R_NS, "id").ifEmpty { null } ?: return null
+        val (bytes, mime) = media.imageFor(relId)?.let { it.first to it.second } ?: return null
+        val style = (data.parentNode as? Element)?.getAttribute("style").orEmpty()
+        val widthPt = styleLength(style, "width")
+        val heightPt = styleLength(style, "height")
+        return ImageBlock(
+            bytes = bytes,
+            mimeType = mime,
+            widthPx = widthPt?.let { (it * PX_PER_PT).toInt() }?.coerceAtLeast(1) ?: 1,
+            heightPx = heightPt?.let { (it * PX_PER_PT).toInt() }?.coerceAtLeast(1) ?: 1,
+            confidence = 1f,
+            widthPt = widthPt,
+            heightPt = heightPt,
+        )
+    }
+
+    /** Screen dots to a point, as a browser and Word both count them. */
+    private const val PX_PER_PT = 96f / 72f
+
+    /**
+     * [name]'s length out of a shape's CSS-shaped style, in points, or
+     * null where it says nothing or says it in a unit this does not know.
+     */
+    private fun styleLength(style: String, name: String): Float? {
+        val said = style.split(';')
+            .firstOrNull { it.substringBefore(':').trim().equals(name, ignoreCase = true) }
+            ?.substringAfter(':')?.trim() ?: return null
+        val number = Regex("-?[0-9]*\\.?[0-9]+").find(said)?.value?.toFloatOrNull() ?: return null
+        val unit = said.dropWhile { it == '-' || it.isDigit() || it == '.' }.trim().lowercase()
+        val points = when (unit) {
+            "pt", "" -> number
+            "px" -> number / PX_PER_PT
+            "in" -> number * 72f
+            "cm" -> number * 72f / 2.54f
+            "mm" -> number * 72f / 25.4f
+            "pc" -> number * 12f
+            else -> return null
+        }
+        return points.takeIf { it > 0f && it.isFinite() }
+    }
 
     /** The picture a drawing embeds, at the size its extent gives it, or null when it is not one the reader keeps. */
     private fun imageOf(drawing: Element, media: MediaStore): ImageBlock? {
@@ -1316,6 +1376,7 @@ object DocxReader {
     ): TextRun? {
         if (media != null) {
             val picture = firstChild(r, "drawing")?.let { imageOf(it, media) }
+                ?: firstChild(r, "pict")?.let { legacyImageOf(it, media) }
             if (picture != null) return TextRun("", image = picture)
         }
         // The note a mark refers to lives in a part of its own; the mark
