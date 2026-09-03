@@ -703,6 +703,14 @@ internal object PdfFileExporter {
             strokeWidth = 0.75f
             color = 0xFF9E9E9E.toInt()
         }
+        /**
+         * A paragraph worth drawing. One with a picture in it has no text
+         * of its own, and skipping it for that loses the picture — the
+         * logo in the cell beside the name it belongs to.
+         */
+        fun shows(paragraph: Paragraph): Boolean =
+            paragraph.text.isNotEmpty() || paragraph.runs.any { it.image != null }
+
         /** A cell's content, laid out to the width it is drawn at. */
         fun piecesOf(cell: TableCell, width: Float): List<Piece> {
             val textWidth = (width - 2 * CELL_PADDING).toInt().coerceAtLeast(1)
@@ -711,7 +719,7 @@ internal object PdfFileExporter {
             val counts = ListCounts()
             return cell.blocks.mapNotNull { held ->
                 when (held) {
-                    is Paragraph -> held.takeIf { it.text.isNotEmpty() }?.let { para ->
+                    is Paragraph -> held.takeIf { shows(it) }?.let { para ->
                         val numbered = counts.next(para.style)
                         val direction = para.style.direction ?: defaultDirection
                         val paint = paintFor(para.style.kind)
