@@ -119,6 +119,9 @@ object PdfLayout {
     private const val PITCH_TOLERANCE_SHARE = 0.15f
     /** A page whose text stopped this many lines short of where it could have run was broken on purpose. */
     private const val EARLY_BREAK_LINES = 2f
+
+    /** How far a column may shift between two pages and still be the same column. */
+    private const val COLUMN_SHIFT_PT = 6f
     /** How far a paragraph looks for a rule of its own, in its own line pitch. */
     private const val RULE_REACH = 1.6f
     /** A rule this much of a line's own height away from a baseline is the paragraph's, not the line's. */
@@ -168,18 +171,28 @@ object PdfLayout {
         val rightToLeft = Bidi.dominantDirection(asPainted.joinToString(" ") { it.text }) == TextDirection.RTL
         val flows = PdfColumns.flows(asPainted, rightToLeft)
         val lines = asPainted.sortedWith(compareBy({ it.page }, { flows[it] ?: 0 }, { it.baselineY }))
-        val regions = PdfTableDetector.detect(lines)
+        // The pages that filled up, and so the pages whose break was the
+        // producer's doing rather than the page's: a paragraph — and a
+        // table — carries over the first kind and not the second.
+        val filled = filledPages(lines, sheets)
+        val deliberate = deliberateBreaks(lines, filled)
+        val regions = joinRunOns(PdfTableDetector.detect(lines), lines, filled)
 
         // Text stretches between table regions, each remembering its lines.
         val stretches = mutableListOf<List<PdfLine>>()
         val tablesWithAnchor = mutableListOf<Pair<PdfLine, Table>>()
         var cursor = 0
-        for (region in regions) {
+        for (held in regions) {
+            val region = held.region
             if (region.start > cursor) stretches += lines.subList(cursor, region.start)
             // A table found by the alignment of its columns is the biggest
             // guess this reader makes; it says so.
             tablesWithAnchor += lines[region.start] to
-                tableOf(region, (confidence - GUESSED_FROM_ALIGNMENT).coerceAtLeast(LEAST_SURE))
+                tableOf(
+                    region,
+                    (confidence - GUESSED_FROM_ALIGNMENT).coerceAtLeast(LEAST_SURE),
+                    held.repeatingHead,
+                )
             cursor = region.end
         }
         if (cursor < lines.size) stretches += lines.subList(cursor, lines.size)
@@ -187,11 +200,6 @@ object PdfLayout {
         val textLines = stretches.flatten()
         val bodySize = HeadingSizes.median((textLines.ifEmpty { lines }).map { it.maxFontSize })
         val justified = looksJustified(lines, blockByPage)
-        // The pages that filled up, and so the pages whose break was the
-        // producer's doing rather than the page's: a paragraph carries
-        // over the first kind and not the second.
-        val filled = filledPages(lines, sheets)
-        val deliberate = deliberateBreaks(lines, filled)
         val clusters = stretches.map { cluster(it, blockByPage, justified, flows, outline, filled) }
         val kindBySize = headingKinds(clusters.flatten(), bodySize)
 
@@ -460,7 +468,82 @@ object PdfLayout {
         )
     }
 
-    private fun tableOf(region: PdfTableDetector.Region, confidence: Float): Table {
+    /** A table's region, with however many of its leading rows repeat on each page it runs onto. */
+    private class TableRegion(val region: PdfTableDetector.Region, val repeatingHead: Int = 0)
+
+    /**
+     * Table regions with the ones that are the same table joined.
+     *
+     * A statement of accounts, a schedule, a bibliography: a table longer
+     * than a page is painted as a table on each page it runs onto, and
+     * the page says nothing to tie them together — so a twenty-page
+     * statement came back as twenty tables, each starting again. They are
+     * the same table when one ends at the foot of a page the page itself
+     * stopped, the next begins at the head of the following one with
+     * nothing between them, and their columns stand in the same places.
+     *
+     * Where the second begins by repeating the first's head, the repeat is
+     * dropped and the head is marked as one — so Word, the preview and the
+     * exported page all set it again at the top of every page the table
+     * runs onto, which is what the original page was doing by printing it
+     * twice.
+     */
+    private fun joinRunOns(
+        regions: List<PdfTableDetector.Region>,
+        lines: List<PdfLine>,
+        filled: Set<Int>,
+    ): List<TableRegion> {
+        val out = mutableListOf<TableRegion>()
+        for (region in regions) {
+            val joined = out.lastOrNull()?.let { joinedWith(it, region, lines, filled) }
+            if (joined == null) out += TableRegion(region) else out[out.size - 1] = joined
+        }
+        return out
+    }
+
+    private fun joinedWith(
+        open: TableRegion,
+        next: PdfTableDetector.Region,
+        lines: List<PdfLine>,
+        filled: Set<Int>,
+    ): TableRegion? {
+        val before = open.region
+        if (before.end != next.start) return null
+        val lastPage = lines.getOrNull(before.end - 1)?.page ?: return null
+        val nextPage = lines.getOrNull(next.start)?.page ?: return null
+        if (nextPage <= lastPage || lastPage !in filled) return null
+        val columns = before.rows.firstOrNull()?.size ?: return null
+        if (columns == 0) return null
+        if (before.rows.any { it.size != columns } || next.rows.any { it.size != columns }) return null
+        if (!sameColumns(before, next, columns)) return null
+        val head = before.rows.first()
+        val repeats = next.rows.firstOrNull()
+            ?.let { row -> row.zip(head).all { (one, other) -> one.text == other.text } } == true
+        return TableRegion(
+            PdfTableDetector.Region(
+                start = before.start,
+                end = next.end,
+                rows = before.rows + if (repeats) next.rows.drop(1) else next.rows,
+            ),
+            repeatingHead = if (repeats || open.repeatingHead > 0) 1 else 0,
+        )
+    }
+
+    /** Whether two regions set their columns in the same places across the page. */
+    private fun sameColumns(
+        one: PdfTableDetector.Region,
+        other: PdfTableDetector.Region,
+        columns: Int,
+    ): Boolean = (0 until columns).all { column ->
+        abs(one.rows.minOf { it[column].xStart } - other.rows.minOf { it[column].xStart }) <=
+            COLUMN_SHIFT_PT
+    }
+
+    private fun tableOf(
+        region: PdfTableDetector.Region,
+        confidence: Float,
+        repeatingHead: Int = 0,
+    ): Table {
         // A table of Arabic is laid out from the right: its first column is
         // the rightmost. The cells were gathered across the page from the
         // left, so they are turned round to stand in the order the table is
@@ -470,9 +553,10 @@ object PdfLayout {
                 TextDirection.RTL
         fun <T> inReadingOrder(row: List<T>): List<T> = if (rightToLeft) row.reversed() else row
         return Table(
-            rows = region.rows.map { row ->
+            rows = region.rows.mapIndexed { index, row ->
                 TableRow(
-                    inReadingOrder(row).map { cell ->
+                    repeatsAsHeader = index < repeatingHead,
+                    cells = inReadingOrder(row).map { cell ->
                         val direction = Bidi.firstStrongDirection(cell.text)
                         TableCell(
                             listOf(

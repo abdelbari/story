@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 669 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 674 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -21,6 +21,11 @@ the folder-to-open step that catches everyone.
 Work through, in this order — each exercises a path nothing else covers:
 
 - [ ] **A born-digital PDF → Word.** Headings, lists and tables should survive.
+- [ ] **A statement, a schedule or a price list of many pages** — a
+      table longer than a page. It must arrive as one table in Word, not
+      one for each page, and the head the PDF printed at the top of every
+      page must be Word's repeating header rather than a row of data
+      halfway down.
 - [ ] **A book or a long report of many pages.** A sentence that runs
       over a page turn must arrive as one paragraph, not two — check
       several page turns, and a word hyphenated across one. Where a
