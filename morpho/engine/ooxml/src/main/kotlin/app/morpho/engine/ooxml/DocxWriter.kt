@@ -778,6 +778,11 @@ object DocxWriter {
             Merge.CONTINUE -> sb.append("<w:vMerge/>")
             Merge.NONE -> {}
         }
+        // The colour the cell is filled with, written on the cell rather
+        // than left to a style, so it holds wherever the file is opened.
+        cell.shadingRgb?.let {
+            sb.append("""<w:shd w:val="clear" w:color="auto" w:fill="${hexColor(it)}"/>""")
+        }
         sb.append("</w:tcPr>")
         for (block in cell.blocks) {
             appendBlock(sb, block, document, numbering, images, links, part, notes)

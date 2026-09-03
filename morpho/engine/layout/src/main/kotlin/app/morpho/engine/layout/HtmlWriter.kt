@@ -368,14 +368,20 @@ object HtmlWriter {
             for (width in widths) sb.append("""<col style="width:${pt(width)}">""")
             sb.append("\n")
         }
-        val cellStyle = if (table.ruled) "" else """ style="border:0""""
         for (row in table.rows) {
             sb.append("<tr>")
             for (cell in row.cells) {
                 sb.append("<td")
                 if (cell.columnSpan > 1) sb.append(""" colspan="${cell.columnSpan}"""")
                 if (cell.rowSpan > 1) sb.append(""" rowspan="${cell.rowSpan}"""")
-                sb.append(cellStyle).append(">")
+                val cellStyles = buildList {
+                    if (!table.ruled) add("border:0")
+                    cell.shadingRgb?.let { add("background-color:${hexColor(it)}") }
+                }
+                if (cellStyles.isNotEmpty()) {
+                    sb.append(""" style="${cellStyles.joinToString(";")}"""")
+                }
+                sb.append(">")
                 appendBlocks(sb, cell.blocks, defaultDirection)
                 sb.append("</td>")
             }

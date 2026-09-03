@@ -3,6 +3,9 @@ package app.morpho.engine.ooxml
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.HtmlWriter
 import app.morpho.engine.layout.Paragraph
+import app.morpho.engine.layout.Table
+import app.morpho.engine.layout.TableCell
+import app.morpho.engine.layout.TableRow
 import app.morpho.engine.layout.TextRun
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -86,5 +89,43 @@ class HighlightRoundTripTest {
         val docx = DocxWriter.toByteArray(struck)
         assertTrue(partOf(docx, "word/document.xml").contains("<w:strike/>"))
         assertTrue(firstRun(DocxReader.read(docx)).strikethrough)
+    }
+
+    @Test
+    fun `a coloured cell is written coloured and read back the same`() {
+        val table = DocumentModel(
+            blocks = listOf(
+                Table(
+                    rows = listOf(
+                        TableRow(listOf(TableCell(
+                            blocks = listOf(Paragraph(runs = listOf(TextRun("Year")))),
+                            shadingRgb = 0x4472C4,
+                        ))),
+                    ),
+                    ruled = true,
+                )
+            )
+        )
+        val docx = DocxWriter.toByteArray(table)
+        assertTrue(partOf(docx, "word/document.xml").contains("""w:fill="4472C4""""))
+        val back = DocxReader.read(docx).blocks.filterIsInstance<Table>().single()
+        assertEquals(0x4472C4, back.rows[0].cells[0].shadingRgb)
+    }
+
+    @Test
+    fun `the preview draws a coloured cell coloured`() {
+        val table = DocumentModel(
+            blocks = listOf(
+                Table(
+                    rows = listOf(
+                        TableRow(listOf(TableCell(
+                            blocks = listOf(Paragraph(runs = listOf(TextRun("Year")))),
+                            shadingRgb = 0x4472C4,
+                        ))),
+                    ),
+                )
+            )
+        )
+        assertTrue(HtmlWriter.write(table, "t").contains("background-color:#4472c4"))
     }
 }

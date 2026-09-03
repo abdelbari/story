@@ -173,6 +173,12 @@ data class TableCell(
      */
     val columnSpan: Int = 1,
     val rowSpan: Int = 1,
+    /**
+     * Packed 0xRRGGBB of the colour the cell is filled with, or null for a
+     * cell nobody coloured. A report's tables are read by their colour as
+     * much as by their rules: the shaded row along the top is the head.
+     */
+    val shadingRgb: Int? = null,
 )
 
 class ImageBlock(

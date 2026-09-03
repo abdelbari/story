@@ -627,6 +627,14 @@ internal object PdfFileExporter {
                 val column = placed(place.column, place.span)
                 val x = cursor.sheet.marginLeft + offsets[column]
                 val width = (column until column + place.span).sumOf { columnWidths[it].toDouble() }.toFloat()
+                // The colour first, then the rule over it, then the words:
+                // a table's head is read by its colour as much as its rules.
+                place.cell.shadingRgb?.let { fill ->
+                    canvas.drawRect(
+                        x, cursor.y, x + width, cursor.y + rowHeight,
+                        Paint().apply { color = 0xFF000000.toInt() or fill },
+                    )
+                }
                 if (block.ruled) canvas.drawRect(x, cursor.y, x + width, cursor.y + rowHeight, border)
                 var textY = cursor.y + CELL_PADDING
                 for (layout in layouts) {

@@ -663,6 +663,8 @@ object DocxReader {
         private val runOwn = HashMap<String, Map<String, Element>>()
         private val tableOwn = HashMap<String, Map<String, Element>>()
         private val tableById = HashMap<String, Map<String, Element>>()
+        /** A table style's own formatting for a place in the table, by style and place. */
+        private val conditional = HashMap<String, Element>()
 
         /** What every paragraph and run starts from, before any style names it. */
         var defaultParagraph: Map<String, Element> = emptyMap()
@@ -682,11 +684,35 @@ object DocxReader {
                     paragraphOwn[id] = propertiesOf(style, "pPr")
                     runOwn[id] = propertiesOf(style, "rPr")
                     tableOwn[id] = propertiesOf(style, "tblPr")
+                    // A table style says what the head of a table looks
+                    // like, and the head of a report's table is a row of
+                    // colour with white type on it.
+                    for (place in children(style, "tblStylePr")) {
+                        val type = attr(place, "type") ?: continue
+                        conditional["$id/$type"] = place
+                    }
                     firstChild(style, "basedOn")?.let { attr(it, "val") }?.let { basedOn[id] = it }
                     firstChild(style, "name")?.let { attr(it, "val") }?.let { nameById[id] = it.lowercase() }
                 }
             }
         }
+
+        /**
+         * What a table of [styleId] does to the cells of [place] — "firstRow"
+         * for the head of a table, "firstCol" for the column down its side —
+         * or null where the style says nothing about it.
+         */
+        fun tablePlace(styleId: String?, place: String): Element? =
+            styleId?.let { id ->
+                var at: String? = id
+                val seen = mutableListOf<String>()
+                while (at != null && at !in seen && seen.size < MOST_STYLES_IN_A_CHAIN) {
+                    conditional["$at/$place"]?.let { return it }
+                    seen += at
+                    at = basedOn[at]
+                }
+                null
+            }
 
         /**
          * The name Word knows a style by, which is the same in every language
@@ -781,7 +807,16 @@ object DocxReader {
         val columnSpan: Int,
         val startsMerge: Boolean,
         val continuesMerge: Boolean,
+        val shadingRgb: Int? = null,
     )
+
+    /** The colour a w:shd inside [properties] fills with, or null for none. */
+    private fun fillOf(properties: Element?): Int? =
+        firstChild(properties, "shd")
+            ?.takeIf { (attr(it, "val") ?: "clear") != "nil" }
+            ?.let { attr(it, "fill") }
+            ?.takeIf { it.length == 6 && !it.equals("auto", ignoreCase = true) }
+            ?.toIntOrNull(16)
 
     /**
      * How many rows a merge that begins at ([row], [column]) reaches down:
@@ -962,7 +997,19 @@ object DocxReader {
         val tableStyleId = firstChild(tblPr, "tblStyle")?.let { attr(it, "val") }
         val fromTable = Inherited(styles.paragraph(tableStyleId), styles.run(tableStyleId))
         var cellsAreRuled = false
-        val cells = children(tbl, "tr").map { tr ->
+        // What the style fills the head of the table with, when the table
+        // says it has one. Word writes the look of a head in the style and
+        // nothing at all on the cells, so a report's coloured header row is
+        // invisible to a reader that looks only at the cells.
+        val look = firstChild(tblPr, "tblLook")
+        val hasHead = look == null || attr(look, "firstRow") == "1" ||
+            (attr(look, "val")?.let { it.toIntOrNull(16)?.and(0x0020) != 0 } ?: false)
+        val headFill = if (!hasHead) null else {
+            styles.tablePlace(tableStyleId, "firstRow")
+                ?.let { firstChild(it, "tcPr") }
+                ?.let { fillOf(it) }
+        }
+        val cells = children(tbl, "tr").mapIndexed { rowIndex, tr ->
             children(tr, "tc").map { tc ->
                 val properties = firstChild(tc, "tcPr")
                 val merge = firstChild(properties, "vMerge")
@@ -981,6 +1028,9 @@ object DocxReader {
                         ?.coerceIn(1, MOST_SPANNED_CELLS) ?: 1,
                     startsMerge = merge != null && !continues,
                     continuesMerge = continues,
+                    // What the cell says it is filled with, else what the
+                    // style fills the head of the table with.
+                    shadingRgb = fillOf(properties) ?: headFill.takeIf { rowIndex == 0 },
                 )
             }
         }
@@ -1001,6 +1051,7 @@ object DocxReader {
                     TableCell(
                         blocks = cell.blocks,
                         columnSpan = cell.columnSpan,
+                        shadingRgb = cell.shadingRgb,
                         rowSpan = if (cell.startsMerge) {
                             mergeDepth(cells, columns, rowIndex, columns[rowIndex][index])
                         } else {

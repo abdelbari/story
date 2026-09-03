@@ -289,4 +289,57 @@ class StyleInheritanceTest {
     private companion object {
         const val DECLARATION = """<?xml version="1.0" encoding="UTF-8"?>"""
     }
+
+    @Test
+    fun `a cell keeps the colour it is filled with`() {
+        val doc = readDocx(
+            body = """<w:tbl>
+                <w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="4472C4"/></w:tcPr>
+                <w:p><w:r><w:t>Year</w:t></w:r></w:p></w:tc>
+                <w:tc><w:p><w:r><w:t>2019</w:t></w:r></w:p></w:tc></w:tr></w:tbl>""",
+        )
+        val row = doc.blocks.filterIsInstance<Table>().single().rows.first()
+        assertEquals(0x4472C4, row.cells[0].shadingRgb)
+        assertEquals(null, row.cells[1].shadingRgb)
+    }
+
+    @Test
+    fun `the head of a table takes the colour its style gives it`() {
+        // Word writes the look of a table's head in the style and nothing
+        // at all on the cells: a report's coloured header row is invisible
+        // to a reader that looks only at the cells.
+        val doc = readDocx(
+            styles = """
+                <w:style w:type="table" w:styleId="GridTable4">
+                  <w:tblStylePr w:type="firstRow">
+                    <w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="4472C4"/></w:tcPr>
+                  </w:tblStylePr>
+                </w:style>
+            """,
+            body = """<w:tbl><w:tblPr><w:tblStyle w:val="GridTable4"/>
+                <w:tblLook w:firstRow="1"/></w:tblPr>
+                <w:tr><w:tc><w:p><w:r><w:t>Year</w:t></w:r></w:p></w:tc></w:tr>
+                <w:tr><w:tc><w:p><w:r><w:t>2019</w:t></w:r></w:p></w:tc></w:tr></w:tbl>""",
+        )
+        val rows = doc.blocks.filterIsInstance<Table>().single().rows
+        assertEquals(0x4472C4, rows[0].cells[0].shadingRgb)
+        assertEquals(null, rows[1].cells[0].shadingRgb, "the colour of the head ran down the table")
+    }
+
+    @Test
+    fun `a table that says it has no head is given none`() {
+        val doc = readDocx(
+            styles = """
+                <w:style w:type="table" w:styleId="GridTable4">
+                  <w:tblStylePr w:type="firstRow">
+                    <w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="4472C4"/></w:tcPr>
+                  </w:tblStylePr>
+                </w:style>
+            """,
+            body = """<w:tbl><w:tblPr><w:tblStyle w:val="GridTable4"/>
+                <w:tblLook w:firstRow="0"/></w:tblPr>
+                <w:tr><w:tc><w:p><w:r><w:t>Year</w:t></w:r></w:p></w:tc></w:tr></w:tbl>""",
+        )
+        assertEquals(null, doc.blocks.filterIsInstance<Table>().single().rows[0].cells[0].shadingRgb)
+    }
 }
