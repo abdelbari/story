@@ -57,6 +57,8 @@ object PageFurniture {
     class Split(
         /** The lines that are text of the document. */
         val body: List<PdfLine>,
+        /** The pictures that are the document's, the page's own left out. */
+        val bodyImages: List<PdfImage> = emptyList(),
         val header: List<Block> = emptyList(),
         val footer: List<Block> = emptyList(),
         /** Where the head sits below the top edge, and the foot above the bottom, in points. */
@@ -231,10 +233,11 @@ object PageFurniture {
         sheets: List<PdfPageSheet>,
         rules: List<PdfRule> = emptyList(),
         crop: Crop? = null,
+        images: List<PdfImage> = emptyList(),
     ): Split {
         val heightByPage = sheets.associate { it.page to it.heightPt }
         val widthByPage = sheets.associate { it.page to it.widthPt }
-        if (lines.map { it.page }.distinct().size < REPEATS_TO_BE_RUNNING) return Split(lines)
+        if (lines.map { it.page }.distinct().size < REPEATS_TO_BE_RUNNING) return Split(lines, images)
 
         fun height(line: PdfLine) = heightByPage[line.page]?.takeIf { it > 0f }
         fun inMargin(line: PdfLine): Boolean {
@@ -263,54 +266,118 @@ object PageFurniture {
             .groupBy { (it.y / SAME_RULE_PT).toInt() }
             .filterValues { group -> group.map { it.page }.distinct().size >= REPEATS_TO_BE_RUNNING }
             .values.flatten()
-        if (running.isEmpty() && ruled.isEmpty()) return Split(lines)
+        // The same picture drawn in the same margin of page after page is
+        // the page's, not the document's: a letterhead, a logo, a banner.
+        // Taken for the text it is dropped into the reading once for every
+        // page of a report, between paragraphs and in the middle of
+        // sentences, wherever on the page it happened to be drawn.
+        val pictured = images
+            .filter { picture ->
+                val height = heightByPage[picture.page]?.takeIf { it > 0f } ?: return@filter false
+                picture.topY < MARGIN_BAND_SHARE * height ||
+                    picture.topY > (1f - MARGIN_BAND_SHARE) * height
+            }
+            .groupBy { Triple(it.bytes.size, it.mimeType, (it.topY / SAME_PLACE_PT).toInt()) }
+            .filterValues { group -> group.map { it.page }.distinct().size >= REPEATS_TO_BE_RUNNING }
+            .values.flatten()
+            .toCollection(java.util.Collections.newSetFromMap(java.util.IdentityHashMap<PdfImage, Boolean>()))
+        val bodyImages = images.filterNot { it in pictured }
+        if (running.isEmpty() && ruled.isEmpty() && pictured.isEmpty() && crop == null) {
+            return Split(lines, images)
+        }
         val body = lines.filterNot { it in running }
-        if (body.isEmpty() && running.isNotEmpty()) return Split(lines)
+        if (body.isEmpty() && running.isNotEmpty()) return Split(lines, images)
 
         // One page's furniture stands for every page's. The first page is
         // used when it carries any, since that is the page a reader opens.
         val furnished = (running.map { it.page } + ruled.map { it.page }).toSortedSet()
-        val reference = if (1 in furnished) 1 else furnished.firstOrNull() ?: return Split(body)
-        val height = heightByPage[reference]?.takeIf { it > 0f } ?: return Split(body)
-        val width = widthByPage[reference]?.takeIf { it > 0f } ?: return Split(body)
+        val readPages = body.map { it.page }.distinct().sorted()
+        val reference = when {
+            1 in furnished -> 1
+            furnished.isNotEmpty() -> furnished.first()
+            else -> readPages.firstOrNull() ?: return Split(body, bodyImages)
+        }
+        val height = heightByPage[reference]?.takeIf { it > 0f } ?: return Split(body, bodyImages)
+        val width = widthByPage[reference]?.takeIf { it > 0f } ?: return Split(body, bodyImages)
         val counted = pageNumber(running)
         val byPage = running.groupBy { it.page }
+        val rtl = Bidi.dominantDirection(body.joinToString(" ") { it.text }) == TextDirection.RTL
+
+        /** Where the page's own text begins on [page], which no band may reach. */
+        fun textEdge(page: Int, atTop: Boolean): Float? {
+            val onPage = body.filter { it.page == page }
+            return if (atTop) {
+                onPage.minOfOrNull { it.baselineY - ASCENT_SHARE * it.maxFontSize }
+            } else {
+                onPage.maxOfOrNull { it.baselineY + DESCENT_SHARE * it.maxFontSize }
+            }
+        }
 
         fun side(atTop: Boolean): Pair<List<Block>, Float?> {
             val own = byPage[reference].orEmpty()
                 .filter { (it.baselineY < height / 2) == atTop }
                 .sortedBy { it.baselineY }
             val ownRules = ruled.filter { it.page == reference && (it.y < height / 2) == atTop }
-            if (own.isEmpty() && ownRules.isEmpty()) return emptyList<Block>() to null
             if (crop != null && ownRules.isNotEmpty()) {
-                val rtl = Bidi.dominantDirection(body.joinToString(" ") { it.text }) == TextDirection.RTL
                 // The band stops where the page's own text starts. A rule
                 // in the margin is usually a head's; a page ruled all round
                 // draws one there too, and photographing past it would put
                 // the first line of the page in the header and leave it in
                 // the body as well.
-                val onPage = body.filter { it.page == reference }
-                val stopAt = if (atTop) {
-                    onPage.minOfOrNull { it.baselineY - ASCENT_SHARE * it.maxFontSize }
+                photographed(
+                    crop, reference, own, ownRules, atTop, width, height,
+                    textEdge(reference, atTop), counted, rtl,
+                )?.let { return it }
+            }
+            if (own.isNotEmpty()) {
+                val distance = if (atTop) {
+                    own.minOf { it.baselineY - ASCENT_SHARE * it.maxFontSize }
                 } else {
-                    onPage.maxOfOrNull { it.baselineY + DESCENT_SHARE * it.maxFontSize }
+                    height - own.maxOf { it.baselineY + DESCENT_SHARE * it.maxFontSize }
                 }
-                photographed(crop, reference, own, ownRules, atTop, width, height, stopAt, counted, rtl)
-                    ?.let { return it }
+                return own.map { line(it, width, counted) } to distance.coerceAtLeast(0f)
             }
-            if (own.isEmpty()) return emptyList<Block>() to null
-            val distance = if (atTop) {
-                own.minOf { it.baselineY - ASCENT_SHARE * it.maxFontSize }
-            } else {
-                height - own.maxOf { it.baselineY + DESCENT_SHARE * it.maxFontSize }
+            // Nothing in the margin that could be read, and no rule drawn
+            // there either. The page itself is the last thing left to ask.
+            if (crop != null) {
+                val ownPictures = pictured.filter {
+                    it.page == reference && (it.topY < height / 2) == atTop
+                }
+                val stopAt = textEdge(reference, atTop)
+                if (ownPictures.isNotEmpty()) {
+                    // Already proved furniture by repeating, so the band
+                    // is photographed as it stands with no second page
+                    // asked for. A head that carries a page number does not
+                    // match itself from page to page, and comparing here
+                    // would drop it from the head after already having
+                    // taken it out of the text.
+                    band(crop, reference, atTop, width, height, stopAt)
+                        ?.let { return listOf<Block>(it.image) to distanceOf(it, atTop, height) }
+                    // The page would not draw. The picture itself is still
+                    // the honest answer, even without the place it sat in.
+                    return listOf<Block>(
+                        ImageBlock(
+                            bytes = ownPictures.first().bytes,
+                            mimeType = ownPictures.first().mimeType,
+                            widthPx = ownPictures.first().widthPx,
+                            heightPx = ownPictures.first().heightPx,
+                        )
+                    ) to null
+                }
+                val other = readPages.firstOrNull { it != reference } ?: return emptyList<Block>() to null
+                repeated(
+                    crop, reference, other, atTop, width, height,
+                    minOfNotNull(stopAt, textEdge(other, atTop), atTop),
+                )?.let { return it }
             }
-            return own.map { line(it, width, counted) } to distance.coerceAtLeast(0f)
+            return emptyList<Block>() to null
         }
 
         val (header, headerDistance) = side(atTop = true)
         val (footer, footerDistance) = side(atTop = false)
         return Split(
             body = body,
+            bodyImages = bodyImages,
             header = header,
             footer = footer,
             headerDistancePt = headerDistance,
@@ -403,6 +470,77 @@ object PageFurniture {
         }
         return if (blocks.isEmpty()) null else blocks to distance.coerceAtLeast(0f)
     }
+
+    /** The narrower of two edges, or whichever of them there is. */
+    private fun minOfNotNull(one: Float?, two: Float?, atTop: Boolean): Float? = when {
+        one == null -> two
+        two == null -> one
+        atTop -> minOf(one, two)
+        else -> maxOf(one, two)
+    }
+
+    /**
+     * One side's furniture from the page itself, for a margin that holds
+     * something no reader could see: a head drawn as artwork, a banner, a
+     * logo, words in a font the file will not name and that PDFBox drops
+     * before a stripper is ever shown them. There is no line to find and
+     * no rule to go by — the margin is simply not empty, and nothing in
+     * the file says so.
+     *
+     * What settles it is that a running head is the same drawing on every
+     * page. The margin is photographed on two pages and the pictures
+     * compared: identical ink in the identical place is furniture, and
+     * anything else — a figure that happens to sit high on one page, a
+     * blank margin, a head that numbers itself and so differs — is left
+     * alone. That is a strict test, and deliberately so: it can only fail
+     * to find a head, never invent one.
+     *
+     * Both bands stop short of either page's own text, so nothing that
+     * belongs to the document can be caught in one.
+     */
+    private fun repeated(
+        crop: Crop,
+        page: Int,
+        other: Int,
+        atTop: Boolean,
+        pageWidth: Float,
+        pageHeight: Float,
+        stopAt: Float?,
+    ): Pair<List<Block>, Float?>? {
+        val here = band(crop, page, atTop, pageWidth, pageHeight, stopAt) ?: return null
+        val there = band(crop, other, atTop, pageWidth, pageHeight, stopAt) ?: return null
+        val same = here.left == there.left && here.top == there.top &&
+            here.right == there.right && here.bottom == there.bottom &&
+            here.image.bytes.contentEquals(there.image.bytes)
+        if (!same) return null
+        return listOf<Block>(here.image) to distanceOf(here, atTop, pageHeight)
+    }
+
+    /**
+     * One page's margin, photographed and trimmed to whatever it holds.
+     *
+     * Only the margin is looked at, however far down the text begins: a
+     * page whose words start halfway down has a wide top margin, not a
+     * head half a page tall.
+     */
+    private fun band(
+        crop: Crop,
+        page: Int,
+        atTop: Boolean,
+        pageWidth: Float,
+        pageHeight: Float,
+        stopAt: Float?,
+    ): Cropped? {
+        val edge = MARGIN_BAND_SHARE * pageHeight
+        val top = if (atTop) 0f else maxOf(pageHeight - edge, stopAt ?: 0f)
+        val bottom = if (atTop) minOf(edge, stopAt ?: edge) else pageHeight
+        if (bottom - top < 1f) return null
+        return crop.of(page, 0f, top, pageWidth, bottom, emptyList(), true)
+    }
+
+    /** How far a photographed band sits from the edge it belongs to. */
+    private fun distanceOf(band: Cropped, atTop: Boolean, pageHeight: Float): Float =
+        (if (atTop) band.top else pageHeight - band.bottom).coerceAtLeast(0f)
 
     /**
      * The page's own number where it is written in [own], as the field to

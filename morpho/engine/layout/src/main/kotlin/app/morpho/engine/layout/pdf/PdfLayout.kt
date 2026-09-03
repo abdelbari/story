@@ -149,8 +149,10 @@ object PdfLayout {
         // reading, and put back where a document keeps it. Some of it can
         // only be photographed — a head the file will not spell — which is
         // what a reader that holds the pages hands over [crop] for.
-        val split = PageFurniture.of(lines, sheets, rules, crop)
-        val model = reconstructBody(split.body, confidence, images, sheets, rules, outline)
+        val split = PageFurniture.of(lines, sheets, rules, crop, images)
+        // The pictures the page owns are the page's; only the document's
+        // own go into the reading.
+        val model = reconstructBody(split.body, confidence, split.bodyImages, sheets, rules, outline)
         if (split.header.isEmpty() && split.footer.isEmpty()) return model
         val page = model.pageSetup
         return model.copy(

@@ -123,13 +123,20 @@ class PageFurnitureTest {
 
     private fun headRules() = (1..4).map { PdfRule(page = it, y = 46f, left = 60f, right = 540f) }
 
-    /** A crop seam that draws nothing but records what it was asked for. */
+    /**
+     * A crop seam that draws nothing but records what it was asked for.
+     *
+     * Its pages differ from one another, as pages do: a picture of page
+     * two is not a picture of page three, and a seam that answered every
+     * page alike would tell the furniture heuristics that every margin
+     * repeats.
+     */
     private class Asked : PageFurniture.Crop {
         val calls = mutableListOf<FloatArray>()
-        var answer: (FloatArray) -> PageFurniture.Cropped? = { box ->
+        var answer: (Int, FloatArray) -> PageFurniture.Cropped? = { page, box ->
             PageFurniture.Cropped(
                 image = ImageBlock(
-                    bytes = byteArrayOf(1),
+                    bytes = byteArrayOf(1, page.toByte()),
                     mimeType = "image/png",
                     widthPx = 10,
                     heightPx = 10,
@@ -154,7 +161,7 @@ class PageFurnitureTest {
         ): PageFurniture.Cropped? {
             val box = floatArrayOf(left, top, right, bottom)
             calls += box
-            return answer(box)
+            return answer(page, box)
         }
     }
 
@@ -193,7 +200,7 @@ class PageFurnitureTest {
     @Test
     fun `a page that will not draw keeps whatever text was read`() {
         val crop = Asked()
-        crop.answer = { null }
+        crop.answer = { _, _ -> null }
         val split = PageFurniture.of(paper(), sheets(4), headRules(), crop)
         assertEquals(
             listOf("The Journal of Something"),
@@ -301,5 +308,63 @@ class PageFurnitureTest {
             rtl = false,
         )
         assertTrue(blocks.isEmpty())
+    }
+
+    @Test
+    fun `a margin that draws the same thing on every page is a head, read or not`() {
+        // No line in the margin and no rule: a head drawn as artwork, or
+        // set in a font the file will not name. All that is left is that
+        // the page draws the same thing there every time.
+        val crop = Asked()
+        crop.answer = { _, box ->
+            PageFurniture.Cropped(
+                image = ImageBlock(byteArrayOf(7, 7), "image/png", 10, 4, box[2] - box[0], 20f),
+                left = 60f,
+                top = 30f,
+                right = 540f,
+                bottom = 50f,
+            )
+        }
+        val split = PageFurniture.of(ruledPaper(), sheets(4), emptyList(), crop)
+        assertEquals(1, split.header.size, "the margin draws something, on page after page")
+        assertTrue(split.header.single() is ImageBlock)
+        assertEquals(30f, split.headerDistancePt)
+        assertEquals(
+            listOf("The words of page 1.", "The words of page 2.", "The words of page 3.", "The words of page 4."),
+            split.body.map { it.text },
+            "and none of the page's own text was taken with it",
+        )
+    }
+
+    @Test
+    fun `a margin that draws something different on each page is not a head`() {
+        // A figure that happens to sit high on one page is not furniture,
+        // and the test that tells them apart is that furniture repeats.
+        val crop = Asked()
+        val split = PageFurniture.of(ruledPaper(), sheets(4), emptyList(), crop)
+        assertTrue(split.header.isEmpty(), "pages that differ have nothing in common to keep")
+    }
+
+    @Test
+    fun `a margin the page draws nothing in is left empty`() {
+        val crop = Asked()
+        crop.answer = { _, _ -> null }
+        val split = PageFurniture.of(ruledPaper(), sheets(4), emptyList(), crop)
+        assertTrue(split.header.isEmpty(), "nothing is drawn at the head, so there is no head")
+        // The foot is a different matter: its number was read as text, and
+        // a page that will not draw takes nothing away from that.
+        assertEquals(
+            listOf(RunField.PAGE_NUMBER),
+            split.footer.filterIsInstance<Paragraph>().single().runs.mapNotNull { it.field },
+        )
+        assertEquals(4, split.body.size)
+    }
+
+    @Test
+    fun `the margin looked at is the margin, not half the page`() {
+        val crop = Asked()
+        PageFurniture.of(ruledPaper(), sheets(4), emptyList(), crop)
+        val head = crop.calls.first { it[1] == 0f }
+        assertTrue(head[3] <= 0.12f * height, "a wide top margin is not a head half a page tall: ${head[3]}")
     }
 }
