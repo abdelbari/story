@@ -25,6 +25,33 @@ jobs:
         working-directory: morpho/engine
         run: ./gradlew build
 
+      # The README states how many tests the engine has, and a number kept
+      # by hand goes stale in silence. Three README edits have already been
+      # abandoned half-written for asserting a count that an earlier commit
+      # the same day had moved, and a stale number in the one document that
+      # explains this project is worse than no number. The build counts
+      # them and says so.
+      - name: The README's test count is the number of tests
+        working-directory: morpho
+        run: |
+          set -uo pipefail
+          counted=$(find engine -path '*/build/test-results/test/*.xml' -exec \
+            grep -ho 'tests="[0-9]*"' {} + | grep -o '[0-9]*' | awk '{s+=$1} END {print s+0}')
+          if [ -z "${counted:-}" ] || [ "$counted" = "0" ]; then
+            echo "::error::Found no test results to count. The build layout changed — fix this guard, never skip it."
+            exit 1
+          fi
+          said=$(grep -o '\*\*Engine ([0-9]* tests):\*\*' README.md | grep -o '[0-9]*' || true)
+          if [ -z "$said" ]; then
+            echo "::error::README.md no longer states the engine's test count in the shape this guard reads. Restore it or fix the guard."
+            exit 1
+          fi
+          if [ "$said" != "$counted" ]; then
+            echo "::error::README.md says $said engine tests; the build ran $counted. Update the README."
+            exit 1
+          fi
+          echo "README.md and the build agree: $counted engine tests."
+
   android:
     name: Android app — assemble & lint
     runs-on: ubuntu-latest

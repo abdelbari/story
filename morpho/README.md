@@ -226,6 +226,15 @@ for.
   document in the corpus, because other signals already ended those
   paragraphs correctly — but it was a wrong answer waiting for a document
   where nothing else spoke.
+- **The number in this file is checked by the build:** the count of
+  engine tests above is stated by hand, and a number kept by hand goes
+  stale in silence. Three edits to this file have already been abandoned
+  half-written for asserting the count that a commit earlier the same day
+  had moved — the edit stopped, the commit went ahead, and the paragraph
+  it was meant to add was simply not there. The build counts the tests it
+  ran and refuses a README that disagrees, naming both numbers, the way it
+  already refuses a manifest that has grown a network permission. A
+  promise a machine checks is the only kind worth writing down.
 - **A damaged file is refused, never fatal:** the files people convert include half a download, an attachment cut short, a byte lost in transit. Both readers are given a real document damaged forty-five ways from a fixed seed — cut short, struck through, a stretch of it zeroed — and each reading must end as either a document or an exception the app can catch and report, within a bound: never an error nothing catches, and never a loop. A hundred and fifty rounds against the paper this app was built for found no hang, no error and no exhaustion; forty-five of them, seeded so a failure repeats exactly, ride in the build.
 - **A page's furniture is the page's, not the document's:** on the untagged path the running head and foot were found — that is how they were kept out of the middle of the reading — and then thrown away, so a converted paper had no running head and numbered nothing. They are made into a header and a footer now, from the lines themselves where the lines can be read, with the number that keeps step with the pages written as a field. What a page draws rather than writes is photographed instead: where a rule repeats in the margin, or the same picture does, or two pages simply draw the identical thing there, the band is cropped from the page and trimmed to its ink. That is what recovers a head that is not text at all. The paper this app was built for has one: its running head and the words of its foot are drawn as outlines — paths, not letters — so counting the glyphs a page asks for finds a single space at the head of it and, at the foot, seventeen digits and nothing else. There is no line to find and nothing in the file that says the head is there, which is why the foot came out as "48 584820220105", every digit read and not one word, and why the answer has to be a photograph rather than a cleverer reading. It now comes out as the line the page prints. A book's two sides are told apart and kept apart, and a title page that carried no head keeps none.
 - **A picture only where the words will not do:** the recovery above was
