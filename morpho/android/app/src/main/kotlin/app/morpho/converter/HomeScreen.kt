@@ -525,8 +525,11 @@ private fun PagesDialog(
                     onValueChange = { pages = it },
                     label = { Text(stringResource(R.string.pages_label)) },
                     singleLine = true,
+                    // Text rather than a number pad: a range is two numbers
+                    // with a dash between them, and a keyboard of digits
+                    // alone has no dash on it.
                     keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number,
+                        keyboardType = KeyboardType.Text,
                         imeAction = ImeAction.Done,
                     ),
                     keyboardActions = KeyboardActions(onDone = { onConvert(pages) }),
