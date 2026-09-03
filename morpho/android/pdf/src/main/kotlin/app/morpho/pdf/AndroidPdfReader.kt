@@ -10,6 +10,7 @@ import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.layout.Table
 import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLayout
+import app.morpho.engine.layout.pdf.PdfOutlineEntry
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
@@ -57,7 +58,17 @@ class AndroidPdfReader(context: Context) {
             // everything else — the tags, the pictures, the outline — sees
             // the part as the whole it now is, and nothing has to be taught
             // to count from the middle.
-            partOf(whole, pages).use { part -> return extractFrom(part) }
+            // The part has no outline of its own — a document made here has
+            // none — so the outline of the whole is carried across, with
+            // its entries counted from the first page asked for.
+            val outline = AndroidDocumentOutline.read(whole).mapNotNull { entry ->
+                when {
+                    entry.page == 0 -> entry
+                    entry.page in pages -> entry.copy(page = entry.page - pages.first + 1)
+                    else -> null
+                }
+            }
+            partOf(whole, pages).use { part -> return extractFrom(part, outline) }
         }
 
     /**
@@ -76,7 +87,8 @@ class AndroidPdfReader(context: Context) {
         return part
     }
 
-    private fun extractFrom(doc: PDDocument): DocumentModel =
+    /** [outline] stands in for the document's own, for a part read out of one. */
+    private fun extractFrom(doc: PDDocument, outline: List<PdfOutlineEntry>? = null): DocumentModel =
         run {
             // A document somebody filled in is read from its pages: the
             // answers are drawn onto them here, and a structure tree knows
@@ -106,10 +118,10 @@ class AndroidPdfReader(context: Context) {
             val lines = attempt { stripper.capture(doc) } ?: emptyList()
             // A document that names its own chapters says which lines are
             // headings; without one, only the type they were set in tells.
-            val outline = AndroidDocumentOutline.read(doc)
+            val chapters = outline ?: AndroidDocumentOutline.read(doc)
             val model = if (lines.isNotEmpty()) {
                 PdfLayout.reconstruct(
-                    lines, confidence, images, stripper.pages(), stripper.rules(), outline,
+                    lines, confidence, images, stripper.pages(), stripper.rules(), chapters,
                 )
             } else {
                 plainTextFallback(doc, confidence, images)

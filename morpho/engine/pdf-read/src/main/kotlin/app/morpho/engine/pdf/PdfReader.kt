@@ -9,6 +9,7 @@ import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.layout.Table
 import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLayout
+import app.morpho.engine.layout.pdf.PdfOutlineEntry
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException
 import org.apache.pdfbox.text.PDFTextStripper
@@ -67,7 +68,17 @@ class PdfReader {
             // everything else here — the tags, the pictures, the outline —
             // sees the part as the whole it now is, and nothing has to be
             // taught to count from the middle.
-            partOf(whole, pages).use { part -> return extractFrom(part) }
+            // The part has no outline of its own — a document made here has
+            // none — so the outline of the whole is carried across, with
+            // its entries counted from the first page asked for.
+            val outline = DocumentOutline.read(whole).mapNotNull { entry ->
+                when {
+                    entry.page == 0 -> entry
+                    entry.page in pages -> entry.copy(page = entry.page - pages.first + 1)
+                    else -> null
+                }
+            }
+            partOf(whole, pages).use { part -> return extractFrom(part, outline) }
         }
 
     /**
@@ -86,7 +97,8 @@ class PdfReader {
         return part
     }
 
-    private fun extractFrom(doc: PDDocument): DocumentModel =
+    /** [outline] stands in for the document's own, for a part read out of one. */
+    private fun extractFrom(doc: PDDocument, outline: List<PdfOutlineEntry>? = null): DocumentModel =
         run {
             // A document somebody filled in is read from its pages: the
             // answers are drawn onto them here, and a structure tree knows
@@ -108,10 +120,10 @@ class PdfReader {
             val lines = attempt { stripper.capture(doc) } ?: emptyList()
             // A document that names its own chapters says which lines are
             // headings; without one, only the type they were set in tells.
-            val outline = DocumentOutline.read(doc)
+            val chapters = outline ?: DocumentOutline.read(doc)
             val model = if (lines.isNotEmpty()) {
                 PdfLayout.reconstruct(
-                    lines, confidence, images, stripper.pages(), stripper.rules(), outline,
+                    lines, confidence, images, stripper.pages(), stripper.rules(), chapters,
                 )
             } else {
                 plainTextFallback(doc, confidence, images)

@@ -1,11 +1,15 @@
 package app.morpho.engine.pdf
 
 import app.morpho.engine.layout.Paragraph
+import app.morpho.engine.layout.ParagraphKind
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.PDPageContentStream
 import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.pdmodel.font.PDType1Font
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageFitDestination
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -78,6 +82,51 @@ class PageRangeTest {
                     content.showText("Page " + name)
                     content.endText()
                 }
+            }
+            document.save(out)
+        }
+        return out.toByteArray()
+    }
+
+    @Test
+    fun `the chapters a document names are still named in a part of it`() {
+        // A manual set in one size throughout: only its outline says which
+        // lines are headings, and a reader converting one chapter needs
+        // that as much as one converting the book.
+        val pdf = manual()
+        val kinds = PdfReader().extract(pdf, "", 2..3).blocks
+            .filterIsInstance<Paragraph>()
+            .associate { it.text to it.style.kind }
+        assertEquals(ParagraphKind.HEADING_1, kinds["Chapter two"])
+        assertEquals(ParagraphKind.HEADING_1, kinds["Chapter three"])
+        assertEquals(ParagraphKind.BODY, kinds["Words under it."])
+    }
+
+    /** Three pages, each a chapter the outline names, all set the same size. */
+    private fun manual(): ByteArray {
+        val out = ByteArrayOutputStream()
+        PDDocument().use { document ->
+            val outline = PDDocumentOutline()
+            document.documentCatalog.documentOutline = outline
+            for (name in listOf("one", "two", "three")) {
+                val page = PDPage(PDRectangle.A4)
+                document.addPage(page)
+                PDPageContentStream(document, page).use { content ->
+                    content.beginText()
+                    content.setFont(PDType1Font.HELVETICA, 12f)
+                    content.setLeading(24f)
+                    content.newLineAtOffset(72f, 700f)
+                    content.showText("Chapter " + name)
+                    content.newLine()
+                    content.showText("Words under it.")
+                    content.endText()
+                }
+                val item = PDOutlineItem()
+                item.title = "Chapter " + name
+                val destination = PDPageFitDestination()
+                destination.page = page
+                item.destination = destination
+                outline.addLast(item)
             }
             document.save(out)
         }
