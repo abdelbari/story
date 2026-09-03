@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 519 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 522 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -139,6 +139,9 @@ Work through, in this order — each exercises a path nothing else covers:
 - [ ] **A scanned PDF → OCR → Word.** Watch the page counter advance; try
       Cancel mid-way and confirm nothing is saved. Judge the recognition
       quality — this is the number one thing to tune (see §5).
+- [ ] **Word → Markdown** of a document with footnotes. Every note must
+      be in the .md — a reference where its mark stood and the note at the
+      end — rather than only its mark.
 - [ ] **Word → PDF**, both ways: "Convert to PDF" (direct file) and "Print…".
       Compare an Arabic document across both renderers.
 - [ ] **A Word document written in styles**, which is what a real one is: a

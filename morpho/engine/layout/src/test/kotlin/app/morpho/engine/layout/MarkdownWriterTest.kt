@@ -11,6 +11,47 @@ class MarkdownWriterTest {
     private fun body(text: String) = Paragraph(listOf(TextRun(text)))
 
     @Test
+    fun `a note goes where Markdown keeps one`() {
+        // Dropped instead, the words of the note are gone from the file:
+        // a paper's notes are not decoration.
+        val model = DocumentModel(
+            listOf(
+                Paragraph(
+                    listOf(
+                        TextRun("Rabiha Nebbar"),
+                        TextRun("*", superscript = true, note = listOf(body("The author's address."))),
+                    )
+                ),
+                body("The body of the paper."),
+            )
+        )
+        val markdown = MarkdownWriter.write(model)
+        assertEquals("Rabiha Nebbar[^*]\n\nThe body of the paper.\n\n[^*]: The author's address.\n", markdown)
+    }
+
+    @Test
+    fun `two notes marked alike are told apart`() {
+        // A label names exactly one note, so where the document's own
+        // marks do not, they are numbered instead.
+        val model = DocumentModel(
+            listOf(
+                body(TextRun("One"), TextRun("*", note = listOf(body("First note.")))),
+                body(TextRun("Two"), TextRun("*", note = listOf(body("Second note.")))),
+            )
+        )
+        val markdown = MarkdownWriter.write(model)
+        assertTrue(markdown.contains("One[^1]"), markdown)
+        assertTrue(markdown.contains("Two[^2]"), markdown)
+        assertTrue(markdown.contains("[^1]: First note."), markdown)
+        assertTrue(markdown.contains("[^2]: Second note."), markdown)
+    }
+
+    @Test
+    fun `a document with no notes gains nothing`() {
+        assertEquals("Plain words.\n", MarkdownWriter.write(DocumentModel(listOf(body("Plain words.")))))
+    }
+
+    @Test
     fun `headings map to hash prefixes`() {
         val model = DocumentModel(
             listOf(
