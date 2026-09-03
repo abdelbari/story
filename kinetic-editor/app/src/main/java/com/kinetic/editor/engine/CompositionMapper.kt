@@ -7,8 +7,10 @@ import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.VideoCompositorSettings
+import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor
-import androidx.media3.common.audio.SonicAudioProcessor
+import androidx.media3.common.audio.SpeedChangingAudioProcessor
+import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.SpeedChangeEffect
 import androidx.media3.transformer.Composition
@@ -44,9 +46,11 @@ data class ExportSpec(
  *
  * Mapping rules:
  *  - Main video track  -> primary EditedMediaItemSequence. Trims via
- *    ClippingConfiguration, per-clip GLSL grade/LUT/transition BEFORE
- *    SpeedChangeEffect (so shader windows are in clip-local SOURCE time),
- *    audio speed via Sonic + envelope AFTER it (clip TIMELINE time).
+ *    ClippingConfiguration, per-clip GLSL grade/LUT/transition BEFORE the speed
+ *    change (so shader windows stay in clip-local SOURCE time) and the volume
+ *    envelope AFTER it (clip TIMELINE time, the domain keyframes are authored
+ *    in). Speed itself is media3's interlinked audio/video pair; see
+ *    [speedEffects].
  *  - AUDIO tracks      -> one audio-only sequence each; placement gaps become
  *    addGap() silences. Composition mixes all sequences sample-accurately.
  *  - VIDEO_OVERLAY     -> one extra video sequence each, placed in time by gaps
@@ -146,6 +150,9 @@ object CompositionMapper {
             }
         }
 
+        val removeAudio = track.muted || !clip.media.hasAudio
+        val speed = speedEffects(clip.speed, keepsAudio = !removeAudio)
+
         val videoEffects = buildList<Effect> {
             add(
                 GradeGlEffect(
@@ -161,20 +168,46 @@ object CompositionMapper {
                     ),
                 ),
             )
-            if (clip.speed != 1f) add(SpeedChangeEffect(clip.speed))
+            // After the grade, so the shader still sees clip-local source time.
+            speed.videoEffect?.let(::add)
         }
 
         val audioProcessors = buildList<AudioProcessor> {
-            if (clip.speed != 1f) {
-                add(SonicAudioProcessor().apply { setSpeed(clip.speed) })
-            }
+            speed.audioProcessor?.let(::add)
+            // After the speed change, so the envelope runs in clip timeline time.
             add(VolumeEnvelopeAudioProcessor(clip.volume * track.volume, clip.volumeKeyframes))
         }
 
         return EditedMediaItem.Builder(mediaItem)
             .setEffects(Effects(audioProcessors, videoEffects))
-            .setRemoveAudio(track.muted || !clip.media.hasAudio)
+            .setRemoveAudio(removeAudio)
             .build()
+    }
+
+    /**
+     * The speed change for one item, as media3 wants it applied.
+     *
+     * `SpeedChangeEffect` plus a Sonic processor set to the same factor are two
+     * independent timestamp mappings with independent rounding, and that is what
+     * drifts audio against video over a long clip. media3 ships an interlinked
+     * pair for exactly this, and documents the plain video effect as the choice
+     * "when input has no audio" — which is the split here.
+     */
+    private fun speedEffects(speed: Float, keepsAudio: Boolean): SpeedEffects = when {
+        speed == 1f -> SpeedEffects(null, null)
+        keepsAudio -> {
+            val pair = Effects.createExperimentalSpeedChangingEffect(ConstantSpeedProvider(speed))
+            SpeedEffects(pair.first, pair.second)
+        }
+        else -> SpeedEffects(null, SpeedChangeEffect(speed))
+    }
+
+    private class SpeedEffects(val audioProcessor: AudioProcessor?, val videoEffect: Effect?)
+
+    /** One speed for the whole item; the clip is the unit of retiming here. */
+    private class ConstantSpeedProvider(private val speed: Float) : SpeedProvider {
+        override fun getSpeed(timeUs: Long): Float = speed
+        override fun getNextSpeedChangeTimeUs(timeUs: Long): Long = C.TIME_UNSET
     }
 
     /**
@@ -215,6 +248,9 @@ object CompositionMapper {
                 }
             }
 
+            val removeAudio = track.muted || !clip.media.hasAudio
+            val speed = speedEffects(clip.speed, keepsAudio = !removeAudio)
+
             val videoEffects = buildList<Effect> {
                 add(
                     GradeGlEffect(
@@ -230,18 +266,18 @@ object CompositionMapper {
                         ),
                     ),
                 )
-                if (clip.speed != 1f) add(SpeedChangeEffect(clip.speed))
+                speed.videoEffect?.let(::add)
             }
 
             val processors = buildList<AudioProcessor> {
-                if (clip.speed != 1f) add(SonicAudioProcessor().apply { setSpeed(clip.speed) })
+                speed.audioProcessor?.let(::add)
                 add(VolumeEnvelopeAudioProcessor(clip.volume * track.volume, clip.volumeKeyframes))
             }
 
             builder.addItem(
                 EditedMediaItem.Builder(mediaItem)
                     .setEffects(Effects(processors, videoEffects))
-                    .setRemoveAudio(track.muted || !clip.media.hasAudio)
+                    .setRemoveAudio(removeAudio)
                     .build(),
             )
         }
@@ -273,7 +309,11 @@ object CompositionMapper {
                 .build()
 
             val processors = buildList<AudioProcessor> {
-                if (clip.speed != 1f) add(SonicAudioProcessor().apply { setSpeed(clip.speed) })
+                // No video on this sequence, so the audio half of the pair stands
+                // alone — the same processor media3's own audio graph uses.
+                if (clip.speed != 1f) {
+                    add(SpeedChangingAudioProcessor(ConstantSpeedProvider(clip.speed)))
+                }
                 add(VolumeEnvelopeAudioProcessor(clip.volume * track.volume, clip.volumeKeyframes))
             }
 

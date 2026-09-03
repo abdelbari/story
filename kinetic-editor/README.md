@@ -223,8 +223,8 @@ during pinch-zoom. Instead:
 - Main track → primary `EditedMediaItemSequence`; per item: clipping trims,
   the **same GLSL grade/LUT/transition shader as preview** (windows computed in
   clip-local source time, placed *before* `SpeedChangeEffect`), then
-  `SonicAudioProcessor(speed)` + `VolumeEnvelopeAudioProcessor` (which runs in
-  clip *timeline* time — same domain the keyframes are authored in). Transformer
+  the speed change, then `VolumeEnvelopeAudioProcessor` (which runs in clip
+  *timeline* time — same domain the keyframes are authored in). Transformer
   adds each item's sequence offset ahead of the item's own effects, so the
   export provider measures from the first frame it sees — the same trick
   media3's own `SpeedChangeEffect` uses — rather than trusting the timestamps
@@ -244,6 +244,14 @@ during pinch-zoom. Instead:
   sequence sets its own `experimentalSetForceAudioTrack` (and the PiP ones
   `experimentalSetForceVideoTrack`): a sequence that opens with a gap, or with
   an item lacking a track that later items carry, fails the export without it.
+- **Speed is media3's interlinked pair**, not two independent knobs.
+  `SpeedChangeEffect` and a Sonic processor set to the same factor are two
+  timestamp mappings with independent rounding, which is exactly what drifts
+  audio against video over a long clip;
+  `Effects.createExperimentalSpeedChangingEffect` returns a pair built to stay
+  in sync. media3 documents the plain video effect as the choice "when input has
+  no audio", so that is when the mapper uses it — a muted or silent clip, and
+  audio-only sequences, which take the audio half alone.
 - Overlay rotation is specified **counter-clockwise** by media3 and clockwise
   by Compose, so every preview rotation is negated against its export value.
   A preview that turns the opposite way from the render is worse than none.
