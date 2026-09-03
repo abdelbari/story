@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 492 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 498 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -56,6 +56,11 @@ Work through, in this order — each exercises a path nothing else covers:
 - [ ] **A section that starts on a fresh page** — the paper's list of
       references — must start on a fresh page in Word too, and no ordinary
       page turn may have become a forced break.
+- [ ] **A table longer than a page**, exported to PDF: a syllabus, a
+      price list, or a CV whose history sits in one long cell. It must
+      carry on over the page — every row present, and a cell longer than
+      the page continuing at the top of the next one — rather than
+      stopping at the bottom edge with the rest of it gone.
 - [ ] **A document with a table** — one with rules and one that is only
       aligned columns. The columns must keep their widths (a column of
       dates stays narrow), and the second must arrive with no lines
@@ -219,8 +224,9 @@ to judge:
   the render resolution (`RENDER_DPI`, currently 200), switching from
   `tessdata_fast` to the slower and more accurate `tessdata_best` models, and
   Tesseract page-segmentation mode.
-- **PDF export layout.** `PdfFileExporter` documents its v1 simplifications
-  (uniform table columns, no row splitting across pages); real documents will
+- **PDF export layout.** `PdfFileExporter` documents what it still
+  simplifies (a cell covering several rows is drawn in the first of them,
+  and a picture inside a cell is not drawn at all); real documents will
   say which matter.
 
 ## 6. Staged rollout

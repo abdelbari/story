@@ -44,6 +44,7 @@ import app.morpho.engine.layout.Table
 import app.morpho.engine.layout.TableGrid
 import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
+import app.morpho.engine.layout.pdf.StackedLines
 import java.io.ByteArrayOutputStream
 import java.util.IdentityHashMap
 import kotlin.math.max
@@ -68,10 +69,10 @@ import kotlin.math.roundToInt
  * line-by-line. Honest
  * v1 limits, documented rather than hidden: tables take the widths their
  * columns were measured at, are ruled only where the page ruled them, and
- * spread a cell across the columns it covers, but they render only their
- * paragraph content, draw a cell that covers several rows in the first of
- * them alone, and never split a row across pages (one taller than a page
- * is clipped); images scale
+ * spread a cell across the columns it covers, and a row longer than the
+ * page left carries on over the page, cut between lines, but they render
+ * only their paragraph content and draw a cell that covers several rows
+ * in the first of them alone; images scale
  * into the content box at their measured size, else at the CSS px→pt
  * ratio; list markers are plain text prefixes, so an RTL numbered item
  * shows its number on the right but with Western digits.
@@ -501,6 +502,21 @@ internal object PdfFileExporter {
         return max(pitch, LEAST_LINE_SHARE * largest)
     }
 
+    /**
+     * The bottom edge of every line of a cell's paragraphs, measured from
+     * the top of the cell's text and including the two points of clear
+     * space set between one paragraph and the next.
+     */
+    private fun lineBottoms(layouts: List<StaticLayout>): List<Float> {
+        val bottoms = mutableListOf<Float>()
+        var base = 0f
+        for (layout in layouts) {
+            for (line in 0 until layout.lineCount) bottoms += base + layout.getLineBottom(line)
+            base += layout.height + 2f
+        }
+        return bottoms
+    }
+
     /** Draws a layout starting at the cursor, splitting across pages by line. */
     private fun drawAcrossPages(cursor: Cursor, layout: StaticLayout) {
         var first = 0
@@ -620,36 +636,66 @@ internal object PdfFileExporter {
                         )
                     }
             }
-            val rowHeight = (cellLayouts.maxOfOrNull { layouts ->
-                layouts.sumOf { it.height } + (layouts.size - 1).coerceAtLeast(0) * 2
-            } ?: 0) + 2 * CELL_PADDING
-            cursor.ensureRoom(rowHeight)
-            val canvas = cursor.canvas
-            for ((index, layouts) in cellLayouts.withIndex()) {
-                val place = places[index]
-                val column = placed(place.column, place.span)
-                val x = cursor.sheet.marginLeft + offsets[column]
-                val width = (column until column + place.span).sumOf { columnWidths[it].toDouble() }.toFloat()
-                // The colour first, then the rule over it, then the words:
-                // a table's head is read by its colour as much as its rules.
-                place.cell.shadingRgb?.let { fill ->
-                    canvas.drawRect(
-                        x, cursor.y, x + width, cursor.y + rowHeight,
-                        Paint().apply { color = 0xFF000000.toInt() or fill },
-                    )
-                }
-                if (block.ruled) canvas.drawRect(x, cursor.y, x + width, cursor.y + rowHeight, border)
-                var textY = cursor.y + CELL_PADDING
-                for (layout in layouts) {
+            // The bottom edge of every line of every cell, so that a row
+            // too tall for what is left of the page can be cut between
+            // lines and carry on over the page instead of being drawn off
+            // the edge of it and lost.
+            val lines = cellLayouts.map(::lineBottoms)
+            val drawnTo = FloatArray(places.size)
+            do {
+                val tallest = lines.indices.maxOfOrNull {
+                    (lines[it].lastOrNull() ?: 0f) - drawnTo[it]
+                } ?: 0f
+                cursor.ensureRoom(tallest + 2 * CELL_PADDING)
+                val room = (cursor.remaining - 2 * CELL_PADDING).coerceAtLeast(0f)
+                val cuts = lines.indices.map { StackedLines.cut(lines[it], drawnTo[it], room) }
+                val bandHeight = (cuts.indices.maxOfOrNull { cuts[it] - drawnTo[it] } ?: 0f) +
+                    2 * CELL_PADDING
+                val canvas = cursor.canvas
+                for ((index, layouts) in cellLayouts.withIndex()) {
+                    val place = places[index]
+                    val column = placed(place.column, place.span)
+                    val x = cursor.sheet.marginLeft + offsets[column]
+                    val width = (column until column + place.span)
+                        .sumOf { columnWidths[it].toDouble() }.toFloat()
+                    // The colour first, then the rule over it, then the words:
+                    // a table's head is read by its colour as much as its rules.
+                    place.cell.shadingRgb?.let { fill ->
+                        canvas.drawRect(
+                            x, cursor.y, x + width, cursor.y + bandHeight,
+                            Paint().apply { color = 0xFF000000.toInt() or fill },
+                        )
+                    }
+                    if (block.ruled) canvas.drawRect(x, cursor.y, x + width, cursor.y + bandHeight, border)
+                    // The cell's whole content is drawn with the part
+                    // belonging to earlier pages lifted above the band and
+                    // clipped away, which is what puts a long cell's next
+                    // lines at the top of the next page.
                     canvas.save()
-                    canvas.translate(x + CELL_PADDING, textY)
-                    canvas.clipRect(0f, 0f, width - 2 * CELL_PADDING, layout.height.toFloat())
-                    layout.draw(canvas)
+                    canvas.clipRect(
+                        x + CELL_PADDING,
+                        cursor.y + CELL_PADDING,
+                        x + width - CELL_PADDING,
+                        cursor.y + bandHeight - CELL_PADDING,
+                    )
+                    canvas.translate(x + CELL_PADDING, cursor.y + CELL_PADDING - drawnTo[index])
+                    var textY = 0f
+                    for (layout in layouts) {
+                        canvas.save()
+                        canvas.translate(0f, textY)
+                        layout.draw(canvas)
+                        canvas.restore()
+                        textY += layout.height + 2f
+                    }
                     canvas.restore()
-                    textY += layout.height + 2f
                 }
-            }
-            cursor.advance(minOf(rowHeight, cursor.remaining))
+                for (index in cuts.indices) drawnTo[index] = cuts[index]
+                cursor.advance(minOf(bandHeight, cursor.remaining))
+                // Every cut moves each unfinished cell past at least one
+                // more line, so a row is always finished in the end.
+                val unfinished = lines.indices.any { StackedLines.more(lines[it], drawnTo[it]) }
+                if (unfinished) cursor.openPage()
+            } while (unfinished)
         }
         cursor.advance(minOf(10f, cursor.remaining))
     }
