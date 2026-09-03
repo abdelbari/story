@@ -42,6 +42,17 @@ object PdfRuledTables {
     private const val FILLED_SHARE = 0.4f
 
     /**
+     * The most cells a grid may have before it is taken for a drawing.
+     *
+     * A page ruled cell by cell draws about one line for every cell, and
+     * every cell is then measured against every line, so the work grows as
+     * the square of the count. A table nobody reads — a plan, a map, a
+     * sheet of graph paper — would spend a phone's afternoon being read as
+     * one, and a reader must never be the reason a conversion hangs.
+     */
+    private const val MOST_CELLS = 20_000
+
+    /**
      * The tables [drawings] show the page ruled, as regions over [lines].
      *
      * Empty where the page ruled none, which is most pages: the grid has to
@@ -92,6 +103,7 @@ object PdfRuledTables {
         val rows = across.size - 1
         val columns = down.size - 1
         if (rows < LEAST_BANDS || columns < LEAST_BANDS) return null
+        if (rows.toLong() * columns > MOST_CELLS) return null
         // A row of a table is one line of text with a piece of it in each
         // cell, so it is the pieces that are placed, not the line: placed
         // by the line, every row of a two-column table lands in whichever

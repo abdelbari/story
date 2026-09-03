@@ -37,11 +37,37 @@ object PageBullets {
     /** Marks in the same place beside this many lines are a list. */
     private const val ITEMS_OF_A_LIST = 2
 
+    /**
+     * How many lines apart two items of one list may be.
+     *
+     * The items of a list follow one another, with at most a line or two
+     * of a wrapped item between them. Marks that merely happen to fall in
+     * the same place at opposite ends of a page are a coincidence, and a
+     * page that scatters enough of them — a chart, a map — has coincidences
+     * everywhere: on one such page every line of text was read as an item.
+     */
+    private const val ITEMS_APART = 4
+
     /** Markers within this of each other stand in the same place. */
     private const val SAME_PLACE_PT = 3f
 
     /** What is written back for a mark the page drew. */
     private const val BULLET = "• "
+
+    /**
+     * The most marks a page may draw before none of them is a bullet.
+     *
+     * A page holds a few dozen lines, so it holds a few dozen markers, and
+     * a page that scatters hundreds of small marks is drawing something —
+     * a chart, a map, a scatter of points — where the same mark in the
+     * same place beside two lines running is a coincidence rather than a
+     * list. On one such page every line of text was read as an item.
+     *
+     * Counted per page, since a long document of ordinary pages is not a
+     * dense one; and it bounds the cost as well, every line of a page
+     * being measured against every mark on it.
+     */
+    private const val MOST_MARKS = 200
 
     /**
      * [lines] with the bullet put back on every line a marker was drawn
@@ -59,22 +85,35 @@ object PageBullets {
             long in 0.5f..LARGEST_PT && short > 0f && long / short <= SQUARENESS
         }
         if (marks.isEmpty()) return lines
+        val byPage = marks.groupBy { it.page }.filterValues { it.size <= MOST_MARKS }
+        if (byPage.isEmpty()) return lines
         val beside = HashMap<Int, Float>()
         for ((at, line) in lines.withIndex()) {
             if (line.text.isEmpty() || ListLabels.opensWithLabel(line.text)) continue
-            markerFor(line, marks)?.let { beside[at] = it }
+            val own = byPage[line.page] ?: continue
+            markerFor(line, own)?.let { beside[at] = it }
         }
         if (beside.size < ITEMS_OF_A_LIST) return lines
         // A marker on its own is a mark on the page; markers standing in
-        // the same place beside line after line are a list.
-        val repeats = beside.values
-            .groupBy { (it / SAME_PLACE_PT).toInt() }
-            .filterValues { it.size >= ITEMS_OF_A_LIST }
-            .keys
-        if (repeats.isEmpty()) return lines
+        // the same place beside line after line are a list. "After
+        // another" is the whole of it: the items of a list follow one
+        // another, and marks in the same place at opposite ends of a page
+        // are two marks.
+        val items = HashSet<Int>()
+        for ((_, group) in beside.keys.groupBy { (beside.getValue(it) / SAME_PLACE_PT).toInt() }) {
+            val order = group.sorted()
+            var from = 0
+            while (from < order.size) {
+                var to = from
+                while (to + 1 < order.size && order[to + 1] - order[to] <= ITEMS_APART) to++
+                if (to - from + 1 >= ITEMS_OF_A_LIST) items += order.subList(from, to + 1)
+                from = to + 1
+            }
+        }
+        if (items.isEmpty()) return lines
         return lines.mapIndexed { at, line ->
             val edge = beside[at] ?: return@mapIndexed line
-            if ((edge / SAME_PLACE_PT).toInt() !in repeats) return@mapIndexed line
+            if (at !in items) return@mapIndexed line
             val rtl = line.xEnd < edge
             line.copy(
                 text = BULLET + line.text,
@@ -100,8 +139,7 @@ object PageBullets {
         if (size <= 0f) return null
         val middle = line.baselineY - size / 3f
         return marks.firstOrNull { mark ->
-            mark.page == line.page &&
-                abs((mark.top + mark.bottom) / 2 - middle) <= ON_THE_LINE * size &&
+            abs((mark.top + mark.bottom) / 2 - middle) <= ON_THE_LINE * size &&
                 (line.x - mark.right in 0f..REACH * size || mark.left - line.xEnd in 0f..REACH * size)
         }?.let { mark -> if (mark.right <= line.x) mark.left else mark.right }
     }

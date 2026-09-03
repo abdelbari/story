@@ -63,6 +63,30 @@ class PageBulletsTest {
     }
 
     @Test
+    fun `marks in the same place at opposite ends of a page are two marks`() {
+        // The items of a list follow one another. Marks that merely happen
+        // to fall in the same place, pages apart in the reading, are a
+        // coincidence — and a page that scatters enough of them has
+        // coincidences everywhere.
+        val lines = (0 until 20).map { item("a line of ordinary prose, number $it", 100f + it * 22f) }
+        val read = paragraphs(lines, listOf(mark(lines.first().baselineY), mark(lines.last().baselineY)))
+        assertTrue(read.none { it.contains("•") }, "two marks far apart became a list: $read")
+    }
+
+    @Test
+    fun `a page scattered with small marks has no list on it`() {
+        // A chart, a map, a page of points. Every line of one such page
+        // was read as an item of a list, because with marks enough some of
+        // them fall in the same place beside lines running.
+        val lines = (0 until 20).map { item("a line of ordinary prose, number $it", 100f + it * 22f) }
+        val scattered = (0 until 400).map { at ->
+            PdfDrawing(1, 60f + (at * 7 % 460), 90f + (at * 11 % 430), 64f + (at * 7 % 460), 94f + (at * 11 % 430))
+        }
+        val read = paragraphs(lines, scattered)
+        assertTrue(read.none { it.contains("•") }, "a scatter of marks became a list: ${read.take(3)}")
+    }
+
+    @Test
     fun `a right-to-left item takes its marker from the right of the line`() {
         val lines = listOf(
             item("أن يكون واضحا لا يحتمل أكثر من معنى واحد", 100f),
