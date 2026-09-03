@@ -315,7 +315,8 @@ the exporter — the model, the preview and the export path agree on all three.
 | Transitions | dip-to-black, wipe, zoom-punch on any clip boundary |
 | Audio | music and voiceover lanes, per-clip volume, fade in/out, track mute |
 | Text | editable content (multi-line), four type faces, bold, italic, eight colours, size, position, and five entrance animations (cut, fade, pop, rise, type-on) |
-| Overlays | stickers (size, position, rotation), picture-in-picture (size, position, rotation, opacity) — every control is the number the export consumes |
+| Stickers | size, position, rotation, and the same animations text uses |
+| Overlays | picture-in-picture (size, position, rotation, opacity) — every control is the number the export consumes |
 | Looks | eight one-tap filters that set the same grade/LUT fields the sliders edit, so a preset is a starting point rather than a mode |
 | Canvas | 9:16, 16:9, 1:1 and 4:5 presets, each fitted, filled (cropped) or stretched — applied by the same `Presentation` in preview and export |
 | Editing | trim, split, move, reorder, duplicate, delete, per-clip speed |

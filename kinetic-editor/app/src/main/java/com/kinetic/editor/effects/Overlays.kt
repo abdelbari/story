@@ -18,10 +18,10 @@ import androidx.media3.effect.TextOverlay
 import androidx.media3.effect.TextureOverlay
 import com.google.common.collect.ImmutableList
 import com.kinetic.editor.core.model.StickerSpec
-import com.kinetic.editor.core.model.TextAnim
-import com.kinetic.editor.core.model.TextAnimState
+import com.kinetic.editor.core.model.OverlayAnim
+import com.kinetic.editor.core.model.OverlayAnimState
 import com.kinetic.editor.core.model.TextSpec
-import com.kinetic.editor.core.model.textAnimAt
+import com.kinetic.editor.core.model.overlayAnimAt
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TrackType
 
@@ -43,8 +43,6 @@ import com.kinetic.editor.core.model.TrackType
  * zero GL cost while editing; see PreviewOverlayLayer.)
  */
 object OverlayFactory {
-
-    private const val FADE_US = 150_000L
 
     fun build(context: Context, state: TimelineState, canvasWidth: Int): OverlayEffect? {
         val overlays = ImmutableList.builder<TextureOverlay>()
@@ -72,13 +70,6 @@ object OverlayFactory {
         return if (any) OverlayEffect(overlays.build()) else null
     }
 
-    /** Sticker fade; text has its own animations, see [textAnimAt]. */
-    internal fun windowAlpha(timeUs: Long, startUs: Long, endUs: Long): Float {
-        if (timeUs < startUs || timeUs >= endUs) return 0f
-        val inEdge = ((timeUs - startUs).toFloat() / FADE_US).coerceIn(0f, 1f)
-        val outEdge = ((endUs - timeUs).toFloat() / FADE_US).coerceIn(0f, 1f)
-        return minOf(inEdge, outEdge)
-    }
 }
 
 private class TimedTextOverlay(
@@ -116,14 +107,14 @@ private class TimedTextOverlay(
      * few dozen small objects at export start than an allocation per frame.
      */
     private val prefixes: List<SpannableString>? =
-        if (spec.anim == TextAnim.TYPE && spec.text.length <= MAX_TYPED) {
+        if (spec.anim == OverlayAnim.TYPE && spec.text.length <= MAX_TYPED) {
             (0..spec.text.length).map { n -> SpannableString(styled.subSequence(0, n)) }
         } else {
             null
         }
 
-    private fun stateAt(timeUs: Long): TextAnimState =
-        textAnimAt(spec.anim, timeUs, startUs, endUs, spec.text.length)
+    private fun stateAt(timeUs: Long): OverlayAnimState =
+        overlayAnimAt(spec.anim, timeUs, startUs, endUs, spec.text.length)
 
     override fun getText(presentationTimeUs: Long): SpannableString {
         val chars = stateAt(presentationTimeUs).visibleChars
@@ -158,11 +149,15 @@ private class TimedStickerOverlay(
 
     override fun getBitmap(presentationTimeUs: Long): Bitmap = bitmap
 
-    override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings =
-        StaticOverlaySettings.Builder()
-            .setBackgroundFrameAnchor(spec.anchorX, spec.anchorY)
-            .setScale(scale, scale)
+    override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
+        // The same timing text uses; a sticker has no characters to reveal, so
+        // TYPE degenerates to a plain cut-in, which is the sensible reading.
+        val anim = overlayAnimAt(spec.anim, presentationTimeUs, startUs, endUs, 0)
+        return StaticOverlaySettings.Builder()
+            .setBackgroundFrameAnchor(spec.anchorX, spec.anchorY + anim.dy)
+            .setScale(scale * anim.scale, scale * anim.scale)
             .setRotationDegrees(spec.rotationDeg)
-            .setAlphaScale(OverlayFactory.windowAlpha(presentationTimeUs, startUs, endUs))
+            .setAlphaScale(anim.alpha)
             .build()
+    }
 }

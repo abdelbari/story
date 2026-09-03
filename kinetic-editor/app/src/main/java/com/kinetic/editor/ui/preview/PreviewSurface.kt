@@ -41,8 +41,9 @@ import com.kinetic.editor.core.model.PipSpec
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.layoutKey
+import com.kinetic.editor.core.model.overlayAnimAt
 import com.kinetic.editor.core.model.pipWindowAt
-import com.kinetic.editor.core.model.textAnimAt
+import com.kinetic.editor.core.model.overlayAnimAt
 import com.kinetic.editor.ui.previewStyle
 import com.kinetic.editor.engine.PreviewEngine
 import com.kinetic.editor.ui.timeline.TimelineViewportState
@@ -182,7 +183,7 @@ private fun PreviewOverlayLayer(
                     if (timeMs !in p) continue
                     val spec = p.clip.text ?: continue
                     // The export's overlay reads this same function per frame.
-                    val anim = textAnimAt(
+                    val anim = overlayAnimAt(
                         spec.anim,
                         timeMs * 1_000L,
                         p.startMs * 1_000L,
@@ -223,13 +224,21 @@ private fun PreviewOverlayLayer(
                     if (timeMs !in p) continue
                     val spec = p.clip.sticker ?: continue
                     val bmp = stickerCache[spec.assetPath] ?: continue
+                    val anim = overlayAnimAt(
+                        spec.anim,
+                        timeMs * 1_000L,
+                        p.startMs * 1_000L,
+                        p.endMs * 1_000L,
+                        0,
+                    )
+                    if (anim.alpha <= 0f) continue
                     // Width is the requested fraction of the frame, height follows
                     // the asset's proportions — the same size the export's
                     // canvas-relative scale produces. See OverlayFactory.
-                    val w = size.width * spec.scale
+                    val w = size.width * spec.scale * anim.scale
                     val h = w * bmp.height / bmp.width
                     val cx = (spec.anchorX * 0.5f + 0.5f) * size.width
-                    val cy = (-spec.anchorY * 0.5f + 0.5f) * size.height
+                    val cy = (-(spec.anchorY + anim.dy) * 0.5f + 0.5f) * size.height
                     // Negated for the same reason as the PiP box above: media3
                     // rotates overlays counter-clockwise, Compose clockwise.
                     rotate(-spec.rotationDeg, pivot = Offset(cx, cy)) {
@@ -239,6 +248,7 @@ private fun PreviewOverlayLayer(
                             srcSize = IntSize(bmp.width, bmp.height),
                             dstOffset = IntOffset((cx - w / 2).toInt(), (cy - h / 2).toInt()),
                             dstSize = IntSize(w.toInt(), h.toInt()),
+                            alpha = anim.alpha,
                         )
                     }
                 }

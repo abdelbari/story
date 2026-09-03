@@ -70,7 +70,7 @@ import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.TrackType
-import com.kinetic.editor.core.model.TextAnim
+import com.kinetic.editor.core.model.OverlayAnim
 import com.kinetic.editor.core.model.TextFont
 import com.kinetic.editor.core.model.TextSpec
 import com.kinetic.editor.core.model.TransitionType
@@ -543,7 +543,7 @@ private fun ClipInspector(
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text("Animate", color = Color(0xFF9A9AA5), fontSize = 11.sp)
-                for (motion in TextAnim.entries) {
+                for (motion in OverlayAnim.entries) {
                     val active = spec.anim == motion
                     TextButton(onClick = { edit(spec.copy(anim = motion)) }) {
                         Text(
@@ -593,6 +593,26 @@ private fun ClipInspector(
                 }
                 InspectorSlider("Y", spec.anchorY, -1f..1f) {
                     dispatch(EditorIntent.SetSticker(clip.id, spec.copy(anchorY = it)))
+                }
+            }
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text("Animate", color = Color(0xFF9A9AA5), fontSize = 11.sp)
+                // TYPE has nothing to reveal on a sticker and reads as a cut.
+                for (motion in OverlayAnim.entries.filter { it != OverlayAnim.TYPE }) {
+                    val active = spec.anim == motion
+                    TextButton(onClick = {
+                        dispatch(EditorIntent.SetSticker(clip.id, spec.copy(anim = motion)))
+                    }) {
+                        Text(
+                            motion.label,
+                            fontSize = 12.sp,
+                            color = if (active) Color(0xFF35C4B5) else Color(0xFF9A9AA5),
+                        )
+                    }
                 }
             }
         }

@@ -92,17 +92,17 @@ data class TextSpec(
     val font: TextFont = TextFont.SANS,
     val bold: Boolean = true,
     val italic: Boolean = false,
-    val anim: TextAnim = TextAnim.FADE,
+    val anim: OverlayAnim = OverlayAnim.FADE,
 )
 
 /**
- * How a text clip enters and leaves.
+ * How an overlay — text or sticker — enters and leaves.
  *
- * The timing is [textAnimAt], shared by the preview and the export, so an
+ * The timing is [overlayAnimAt], shared by the preview and the export, so an
  * animation is one implementation seen twice rather than two that drift.
  */
 @Serializable
-enum class TextAnim(val label: String) {
+enum class OverlayAnim(val label: String) {
     NONE("Cut"),
     FADE("Fade"),
     POP("Pop"),
@@ -170,6 +170,7 @@ data class StickerSpec(
     val anchorY: Float = 0.6f,
     val scale: Float = 0.35f,
     val rotationDeg: Float = 0f,
+    val anim: OverlayAnim = OverlayAnim.FADE,
 )
 
 @Serializable

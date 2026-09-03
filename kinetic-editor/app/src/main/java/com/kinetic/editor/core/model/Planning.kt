@@ -210,10 +210,10 @@ fun pipWindowAt(windows: List<PipWindow>, timeUs: Long): PipWindow? {
     return null
 }
 
-/* ------------------------------ text animation ----------------------------- */
+/* ---------------------------- overlay animation ---------------------------- */
 
-/** How a text overlay is drawn at one moment: the whole animation, as data. */
-data class TextAnimState(
+/** How an overlay is drawn at one moment: the whole animation, as data. */
+data class OverlayAnimState(
     val alpha: Float,
     val scale: Float,
     /** NDC offset added to the anchor's y; the frame is 2 units tall. */
@@ -222,38 +222,38 @@ data class TextAnimState(
     val visibleChars: Int,
 )
 
-private const val TEXT_ANIM_US = 350_000L
+private const val OVERLAY_ANIM_US = 350_000L
 private const val RISE_NDC = 0.15f
 
 /**
- * The state of a text animation at [timeUs], in composition (== timeline) time.
+ * The state of an overlay animation at [timeUs], in composition (== timeline) time.
  *
  * One implementation for both pipelines: the preview draws from it and the
  * export's overlay reads it per frame, so an animation cannot look one way on
  * screen and another in the file. Pure, and therefore actually testable —
  * animation timing is otherwise the kind of thing only a rendered video reveals.
  */
-fun textAnimAt(
-    anim: TextAnim,
+fun overlayAnimAt(
+    anim: OverlayAnim,
     timeUs: Long,
     startUs: Long,
     endUs: Long,
     charCount: Int,
-): TextAnimState {
-    if (timeUs < startUs || timeUs >= endUs) return TextAnimState(0f, 1f, 0f, 0)
+): OverlayAnimState {
+    if (timeUs < startUs || timeUs >= endUs) return OverlayAnimState(0f, 1f, 0f, 0)
     // A short clip gets a short animation rather than a truncated one: neither
     // end may eat more than half of it, or the two would overlap.
-    val windowUs = minOf(TEXT_ANIM_US, (endUs - startUs) / 2).coerceAtLeast(1L)
+    val windowUs = minOf(OVERLAY_ANIM_US, (endUs - startUs) / 2).coerceAtLeast(1L)
     val enter = ((timeUs - startUs).toFloat() / windowUs).coerceIn(0f, 1f)
     val exit = ((endUs - timeUs).toFloat() / windowUs).coerceIn(0f, 1f)
     val edge = minOf(enter, exit)
     return when (anim) {
-        TextAnim.NONE -> TextAnimState(1f, 1f, 0f, -1)
-        TextAnim.FADE -> TextAnimState(edge, 1f, 0f, -1)
-        TextAnim.POP -> TextAnimState(edge, 0.6f + 0.4f * easeOutBack(enter), 0f, -1)
-        TextAnim.RISE -> TextAnimState(edge, 1f, -RISE_NDC * (1f - easeOutCubic(enter)), -1)
+        OverlayAnim.NONE -> OverlayAnimState(1f, 1f, 0f, -1)
+        OverlayAnim.FADE -> OverlayAnimState(edge, 1f, 0f, -1)
+        OverlayAnim.POP -> OverlayAnimState(edge, 0.6f + 0.4f * easeOutBack(enter), 0f, -1)
+        OverlayAnim.RISE -> OverlayAnimState(edge, 1f, -RISE_NDC * (1f - easeOutCubic(enter)), -1)
         // Typing IS the entrance, so it does not also fade in; it still fades out.
-        TextAnim.TYPE -> TextAnimState(
+        OverlayAnim.TYPE -> OverlayAnimState(
             alpha = exit,
             scale = 1f,
             dy = 0f,
