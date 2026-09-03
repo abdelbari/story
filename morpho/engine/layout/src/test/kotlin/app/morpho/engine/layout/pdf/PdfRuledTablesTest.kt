@@ -154,6 +154,50 @@ class PdfRuledTablesTest {
     }
 
     @Test
+    fun `a cell covers the rows the page drew no line across`() {
+        // A label set beside the rows it belongs to. The rows it covers
+        // hold only the cells that begin, as a document's own rows do.
+        val bands = listOf(70f, 100f, 130f, 160f)
+        val sides = listOf(60f, 180f, 520f)
+        val drawn = mutableListOf<PdfDrawing>()
+        // Every line across, except the one that would cut the label in
+        // two: it runs only from the middle side to the right-hand one.
+        for ((at, y) in bands.withIndex()) {
+            val from = if (at == 2) sides[1] else sides.first()
+            drawn += PdfDrawing(1, from, y - 0.4f, sides.last(), y + 0.4f)
+        }
+        for (x in sides) drawn += PdfDrawing(1, x - 0.4f, bands.first(), x + 0.4f, bands.last())
+        fun row(pieces: List<Pair<String, Float>>, y: Float): PdfLine {
+            val segments = pieces.map { (text, x) -> PdfSegment(text, x, x + text.length * 6f) }
+            return PdfLine(
+                text = segments.joinToString(" ") { it.text },
+                x = segments.first().xStart,
+                baselineY = y,
+                maxFontSize = 11f,
+                page = 1,
+                xEnd = segments.last().xEnd,
+                segments = segments,
+            )
+        }
+        val model = PdfLayout.reconstruct(
+            listOf(
+                row(listOf("Section" to 66f, "Item" to 186f), 90f),
+                row(listOf("Design" to 66f, "Clear" to 186f), 120f),
+                row(listOf("Vague" to 186f), 150f),
+            ),
+            confidence = 0.6f,
+            drawings = drawn,
+        )
+        val table = model.blocks.filterIsInstance<Table>().single()
+        assertEquals(listOf(2, 2, 1), table.rows.map { it.cells.size }, "the covered cell was kept")
+        assertEquals(2, table.rows[1].cells.first().rowSpan, "the label covers both rows")
+        assertEquals(
+            "Vague",
+            table.rows[2].cells.single().blocks.filterIsInstance<Paragraph>().single().text,
+        )
+    }
+
+    @Test
     fun `a box drawn round something is not a table of one cell`() {
         // Four lines make one cell, not a grid, and a border round a figure
         // or a frame round the sheet would otherwise be read as a table of

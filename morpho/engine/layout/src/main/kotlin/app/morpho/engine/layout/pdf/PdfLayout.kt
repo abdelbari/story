@@ -644,7 +644,8 @@ object PdfLayout {
                             // a right-to-left table turns the counts round
                             // with the cells: a cell that covered three
                             // still covers three.
-                            columnSpan = spans?.getOrNull(at) ?: 1,
+                            columnSpan = spans?.getOrNull(at)?.columns ?: 1,
+                            rowSpan = spans?.getOrNull(at)?.rows ?: 1,
                         )
                     }
                 )
@@ -762,7 +763,8 @@ object PdfLayout {
 
     /** How many columns [region] has, a merged cell counted for all it covers. */
     private fun columnsOf(region: PdfTableDetector.Region): Int =
-        region.spans?.firstOrNull()?.sum() ?: region.rows.firstOrNull()?.size ?: 0
+        region.spans?.maxOfOrNull { row -> row.sumOf { it.columns } }
+            ?: region.rows.firstOrNull()?.size ?: 0
 
     /** The width of each column between [edges], or null where the page ruled none. */
     private fun widthsBetween(edges: List<Float>?): List<Float>? =

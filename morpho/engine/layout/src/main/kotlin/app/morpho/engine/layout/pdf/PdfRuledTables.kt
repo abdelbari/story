@@ -61,7 +61,8 @@ object PdfRuledTables {
             }
             if (across.size <= LEAST_BANDS || down.size <= LEAST_BANDS) continue
             val uprights = drawn.filter { it.widthPt <= THIN_PT && it.heightPt >= LEAST_SIDE_PT }
-            gridOf(lines, page, across, down, uprights)?.let { out += it }
+            val levels = drawn.filter { it.heightPt <= THIN_PT && it.widthPt >= LEAST_SIDE_PT }
+            gridOf(lines, page, across, down, uprights, levels)?.let { out += it }
         }
         return out.sortedBy { it.start }
     }
@@ -86,6 +87,7 @@ object PdfRuledTables {
         across: List<Float>,
         down: List<Float>,
         uprights: List<PdfDrawing>,
+        levels: List<PdfDrawing>,
     ): PdfTableDetector.Region? {
         val rows = across.size - 1
         val columns = down.size - 1
@@ -125,36 +127,73 @@ object PdfRuledTables {
         if (last - first + 1 != held.size) return null
         val filled = cells.sumOf { row -> row.count { it.isNotEmpty() } }
         if (filled < FILLED_SHARE * rows * columns) return null
-        // A cell covers the columns beside it wherever the page drew no
-        // side between them: a head written across a whole table, a label
-        // set beside three rows. Kept as three cells with the words in the
-        // middle one, a converted table has two blanks where a document
-        // has none.
-        val built = cells.mapIndexed { row, columnsOfRow ->
-            val band = across[row] to across[row + 1]
+        // A cell covers whatever the page drew no line between: a head
+        // written across a whole table, a label set beside three rows.
+        // Kept as separate cells, a converted table has blanks where the
+        // document has none.
+        val sides = Array(rows) { row ->
+            BooleanArray(columns + 1) { at -> sideAt(uprights, down[at], across[row] to across[row + 1]) }
+        }
+        val levelsAt = Array(rows + 1) { row ->
+            BooleanArray(columns) { at -> levelAt(levels, across[row], down[at] to down[at + 1]) }
+        }
+        val taken = Array(rows) { BooleanArray(columns) }
+        val builtRows = mutableListOf<List<PdfSegment>>()
+        val builtSpans = mutableListOf<List<PdfTableDetector.Span>>()
+        var merged = false
+        for (row in 0 until rows) {
             val cellsOfRow = mutableListOf<PdfSegment>()
-            val spansOfRow = mutableListOf<Int>()
+            val spansOfRow = mutableListOf<PdfTableDetector.Span>()
             var column = 0
             while (column < columns) {
-                var span = 1
-                while (column + span < columns && !sideAt(uprights, down[column + span], band)) span++
-                val own = (column until column + span).flatMap { columnsOfRow[it] }
+                if (taken[row][column]) {
+                    column++
+                    continue
+                }
+                var wide = 1
+                while (column + wide < columns && !taken[row][column + wide] && !sides[row][column + wide]) wide++
+                var tall = 1
+                while (row + tall < rows &&
+                    (column until column + wide).none { levelsAt[row + tall][it] } &&
+                    (column until column + wide).none { taken[row + tall][it] }
+                ) {
+                    tall++
+                }
+                for (down1 in row until row + tall) {
+                    for (across1 in column until column + wide) taken[down1][across1] = true
+                }
+                val own = (row until row + tall).flatMap { held ->
+                    (column until column + wide).flatMap { cells[held][it] }
+                }
                 cellsOfRow += PdfSegment(
                     text = LineJoiner.join(joinedByLine(own)),
                     xStart = down[column],
-                    xEnd = down[column + span],
+                    xEnd = down[column + wide],
                 )
-                spansOfRow += span
-                column += span
+                spansOfRow += PdfTableDetector.Span(columns = wide, rows = tall)
+                if (wide > 1 || tall > 1) merged = true
+                column += wide
             }
-            cellsOfRow to spansOfRow
+            builtRows += cellsOfRow
+            builtSpans += spansOfRow
         }
         return PdfTableDetector.Region(
             start = first,
             end = last + 1,
-            rows = built.map { it.first },
-            spans = built.map { it.second }.takeIf { spans -> spans.any { row -> row.any { it > 1 } } },
+            rows = builtRows,
+            spans = builtSpans.takeIf { merged },
         )
+    }
+
+    /** Whether the page drew a line at [y] across most of the column [band]. */
+    private fun levelAt(levels: List<PdfDrawing>, y: Float, band: Pair<Float, Float>): Boolean {
+        val width = band.second - band.first
+        if (width <= 0f) return false
+        return levels.any { level ->
+            val middle = (level.top + level.bottom) / 2
+            abs(middle - y) <= SAME_LINE_PT &&
+                minOf(level.right, band.second) - maxOf(level.left, band.first) >= SIDE_SHARE * width
+        }
     }
 
     /** The pieces of a cell, one entry per line of it, in the order they were read. */

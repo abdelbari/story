@@ -30,17 +30,21 @@ object PdfTableDetector {
         val end: Int,
         val rows: List<List<PdfSegment>>,
         /**
-         * How many columns each cell of each row covers, where the page
-         * said so — a head written across the whole table, a label beside
-         * three rows. Null for a table found by the alignment of its
-         * cells, which cannot see a merge: every cell of it covers one
-         * column, and [rows] holds them all.
+         * How much of the table each cell covers, where the page said so —
+         * a head written across the whole table, a label set beside three
+         * rows. Null for a table found by the alignment of its cells,
+         * which cannot see a merge: every cell of it covers one place, and
+         * [rows] holds them all.
          *
          * Where it is given, [rows] holds only the cells that begin, as a
-         * document's own rows do.
+         * document's own rows do, so a row every cell of which is covered
+         * from above holds none.
          */
-        val spans: List<List<Int>>? = null,
+        val spans: List<List<Span>>? = null,
     )
+
+    /** How many columns and how many rows one cell of a region covers. */
+    data class Span(val columns: Int = 1, val rows: Int = 1)
 
     /** A line's segments merged into cells by gap analysis. */
     fun cellsOf(line: PdfLine): List<PdfSegment> {
