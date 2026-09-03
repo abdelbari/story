@@ -203,7 +203,7 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                         onRetry = viewModel::retry,
                         onOcr = viewModel::convertWithOcr,
                         onReview = viewModel::showReview,
-                        onCancel = viewModel::cancelOcr,
+                        onCancel = viewModel::cancelConversion,
                         onSave = viewModel::requestSave,
                         onPreview = { showPreview = true },
                         onChoosePages = { askingPages = true },

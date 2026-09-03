@@ -1,5 +1,6 @@
 package app.morpho.engine.pdf
 
+import app.morpho.engine.layout.Reading
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Comment
 import app.morpho.engine.layout.ExtractedText
@@ -26,6 +27,7 @@ import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingDeviceCMYKCo
 import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingDeviceGrayColor
 import org.apache.pdfbox.contentstream.operator.color.SetNonStrokingDeviceRGBColor
 import org.apache.pdfbox.pdmodel.PDDocument
+import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.text.PDFTextStripper
 import org.apache.pdfbox.text.TextPosition
 
@@ -175,8 +177,23 @@ internal class PositionTextStripper : PDFTextStripper() {
         sortByPosition = true
     }
 
+    /**
+     * Where the reading has reached, and whether it is still wanted. The
+     * pass that reads an untagged document is this one, so this is where
+     * "reading page 40 of 220" comes from.
+     */
+    private var reading: Reading = Reading.UNWATCHED
+    private var pageCount = 0
+
+    override fun startPage(page: PDPage) {
+        reading.reached(currentPageNo, pageCount)
+        super.startPage(page)
+    }
+
     /** Extracts the positioned lines of [document], leaving it open. */
-    fun capture(document: PDDocument): List<PdfLine> {
+    fun capture(document: PDDocument, reading: Reading = Reading.UNWATCHED): List<PdfLine> {
+        this.reading = reading
+        pageCount = runCatching { document.numberOfPages }.getOrDefault(0)
         captured.clear()
         pending.clear()
         sheets.clear()

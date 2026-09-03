@@ -1,5 +1,6 @@
 package app.morpho.pdf
 
+import app.morpho.engine.layout.Reading
 import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Block
@@ -20,10 +21,10 @@ import app.morpho.engine.layout.TableCell
 import app.morpho.engine.layout.TableRow
 import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
-import app.morpho.engine.layout.pdf.HeadingSizes
-import app.morpho.engine.layout.pdf.InternalLinks
 import app.morpho.engine.layout.pdf.PageFigures
 import app.morpho.engine.layout.pdf.PageFurniture
+import app.morpho.engine.layout.pdf.HeadingSizes
+import app.morpho.engine.layout.pdf.InternalLinks
 import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLook
 import app.morpho.engine.layout.pdf.PdfMarks
@@ -261,9 +262,13 @@ internal object AndroidStructureTreeReader {
     /** Clear space kept round a drawn figure, so no stroke of it is cut. */
     private const val FIGURE_PAD_PT = 2f
 
-    fun read(doc: PDDocument, images: List<PdfImage> = emptyList()): DocumentModel? {
+    fun read(
+        doc: PDDocument,
+        images: List<PdfImage> = emptyList(),
+        reading: Reading = Reading.UNWATCHED,
+    ): DocumentModel? {
         val root = doc.documentCatalog.structureTreeRoot ?: return null
-        val texts = MarkedContentIndex(doc)
+        val texts = MarkedContentIndex(doc, reading)
         val roleMap: Map<String, Any> = runCatching { root.roleMap }.getOrNull().orEmpty()
         val builder = Builder(texts, roleMap, images)
         return try {
@@ -645,7 +650,10 @@ internal object AndroidStructureTreeReader {
      * their underlying COS dictionary: PDStructureElement.getPage() builds a
      * fresh PDPage wrapper on every call, so wrapper identity never matches.
      */
-    private class MarkedContentIndex(private val doc: PDDocument) {
+    private class MarkedContentIndex(
+        private val doc: PDDocument,
+        private val reading: Reading = Reading.UNWATCHED,
+    ) {
         private val pageIndexByPage = IdentityHashMap<COSDictionary, Int>()
         /** The running header and footer of each page, as the producer marked them. */
         private val furnitureByPage = HashMap<Int, MutableList<Furniture>>()
@@ -702,7 +710,11 @@ internal object AndroidStructureTreeReader {
             val pageLinks = runCatching { AndroidPageLinks(doc) }.getOrNull()
             val pageHighlights = runCatching { AndroidPageHighlights(doc) }.getOrNull()
             comments = pageHighlights?.notes.orEmpty()
+            val pageCount = runCatching { doc.numberOfPages }.getOrDefault(0)
             for ((index, page) in doc.pages.withIndex()) {
+                // The pass that reads a tagged document is this one, so
+                // this is where "reading page 40 of 220" comes from.
+                reading.reached(index + 1, pageCount)
                 pageIndexByPage[page.cosObject] = index
                 // A page may be written portrait and turned a quarter turn
                 // to be read: the text is measured in the frame it is read

@@ -1,5 +1,6 @@
 package app.morpho.pdf
 
+import app.morpho.engine.layout.Reading
 import android.content.Context
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.DocumentProperties
@@ -55,9 +56,14 @@ class AndroidPdfReader(context: Context) {
      * to hold whole, converts what they need rather than all of it. Null
      * reads the document entire, which is what converting a file means.
      */
-    fun extract(bytes: ByteArray, password: String = "", pages: IntRange? = null): DocumentModel =
+    fun extract(
+        bytes: ByteArray,
+        password: String = "",
+        pages: IntRange? = null,
+        reading: Reading = Reading.UNWATCHED,
+    ): DocumentModel =
         load(bytes, password).use { whole ->
-            if (pages == null) return extractFrom(whole)
+            if (pages == null) return extractFrom(whole, reading = reading)
             // The pages asked for, as a document of their own: read that way
             // everything else — the tags, the pictures, the outline — sees
             // the part as the whole it now is, and nothing has to be taught
@@ -72,7 +78,7 @@ class AndroidPdfReader(context: Context) {
                     else -> null
                 }
             }
-            partOf(whole, pages).use { part -> return extractFrom(part, outline) }
+            partOf(whole, pages).use { part -> return extractFrom(part, outline, reading) }
         }
 
     /**
@@ -110,7 +116,11 @@ class AndroidPdfReader(context: Context) {
     }
 
     /** [outline] stands in for the document's own, for a part read out of one. */
-    private fun extractFrom(doc: PDDocument, outline: List<PdfOutlineEntry>? = null): DocumentModel =
+    private fun extractFrom(
+        doc: PDDocument,
+        outline: List<PdfOutlineEntry>? = null,
+        reading: Reading = Reading.UNWATCHED,
+    ): DocumentModel =
         run {
             // A document somebody filled in is read from its pages: the
             // answers are drawn onto them here, and a structure tree knows
@@ -118,13 +128,13 @@ class AndroidPdfReader(context: Context) {
             val filled = drawFilledFields(doc)
             val tagged = doc.documentCatalog.structureTreeRoot != null && !filled
 
-            val images = attempt { AndroidImageCapture().capture(doc) } ?: emptyList()
+            val images = attempt { AndroidImageCapture().capture(doc, reading) } ?: emptyList()
 
             // Fast path: read structure straight from the tags when present;
             // Figure elements resolve to captured images via marked content.
             val fromTags =
                 if (tagged) {
-                    attempt { AndroidStructureTreeReader.read(doc, images) }
+                    attempt { AndroidStructureTreeReader.read(doc, images, reading) }
                 } else {
                     null
                 }
@@ -137,7 +147,12 @@ class AndroidPdfReader(context: Context) {
             val confidence = 0.6f
 
             val stripper = AndroidPositionTextStripper()
-            val lines = attempt { stripper.capture(doc) } ?: emptyList()
+            val lines = attempt { stripper.capture(doc, reading) } ?: emptyList()
+            // Asked again between the passes as well as inside them: a
+            // pass that ends without noticing must not let the next one
+            // start, and the passes that follow this one walk no pages of
+            // their own to ask in.
+            reading.carryOn()
             // A document that names its own chapters says which lines are
             // headings; without one, only the type they were set in tells.
             val chapters = outline ?: AndroidDocumentOutline.read(doc)

@@ -15,6 +15,7 @@ import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.layout.pdf.PageRanges
 import app.morpho.engine.ooxml.DocxReader
 import app.morpho.engine.layout.Paragraph
+import app.morpho.engine.layout.Reading
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.ooxml.DocxWriter
 import app.morpho.pdf.AndroidOcrReader
@@ -186,16 +187,32 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     private val editedBlocks = mutableSetOf<Int>()
 
     /**
-     * Set by [cancelOcr]; the recognizer reads it between pages. An
-     * AtomicBoolean rather than job cancellation because the work sits in a
-     * native call that Kotlin cannot interrupt mid-page.
+     * Set by [cancelConversion]; the reading and the recognizer both read
+     * it between pages. An AtomicBoolean rather than job cancellation
+     * because recognition sits in a native call Kotlin cannot interrupt
+     * mid-page, and because the reading is the same shape.
      */
-    private val ocrCancelled = AtomicBoolean(false)
+    private val cancelled = AtomicBoolean(false)
 
-    /** Asks a running OCR job to stop after the page it is on. */
-    fun cancelOcr() {
-        ocrCancelled.set(true)
+    /** Asks whatever is running to stop after the page it is on. */
+    fun cancelConversion() {
+        cancelled.set(true)
     }
+
+    /**
+     * What a long reading says about itself: which page it has reached,
+     * and whether it is still wanted.
+     *
+     * A book of two hundred pages is the better part of a minute on a
+     * phone, and it used to be a minute of a spinner that said nothing and
+     * offered nothing. The screen already knows how to show a page count
+     * and a cancel — recognition, which is slower still, was given both
+     * first — so this is the reading asking for the same two.
+     */
+    private fun watching(epoch: Int) = Reading(
+        onPage = { page, pageCount -> publish(epoch, ConvertUiState.Converting(page, pageCount)) },
+        shouldContinue = { !cancelled.get() },
+    )
 
     /**
      * The recognizer runs a blocking native call with no suspension point,
@@ -205,7 +222,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
      */
     override fun onCleared() {
         super.onCleared()
-        ocrCancelled.set(true)
+        cancelled.set(true)
     }
 
     private val _review = MutableStateFlow<ReviewState?>(null)
@@ -281,7 +298,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         // discard its result rather than publish it over the new pick, and
         // cancelling OCR stops minutes of work nobody is waiting for.
         pickEpoch++
-        ocrCancelled.set(true)
+        cancelled.set(true)
         lastReport = null
         lastModel = null
         lastPreviewHtml = ""
@@ -342,6 +359,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
 
     private fun startConversion(asMarkdown: Boolean, again: () -> Unit) {
         wantsMarkdown = asMarkdown
+        // A conversion stopped earlier must not stop this one before it
+        // has read a page.
+        cancelled.set(false)
         // Two taps inside one frame would otherwise start two conversions
         // at once, for no benefit and to the user's confusion.
         if (_state.value is ConvertUiState.Converting) return
@@ -358,7 +378,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                     if (asMarkdown) MARKDOWN_MIME else DocxWriter.MIME_TYPE,
                     read = { bytes ->
                         val model =
-                            AndroidPdfReader(getApplication()).extract(bytes, pdfPassword, pdfPages)
+                            AndroidPdfReader(getApplication())
+                                .extract(bytes, pdfPassword, pdfPages, watching(epoch))
                         val hasText = model.blocks.filterIsInstance<Paragraph>()
                             .any { it.text.isNotBlank() }
                         if (!hasText) throw UnconvertibleContent(FailReason.SCANNED_PDF)
@@ -430,6 +451,11 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         } catch (e: AndroidOcrReader.Cancelled) {
             publish(epoch, pickedFile?.meta ?: ConvertUiState.Idle)
             return
+        } catch (e: Reading.Cancelled) {
+            // Stopped by the reader, not by the document: back to the file
+            // they picked, with nothing said about a failure.
+            publish(epoch, pickedFile?.meta ?: ConvertUiState.Idle)
+            return
         } catch (e: OutOfMemoryError) {
             // Rendering a page to a bitmap can exhaust the heap on a big
             // document. An Error is not an Exception, so without this the
@@ -482,7 +508,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         val (uri, source) = pickedFile ?: return
         lastOperation = ::convertWithOcr
         _state.value = ConvertUiState.Converting()
-        ocrCancelled.set(false)
+        cancelled.set(false)
         val epoch = pickEpoch
         viewModelScope.launch(Dispatchers.IO) {
             convertPicked(
@@ -498,7 +524,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                         onPage = { page, pageCount ->
                             publish(epoch, ConvertUiState.Converting(page, pageCount))
                         },
-                        shouldContinue = { !ocrCancelled.get() },
+                        shouldContinue = { !cancelled.get() },
                     )
                     // Recognizing nothing is a real outcome — a blank scan, or
                     // a script with no model. Saying so beats saving an empty

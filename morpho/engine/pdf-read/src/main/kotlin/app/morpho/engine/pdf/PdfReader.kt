@@ -1,5 +1,6 @@
 package app.morpho.engine.pdf
 
+import app.morpho.engine.layout.Reading
 import app.morpho.engine.layout.Footnotes
 import app.morpho.engine.layout.Links
 import app.morpho.engine.layout.DocumentModel
@@ -65,9 +66,14 @@ class PdfReader {
      * to hold whole, converts what they need instead of all of it. Null
      * reads the document entire, which is what it means to convert a file.
      */
-    fun extract(bytes: ByteArray, password: String = "", pages: IntRange? = null): DocumentModel =
+    fun extract(
+        bytes: ByteArray,
+        password: String = "",
+        pages: IntRange? = null,
+        reading: Reading = Reading.UNWATCHED,
+    ): DocumentModel =
         load(bytes, password).use { whole ->
-            if (pages == null) return extractFrom(whole)
+            if (pages == null) return extractFrom(whole, reading = reading)
             // The pages asked for, as a document of their own: read that way
             // everything else here — the tags, the pictures, the outline —
             // sees the part as the whole it now is, and nothing has to be
@@ -82,7 +88,7 @@ class PdfReader {
                     else -> null
                 }
             }
-            partOf(whole, pages).use { part -> return extractFrom(part, outline) }
+            partOf(whole, pages).use { part -> return extractFrom(part, outline, reading) }
         }
 
     /**
@@ -120,7 +126,11 @@ class PdfReader {
     }
 
     /** [outline] stands in for the document's own, for a part read out of one. */
-    private fun extractFrom(doc: PDDocument, outline: List<PdfOutlineEntry>? = null): DocumentModel =
+    private fun extractFrom(
+        doc: PDDocument,
+        outline: List<PdfOutlineEntry>? = null,
+        reading: Reading = Reading.UNWATCHED,
+    ): DocumentModel =
         run {
             // A document somebody filled in is read from its pages: the
             // answers are drawn onto them here, and a structure tree knows
@@ -128,18 +138,23 @@ class PdfReader {
             val filled = drawFilledFields(doc)
             val tagged = doc.documentCatalog.structureTreeRoot != null && !filled
 
-            val images = attempt { ImageCapture().capture(doc) } ?: emptyList()
+            val images = attempt { ImageCapture().capture(doc, reading) } ?: emptyList()
 
             // Fast path: read structure straight from the tags when present;
             // Figure elements resolve to captured images via marked content.
             val fromTags =
-                if (tagged) attempt { StructureTreeReader.read(doc, images) } else null
+                if (tagged) attempt { StructureTreeReader.read(doc, images, reading) } else null
             if (fromTags != null) return spoken(doc, Footnotes.refine(Links.refine(fromTags)))
             // Everything below ran the position heuristics, so it scores as
             // untagged — even when a tree exists but yielded nothing.
             val confidence = 0.6f
             val stripper = PositionTextStripper()
-            val lines = attempt { stripper.capture(doc) } ?: emptyList()
+            val lines = attempt { stripper.capture(doc, reading) } ?: emptyList()
+            // Asked again between the passes as well as inside them: a
+            // pass that ends without noticing must not let the next one
+            // start, and the passes that follow this one walk no pages of
+            // their own to ask in.
+            reading.carryOn()
             // A document that names its own chapters says which lines are
             // headings; without one, only the type they were set in tells.
             val chapters = outline ?: DocumentOutline.read(doc)

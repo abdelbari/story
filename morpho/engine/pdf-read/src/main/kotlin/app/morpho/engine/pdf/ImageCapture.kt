@@ -1,5 +1,6 @@
 package app.morpho.engine.pdf
 
+import app.morpho.engine.layout.Reading
 import app.morpho.engine.layout.pdf.PdfImage
 import org.apache.pdfbox.contentstream.PDFStreamEngine
 import org.apache.pdfbox.contentstream.operator.DrawObject
@@ -54,11 +55,17 @@ internal class ImageCapture : PDFStreamEngine() {
         addOperator(SetMatrix())
     }
 
-    fun capture(doc: PDDocument): List<PdfImage> {
+    /**
+     * [reading] stops this where it stands if the reader asks. It reports
+     * no page: this pass is a small part of the work, and a count that ran
+     * once here and again over the reading proper would run twice.
+     */
+    fun capture(doc: PDDocument, reading: Reading = Reading.UNWATCHED): List<PdfImage> {
         captured.clear()
         encoded.clear()
         failed.clear()
         for ((index, page) in doc.pages.withIndex()) {
+            reading.carryOn()
             pageNumber = index + 1
             pageHeight = page.cropBox.height
             mcidStack.clear()

@@ -1,5 +1,6 @@
 package app.morpho.pdf
 
+import app.morpho.engine.layout.Reading
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Comment
 import app.morpho.engine.layout.ExtractedText
@@ -14,6 +15,11 @@ import app.morpho.engine.layout.pdf.PdfRun
 import app.morpho.engine.layout.pdf.PdfSegment
 import app.morpho.engine.layout.pdf.PdfSlant
 import app.morpho.engine.layout.pdf.PdfWeight
+import java.io.Writer
+import java.util.IdentityHashMap
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingColor
 import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingColorN
 import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingColorSpace
@@ -21,13 +27,9 @@ import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingDeviceCMY
 import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingDeviceGrayColor
 import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingDeviceRGBColor
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import com.tom_roush.pdfbox.text.TextPosition
-import java.io.Writer
-import java.util.IdentityHashMap
-import kotlin.math.abs
-import kotlin.math.max
-import kotlin.math.min
 
 /**
  * Android twin of the engine's PositionTextStripper (:engine:pdf-read),
@@ -181,8 +183,23 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         sortByPosition = true
     }
 
+    /**
+     * Where the reading has reached, and whether it is still wanted. The
+     * pass that reads an untagged document is this one, so this is where
+     * "reading page 40 of 220" comes from.
+     */
+    private var reading: Reading = Reading.UNWATCHED
+    private var pageCount = 0
+
+    override fun startPage(page: PDPage) {
+        reading.reached(currentPageNo, pageCount)
+        super.startPage(page)
+    }
+
     /** Extracts the positioned lines of [document], leaving it open. */
-    fun capture(document: PDDocument): List<PdfLine> {
+    fun capture(document: PDDocument, reading: Reading = Reading.UNWATCHED): List<PdfLine> {
+        this.reading = reading
+        pageCount = runCatching { document.numberOfPages }.getOrDefault(0)
         captured.clear()
         pending.clear()
         sheets.clear()
@@ -669,6 +686,7 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
          * one line.
          */
         const val CROSSES_THE_GUTTER = 0.6f
+
 
         /** Glyphs further apart vertically than this sit on different lines. */
         const val SAME_LINE_TOLERANCE_PT = 2f
