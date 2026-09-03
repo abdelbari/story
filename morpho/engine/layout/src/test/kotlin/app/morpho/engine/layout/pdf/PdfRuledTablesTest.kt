@@ -107,6 +107,53 @@ class PdfRuledTablesTest {
     }
 
     @Test
+    fun `a cell covers the columns the page drew no side between`() {
+        // A head written across the whole table. Kept as three cells with
+        // the words in the middle one, a converted table has two blanks
+        // where the document has none.
+        val bands = listOf(70f, 100f, 130f, 160f)
+        val sides = listOf(60f, 180f, 520f)
+        val drawn = mutableListOf<PdfDrawing>()
+        for (y in bands) drawn += PdfDrawing(1, sides.first(), y - 0.4f, sides.last(), y + 0.4f)
+        // The outer sides run the whole height; the one in the middle stops
+        // short of the head, which is what makes the head one cell.
+        for (x in listOf(sides.first(), sides.last())) {
+            drawn += PdfDrawing(1, x - 0.4f, bands.first(), x + 0.4f, bands.last())
+        }
+        drawn += PdfDrawing(1, sides[1] - 0.4f, bands[1], sides[1] + 0.4f, bands.last())
+        fun row(pieces: List<Pair<String, Float>>, y: Float): PdfLine {
+            val segments = pieces.map { (text, x) -> PdfSegment(text, x, x + text.length * 6f) }
+            return PdfLine(
+                text = segments.joinToString(" ") { it.text },
+                x = segments.first().xStart,
+                baselineY = y,
+                maxFontSize = 11f,
+                page = 1,
+                xEnd = segments.last().xEnd,
+                segments = segments,
+            )
+        }
+        val model = PdfLayout.reconstruct(
+            listOf(
+                row(listOf("Results of the pilot" to 200f), 90f),
+                row(listOf("Item" to 66f, "Respondents" to 186f), 120f),
+                row(listOf("Clear" to 66f, "48" to 186f), 150f),
+            ),
+            confidence = 0.6f,
+            drawings = drawn,
+        )
+        val table = model.blocks.filterIsInstance<Table>().single()
+        assertEquals(listOf(1, 2, 2), table.rows.map { it.cells.size }, "the head was cut into cells")
+        assertEquals(2, table.rows.first().cells.single().columnSpan, "the head covers both columns")
+        assertEquals(
+            "Results of the pilot",
+            table.rows.first().cells.single().blocks.filterIsInstance<Paragraph>().single().text,
+        )
+        // And the columns are still counted through the merge.
+        assertEquals(2, table.columnWidthsPt?.size, "widths: ${table.columnWidthsPt}")
+    }
+
+    @Test
     fun `a box drawn round something is not a table of one cell`() {
         // Four lines make one cell, not a grid, and a border round a figure
         // or a frame round the sheet would otherwise be read as a table of

@@ -626,9 +626,10 @@ object PdfLayout {
         fun <T> inReadingOrder(row: List<T>): List<T> = if (rightToLeft) row.reversed() else row
         return Table(
             rows = region.rows.mapIndexed { index, row ->
+                val spans = region.spans?.getOrNull(index)?.let(::inReadingOrder)
                 TableRow(
                     repeatsAsHeader = index < repeatingHead,
-                    cells = inReadingOrder(row).map { cell ->
+                    cells = inReadingOrder(row).mapIndexed { at, cell ->
                         val direction = Bidi.firstStrongDirection(cell.text)
                         TableCell(
                             listOf(
@@ -637,7 +638,13 @@ object PdfLayout {
                                     style = ParagraphStyle(direction = direction),
                                     confidence = confidence,
                                 )
-                            )
+                            ),
+                            // A cell covers the columns the page drew no
+                            // side between. Turning a row of them round for
+                            // a right-to-left table turns the counts round
+                            // with the cells: a cell that covered three
+                            // still covers three.
+                            columnSpan = spans?.getOrNull(at) ?: 1,
                         )
                     }
                 )
@@ -747,9 +754,15 @@ object PdfLayout {
         val edges = mutableListOf(standing.first())
         for (at in standing) if (at - edges.last() > SAME_UPRIGHT_PT) edges += at
         // One side more than there are columns: the two outer sides and one
-        // between each pair.
-        return edges.takeIf { it.size == region.rows.first().size + 1 }
+        // between each pair. The columns are counted from the spans where
+        // the page merged cells — a head written across the whole table is
+        // one cell of a three-column table, not a table of one column.
+        return edges.takeIf { it.size == columnsOf(region) + 1 }
     }
+
+    /** How many columns [region] has, a merged cell counted for all it covers. */
+    private fun columnsOf(region: PdfTableDetector.Region): Int =
+        region.spans?.firstOrNull()?.sum() ?: region.rows.firstOrNull()?.size ?: 0
 
     /** The width of each column between [edges], or null where the page ruled none. */
     private fun widthsBetween(edges: List<Float>?): List<Float>? =

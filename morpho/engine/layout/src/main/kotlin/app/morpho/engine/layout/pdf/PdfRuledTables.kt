@@ -1,6 +1,7 @@
 package app.morpho.engine.layout.pdf
 
 import app.morpho.engine.layout.LineJoiner
+import kotlin.math.abs
 
 /**
  * A table read from the lines the page drew round it.
@@ -59,7 +60,8 @@ object PdfRuledTables {
                 (it.left + it.right) / 2
             }
             if (across.size <= LEAST_BANDS || down.size <= LEAST_BANDS) continue
-            gridOf(lines, page, across, down)?.let { out += it }
+            val uprights = drawn.filter { it.widthPt <= THIN_PT && it.heightPt >= LEAST_SIDE_PT }
+            gridOf(lines, page, across, down, uprights)?.let { out += it }
         }
         return out.sortedBy { it.start }
     }
@@ -83,6 +85,7 @@ object PdfRuledTables {
         page: Int,
         across: List<Float>,
         down: List<Float>,
+        uprights: List<PdfDrawing>,
     ): PdfTableDetector.Region? {
         val rows = across.size - 1
         val columns = down.size - 1
@@ -92,7 +95,7 @@ object PdfRuledTables {
         // by the line, every row of a two-column table lands in whichever
         // column its middle happens to fall in and the other comes back
         // empty.
-        val cells = List(rows) { List(columns) { mutableListOf<String>() } }
+        val cells = List(rows) { List(columns) { mutableListOf<Pair<Int, String>>() } }
         val held = mutableListOf<Int>()
         for ((at, line) in lines.withIndex()) {
             if (line.page != page) continue
@@ -108,7 +111,7 @@ object PdfRuledTables {
             for (column in 0 until columns) {
                 val own = pieces[column]
                 if (own.isEmpty()) continue
-                cells[row][column] += own.sortedBy { it.xStart }.joinToString(" ") { it.text }
+                cells[row][column] += at to own.sortedBy { it.xStart }.joinToString(" ") { it.text }
                 placed = true
             }
             if (placed) held += at
@@ -122,18 +125,54 @@ object PdfRuledTables {
         if (last - first + 1 != held.size) return null
         val filled = cells.sumOf { row -> row.count { it.isNotEmpty() } }
         if (filled < FILLED_SHARE * rows * columns) return null
+        // A cell covers the columns beside it wherever the page drew no
+        // side between them: a head written across a whole table, a label
+        // set beside three rows. Kept as three cells with the words in the
+        // middle one, a converted table has two blanks where a document
+        // has none.
+        val built = cells.mapIndexed { row, columnsOfRow ->
+            val band = across[row] to across[row + 1]
+            val cellsOfRow = mutableListOf<PdfSegment>()
+            val spansOfRow = mutableListOf<Int>()
+            var column = 0
+            while (column < columns) {
+                var span = 1
+                while (column + span < columns && !sideAt(uprights, down[column + span], band)) span++
+                val own = (column until column + span).flatMap { columnsOfRow[it] }
+                cellsOfRow += PdfSegment(
+                    text = LineJoiner.join(joinedByLine(own)),
+                    xStart = down[column],
+                    xEnd = down[column + span],
+                )
+                spansOfRow += span
+                column += span
+            }
+            cellsOfRow to spansOfRow
+        }
         return PdfTableDetector.Region(
             start = first,
             end = last + 1,
-            rows = cells.mapIndexed { _, columnsOfRow ->
-                columnsOfRow.mapIndexed { column, own ->
-                    PdfSegment(
-                        text = LineJoiner.join(own),
-                        xStart = down[column],
-                        xEnd = down[column + 1],
-                    )
-                }
-            },
+            rows = built.map { it.first },
+            spans = built.map { it.second }.takeIf { spans -> spans.any { row -> row.any { it > 1 } } },
         )
     }
+
+    /** The pieces of a cell, one entry per line of it, in the order they were read. */
+    private fun joinedByLine(pieces: List<Pair<Int, String>>): List<String> =
+        pieces.groupBy { it.first }.toSortedMap()
+            .map { (_, own) -> own.joinToString(" ") { it.second } }
+
+    /** Whether the page drew a side at [x] down most of the row [band]. */
+    private fun sideAt(uprights: List<PdfDrawing>, x: Float, band: Pair<Float, Float>): Boolean {
+        val height = band.second - band.first
+        if (height <= 0f) return false
+        return uprights.any { upright ->
+            val middle = (upright.left + upright.right) / 2
+            abs(middle - x) <= SAME_LINE_PT &&
+                minOf(upright.bottom, band.second) - maxOf(upright.top, band.first) >= SIDE_SHARE * height
+        }
+    }
+
+    /** A side must run this much of a row's height to be that row's side. */
+    private const val SIDE_SHARE = 0.6f
 }

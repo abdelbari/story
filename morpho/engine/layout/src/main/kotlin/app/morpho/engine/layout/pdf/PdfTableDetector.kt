@@ -29,6 +29,17 @@ object PdfTableDetector {
         val start: Int,
         val end: Int,
         val rows: List<List<PdfSegment>>,
+        /**
+         * How many columns each cell of each row covers, where the page
+         * said so — a head written across the whole table, a label beside
+         * three rows. Null for a table found by the alignment of its
+         * cells, which cannot see a merge: every cell of it covers one
+         * column, and [rows] holds them all.
+         *
+         * Where it is given, [rows] holds only the cells that begin, as a
+         * document's own rows do.
+         */
+        val spans: List<List<Int>>? = null,
     )
 
     /** A line's segments merged into cells by gap analysis. */
