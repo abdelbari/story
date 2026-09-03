@@ -18,6 +18,7 @@ import app.morpho.engine.layout.TableRow
 import app.morpho.engine.layout.TextDirection
 import app.morpho.engine.layout.TextRun
 import app.morpho.engine.layout.pdf.HeadingSizes
+import app.morpho.engine.layout.pdf.InternalLinks
 import app.morpho.engine.layout.pdf.PdfImage
 import app.morpho.engine.layout.pdf.PdfLook
 import app.morpho.engine.layout.pdf.PdfRuns
@@ -1563,7 +1564,6 @@ internal object AndroidStructureTreeReader {
             var current: PdfLook? = null
             fun flush() {
                 if (text.isEmpty()) return
-                val look = current
                 runs += PdfRuns.toTextRun(text.toString(), current)
                 text.setLength(0)
             }

@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 498 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 510 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -116,6 +116,12 @@ Work through, in this order — each exercises a path nothing else covers:
 - [ ] **A Word document laid out in text boxes** — a CV or a certificate
       from a template. Every box's text must be in the converted file, once
       each, in the order the boxes are anchored.
+- [ ] **A PDF with a contents page** — a manual, a book, a thesis whose
+      first pages list the chapters with page numbers. In the converted
+      file every one of those lines must jump to its chapter, in Word and
+      in the app's preview. Check a paragraph whose second line carries
+      an emphasised or coloured word too: it must keep it, rather than
+      taking the look of the line above.
 - [ ] **A PDF with bookmarks but no tags** — a manual or a book, where the
       sidebar lists the chapters. Every chapter it lists must come back as a
       heading, at the depth the sidebar gives it.

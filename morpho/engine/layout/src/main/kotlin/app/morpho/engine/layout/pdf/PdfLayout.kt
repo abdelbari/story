@@ -249,18 +249,22 @@ object PdfLayout {
         // every full one.
         val deliberate = deliberateBreaks(lines)
         var page = Int.MIN_VALUE
-        val blocks = (positioned + imagesPositioned)
+        val paged = (positioned + imagesPositioned)
             .sortedWith(compareBy({ it.page }, { it.flow }, { it.y }))
             .map { entry ->
                 val starts = page != Int.MIN_VALUE && entry.page > page && entry.page in deliberate
                 page = maxOf(page, entry.page)
                 val block = entry.block
-                if (starts && block is Paragraph) {
+                entry.page to if (starts && block is Paragraph) {
                     block.copy(style = block.style.copy(pageBreakBefore = true))
                 } else {
                     block
                 }
             }
+        // A link that led to a page of the PDF is pointed at a place in
+        // the document instead: nothing outside a PDF knows what page 12
+        // means, so a book's contents page would lead nowhere at all.
+        val blocks = InternalLinks.resolve(paged)
         check(textCount + imagesPositioned.size == blocks.size)
 
         val paragraphs = blocks.filterIsInstance<Paragraph>()
@@ -674,23 +678,44 @@ object PdfLayout {
     }
 
     /**
-     * The cluster's runs against the text [LineJoiner] produced: it drops a
-     * hyphen and joins the halves of a broken word, so the runs are walked
-     * in step with the joined text rather than concatenated blindly.
+     * The cluster's runs against the text [LineJoiner] produced: it puts a
+     * space between two lines it joins and drops the hyphen of a word
+     * broken across them, so the runs are walked in step with the joined
+     * text rather than concatenated blindly.
+     *
+     * Walking them in step means keeping step over those two: a run that
+     * does not sit at the cursor is looked for just past it, and only a
+     * run that is nowhere near is taken to be a character the joiner
+     * dropped. A walk that gave up at the first disagreement lost its
+     * place for the rest of the paragraph and handed every line after the
+     * first the look of the line before — so a bold word on the second
+     * line of a paragraph came back light, and a link on it led wherever
+     * the line above led.
      */
+    /**
+     * How far past the cursor a run may be looked for before it is taken
+     * to be a character the joiner dropped: the space it puts between two
+     * lines, and no more, so a single character is never matched to some
+     * far-off twin of itself.
+     */
+    private const val JOIN_SLIP = 2
+
     private fun joinRuns(cluster: List<PdfLine>, joined: String): List<PdfRun> {
         val runs = cluster.flatMap { line -> line.runs.ifEmpty { listOf(PdfRun(line.text, null)) } }
         val out = mutableListOf<PdfRun>()
         var cursor = 0
         for (run in runs) {
             if (cursor >= joined.length) break
-            // Each run is one character from the stripper; where the joined
-            // text agrees, it keeps its look, and where a character was
-            // dropped or added the look of the run beside it carries.
-            if (run.text.isNotEmpty() && joined.startsWith(run.text, cursor)) {
-                out += run
-                cursor += run.text.length
-            }
+            if (run.text.isEmpty()) continue
+            // Each run is one character from the stripper.
+            val at = (cursor..minOf(cursor + JOIN_SLIP, joined.length))
+                .firstOrNull { joined.startsWith(run.text, it) }
+                ?: continue
+            // What the joiner put between the lines — the space that no
+            // glyph painted — belongs to the look before it.
+            if (at > cursor) out += PdfRun(joined.substring(cursor, at), out.lastOrNull()?.look)
+            out += run
+            cursor = at + run.text.length
         }
         if (cursor < joined.length) out += PdfRun(joined.substring(cursor), out.lastOrNull()?.look)
         return out

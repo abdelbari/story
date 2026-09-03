@@ -1,9 +1,14 @@
 package app.morpho.pdf
 
+import app.morpho.engine.layout.pdf.InternalLinks
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
+import com.tom_roush.pdfbox.pdmodel.interactive.action.PDActionGoTo
 import com.tom_roush.pdfbox.pdmodel.interactive.action.PDActionURI
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDDestination
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDNamedDestination
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageDestination
 
 /**
  * Android twin of the engine's PageLinks (:engine:pdf-read), on the
@@ -18,12 +23,15 @@ import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
  * falls inside the rectangle belongs to that link.
  *
  * This is what a link written by hand cannot give: the target of "click
- * here", of a shortened citation, of a picture that leads somewhere. Only
- * links that name a web address are kept; one that jumps to a page of the
- * document itself has no meaning in a converted file, and one that launches
- * a program on the reader's machine has no business travelling with it.
+ * here", of a shortened citation, of a picture that leads somewhere. A
+ * link that names a web address is kept as it is; one that jumps to a
+ * page of the same document — every line of a book's contents page, every
+ * cross-reference in a manual — is marked with the page it leads to, for
+ * the layout to turn into a place once there are paragraphs to point at;
+ * and one that launches a program on the reader's machine has no business
+ * travelling with a converted file.
  */
-internal class AndroidPageLinks(document: PDDocument) {
+internal class AndroidPageLinks(private val document: PDDocument) {
 
     internal class Area(val left: Float, val top: Float, val right: Float, val bottom: Float, val target: String) {
         fun holds(x: Float, y: Float): Boolean = x in left..right && y in top..bottom
@@ -59,8 +67,14 @@ internal class AndroidPageLinks(document: PDDocument) {
         val areas = mutableListOf<Area>()
         for (annotation in page.annotations.orEmpty()) {
             val link = annotation as? PDAnnotationLink ?: continue
-            val uri = (runCatching { link.action }.getOrNull() as? PDActionURI)?.uri?.trim()
-            if (uri.isNullOrEmpty()) continue
+            val action = runCatching { link.action }.getOrNull()
+            val uri = (action as? PDActionURI)?.uri?.trim()
+            val target = when {
+                !uri.isNullOrEmpty() -> uri
+                // A link may hold its destination outright or reach it
+                // through a Go-To action; both mean a page of this file.
+                else -> destinationOf(link, action)?.let { InternalLinks.toPage(it) }
+            } ?: continue
             val rect = link.rectangle ?: continue
             // The rectangle is written in user space, from the bottom of the
             // page; the text is measured from the top of the crop box.
@@ -69,9 +83,41 @@ internal class AndroidPageLinks(document: PDDocument) {
                 top = box.upperRightY - maxOf(rect.lowerLeftY, rect.upperRightY),
                 right = maxOf(rect.lowerLeftX, rect.upperRightX) - box.lowerLeftX,
                 bottom = box.upperRightY - minOf(rect.lowerLeftY, rect.upperRightY),
-                target = uri,
+                target = target,
             )
         }
         return areas
     }
+
+    /**
+     * The page a link leads to, counting from one as the lines of the
+     * document do, or null when it leads out of the file or nowhere at
+     * all. A destination is written either in the link itself or in the
+     * action it carries, and either as a page or as a name the document
+     * keeps a list of.
+     */
+    private fun destinationOf(link: PDAnnotationLink, action: Any?): Int? {
+        val destination: PDDestination = when {
+            action is PDActionGoTo -> runCatching { action.destination }.getOrNull()
+            action == null -> runCatching { link.destination }.getOrNull()
+            else -> null
+        } ?: return null
+        val page = when (destination) {
+            is PDPageDestination -> destination
+            is PDNamedDestination -> named(destination)
+            else -> null
+        } ?: return null
+        val index = runCatching { page.retrievePageNumber() }.getOrNull() ?: return null
+        return if (index >= 0) index + 1 else null
+    }
+
+    /** The place a destination's name stands for, from the document's own list of them. */
+    private fun named(destination: PDNamedDestination): PDPageDestination? = runCatching {
+        val name = destination.namedDestination ?: return null
+        val catalog = document.documentCatalog
+        catalog.names?.dests?.getValue(name)
+            // A document written before name trees existed keeps the same
+            // list as a plain dictionary.
+            ?: catalog.dests?.getDestination(name) as? PDPageDestination
+    }.getOrNull()
 }
