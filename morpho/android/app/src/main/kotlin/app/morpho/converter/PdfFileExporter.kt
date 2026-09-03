@@ -333,7 +333,11 @@ internal object PdfFileExporter {
         }
 
         private fun heightOf(block: Block, number: Int, sheet: Sheet): Float = when (block) {
-            is ImageBlock -> pictureSize(block, sheet.contentWidth.toFloat()).second
+            // Measured the way it is drawn, against the page: measured
+            // against the column instead, a foot wider than the column
+            // would be reserved less room than it takes and would be set
+            // down past the edge of the sheet.
+            is ImageBlock -> pictureSize(block, sheet.width.toFloat()).second
             is Paragraph -> line(block, number, sheet).height
             is Table -> 0f
         }
@@ -406,7 +410,12 @@ internal object PdfFileExporter {
             for (run in paragraph.runs) {
                 val picture = run.image
                 if (picture != null) {
-                    val (width, height) = pictureSize(picture, (right - left - offset).coerceAtLeast(1f))
+                    // A head or foot is set against the page: what it has
+                    // room for is the sheet from where it starts, not the
+                    // column, since the strip it was cropped from reaches
+                    // into the margins as often as not.
+                    val room = if (rightToLeft) right - offset else sheet.width - left - offset
+                    val (width, height) = pictureSize(picture, room.coerceAtLeast(1f))
                     measured += Measured(offset, width, height, null, null, picture)
                     tallest = max(tallest, height)
                     offset += width
