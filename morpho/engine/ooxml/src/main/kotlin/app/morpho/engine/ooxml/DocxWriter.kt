@@ -448,6 +448,10 @@ object DocxWriter {
             appendBlock(
                 sb, block, document, numbering, images, links, ImagePlan.PART_DOCUMENT, notes,
                 endsSection = if (starting != null) inForce else null,
+                // A section ending on a table already gets a paragraph of
+                // its own below, to carry the section's properties.
+                spacerAfterTable = needsSpacer(document.blocks, index) &&
+                    !(starting != null && block !is Paragraph),
             )
             if (starting != null) {
                 // A section can only end on a paragraph; where one ends on
@@ -492,9 +496,12 @@ object DocxWriter {
                 opening.append("""<w:t xml:space="preserve">${xmlEscape(entry.mark)} </w:t></w:r>""")
             }
             var first = true
-            for (block in entry.blocks) {
+            for ((index, block) in entry.blocks.withIndex()) {
                 val start = sb.length
-                appendBlock(sb, block, document, numbering, images, links, ImagePlan.PART_DOCUMENT)
+                appendBlock(
+                    sb, block, document, numbering, images, links, ImagePlan.PART_DOCUMENT,
+                    spacerAfterTable = needsSpacer(entry.blocks, index),
+                )
                 // The mark goes inside the note's first paragraph, after
                 // whatever properties it carries.
                 if (first && opening.isNotEmpty()) {
@@ -526,7 +533,12 @@ object DocxWriter {
         val sb = StringBuilder(4 * 1024)
         sb.append(XML_DECL)
         sb.append("""<w:$root xmlns:w="$W" xmlns:r="$R_NS">""")
-        for (block in blocks) appendBlock(sb, block, document, numbering, images, links, part)
+        for ((index, block) in blocks.withIndex()) {
+            appendBlock(
+                sb, block, document, numbering, images, links, part,
+                spacerAfterTable = needsSpacer(blocks, index),
+            )
+        }
         sb.append("</w:$root>")
         return sb.toString()
     }
@@ -542,14 +554,25 @@ object DocxWriter {
         notes: NotePlan? = null,
         /** The section this block ends, when the block after it starts another. */
         endsSection: PageSetup? = null,
+        /** Whether a table here must be followed by a paragraph. */
+        spacerAfterTable: Boolean = true,
     ) {
         when (block) {
             is Paragraph ->
                 appendParagraph(sb, block, document, numbering, images, links, part, notes, endsSection)
-            is Table -> appendTable(sb, block, document, numbering, images, links, part, notes)
+            is Table -> appendTable(sb, block, document, numbering, images, links, part, notes, spacerAfterTable)
             is ImageBlock -> appendImage(sb, images.entryFor(block), document, part)
         }
     }
+
+    /**
+     * Whether the table at [index] of [blocks] needs a paragraph after it:
+     * another table follows, which Word would otherwise read as one table
+     * with it, or nothing follows and whatever holds them must end with a
+     * paragraph.
+     */
+    private fun needsSpacer(blocks: List<Block>, index: Int): Boolean =
+        index == blocks.lastIndex || blocks[index + 1] is Table
 
     private fun appendParagraph(
         sb: StringBuilder,
@@ -870,6 +893,8 @@ object DocxWriter {
         links: LinkPlan,
         part: String,
         notes: NotePlan? = null,
+        /** Whether a paragraph must follow the table: another table does, or the end of what holds it. */
+        spacer: Boolean = true,
     ) {
         if (table.rows.isEmpty()) return
         // The places of the grid, worked out once and shared with every
@@ -942,8 +967,15 @@ object DocxWriter {
             sb.append("</w:tr>")
         }
         sb.append("</w:tbl>")
-        // WordprocessingML requires a paragraph after a table at body level.
-        sb.append("<w:p/>")
+        // WordprocessingML needs a paragraph after a table in two places
+        // and in no others: between two tables, which Word would otherwise
+        // read as one table, and at the end of a body, a cell, a note or a
+        // running head, each of which must end with a paragraph. Written
+        // after every table, as it used to be, it puts a blank line under
+        // every table of a converted document — a line the original does
+        // not have, which pushes everything after it down the page. Our
+        // own reader drops an empty paragraph and so could never see it.
+        if (spacer) sb.append("<w:p/>")
     }
 
     /** Whether a cell begins a merge down the rows, continues one, or neither. */
@@ -983,8 +1015,11 @@ object DocxWriter {
             sb.append("""<w:shd w:val="clear" w:color="auto" w:fill="${hexColor(it)}"/>""")
         }
         sb.append("</w:tcPr>")
-        for (block in cell.blocks) {
-            appendBlock(sb, block, document, numbering, images, links, part, notes)
+        for ((index, block) in cell.blocks.withIndex()) {
+            appendBlock(
+                sb, block, document, numbering, images, links, part, notes,
+                spacerAfterTable = needsSpacer(cell.blocks, index),
+            )
         }
         // Every table cell must end with a paragraph. A trailing nested table
         // already appended its own spacer paragraph after </w:tbl>.

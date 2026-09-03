@@ -105,9 +105,12 @@ class SectionShapeTest {
             )
         )
         assertEquals(2, Regex("<w:sectPr>").findAll(xml).count(), xml)
-        // A table is already followed by the spacer paragraph Word wants;
-        // the section's properties go on a paragraph after that.
-        assertTrue(xml.contains("""</w:tbl><w:p/><w:p><w:pPr><w:sectPr>"""), xml)
+        // One paragraph, not two: the one carrying the section's
+        // properties is the paragraph a table must be followed by, so no
+        // empty one is written in front of it. Two would put a blank line
+        // under the table that the original does not have.
+        assertTrue(xml.contains("""</w:tbl><w:p><w:pPr><w:sectPr>"""), xml)
+        assertFalse(xml.contains("""</w:tbl><w:p/>"""), xml)
     }
 
     @Test
