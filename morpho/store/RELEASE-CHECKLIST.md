@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 680 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 725 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -125,11 +125,33 @@ Work through, in this order — each exercises a path nothing else covers:
       real character and not a blank box, and each item must carry one
       marker, not two.
 - [ ] **The head and foot of an untagged paper** — one from an older tool
-      or a scanner. Whatever of them is text must be in Word's own header
-      and footer rather than in the middle of the reading, and the page
-      number must count on from the paper's own first number. A head drawn
-      as artwork cannot be found this way and will be missing; a head of
-      plain text must be there.
+      or a scanner. They must be in Word's own header and footer rather
+      than in the middle of the reading, and the page number must count on
+      from the paper's own first number. A head of plain text comes across
+      as text. A head that no reader can read — drawn as artwork, or set in
+      a font the file does not name the characters of — comes across as a
+      photograph of the band it sits in, which must show the whole of it
+      and none of the page's own first line. The one case that will still
+      be missed is a head that neither repeats identically from page to
+      page nor has a rule or a picture in it.
+- [ ] **A report whose title page carries no running head.** Word must
+      leave that page clear rather than stamping the head from page two
+      onto it — it is the one page of a report a reader looks at hardest.
+- [ ] **A book, or anything set for printing on both sides** — the left
+      pages headed by the title of the book and the right by the chapter,
+      each numbered at its outer edge. Both heads must survive: Word must
+      show the chapter on right-hand pages and the book on left-hand ones,
+      not one of the two on every page, and neither may be left in the
+      middle of the reading. Check the exported PDF the same way.
+- [ ] **A report on letterhead** — the same logo at the top of every page.
+      It must be in Word's header, once, and nowhere in the text: a
+      fifty-page report with fifty copies of its own logo scattered
+      between its paragraphs is what this is watching for.
+- [ ] **An Arabic document opened in real Word, with nothing typed into
+      it.** Word must not underline every word of it in red. A file that
+      does not say what language it is written in is proofed in the
+      language of whoever opens it, which for an Arabic paper means all of
+      it marked wrong.
 - [ ] **The head and foot of the Arabic paper**, in Word and in the app's
       preview. Every page should carry the journal's running head — its
       title, the author, the two rules — at the same distance from the top
