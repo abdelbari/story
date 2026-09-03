@@ -83,7 +83,7 @@ object DocxWriter {
             if (notes.entries.isNotEmpty()) {
                 zip.part("word/footnotes.xml", footnotesXml(document, numbering, images, links, notes))
             }
-            zip.part("word/styles.xml", stylesXml())
+            zip.part("word/styles.xml", stylesXml(document))
             zip.part("word/numbering.xml", numberingXml(numbering))
             if (parts.mirrored) zip.part("word/settings.xml", settingsXml())
             zip.part("docProps/core.xml", corePropsXml())
@@ -1232,7 +1232,18 @@ object DocxWriter {
         """<Application>Morpho</Application>""" +
         """</Properties>"""
 
-    private fun stylesXml(): String {
+    /** The document's own language, as Word's default run properties name it. */
+    private fun defaultLanguage(document: DocumentModel): String {
+        val language = document.defaultLanguage?.trim()?.takeIf { it.isNotEmpty() } ?: return ""
+        val attr = xmlEscape(language)
+        return if (document.defaultDirection == TextDirection.RTL) {
+            """<w:lang w:bidi="$attr"/>"""
+        } else {
+            """<w:lang w:val="$attr"/>"""
+        }
+    }
+
+    private fun stylesXml(document: DocumentModel): String {
         fun heading(id: String, name: String, size: Int, outline: Int): String =
             """<w:style w:type="paragraph" w:styleId="$id"><w:name w:val="$name"/>""" +
                 """<w:basedOn w:val="Normal"/><w:next w:val="Normal"/>""" +
@@ -1245,7 +1256,15 @@ object DocxWriter {
             """<w:styles xmlns:w="$W">""" +
             "<w:docDefaults>" +
             """<w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Arial"/>""" +
-            """<w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault>""" +
+            """<w:sz w:val="22"/><w:szCs w:val="22"/>""" +
+            // The language the document is written in. Word proofs a file
+            // in whatever language it is told, and told nothing it uses the
+            // language of whoever opens it — so an Arabic paper opens with
+            // every word of it underlined in red. A right-to-left document
+            // names its language in w:bidi, which is the slot Word reads a
+            // complex script's language from.
+            defaultLanguage(document) +
+            "</w:rPr></w:rPrDefault>" +
             """<w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault>""" +
             "</w:docDefaults>" +
             """<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>""" +

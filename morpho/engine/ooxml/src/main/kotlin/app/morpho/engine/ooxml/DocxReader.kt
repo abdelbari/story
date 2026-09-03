@@ -140,6 +140,7 @@ object DocxReader {
                     body, numbering, media, depth = 0, notes = notes, styles = styles,
                     sections = sectionShapes(body),
                 ),
+                defaultLanguage = styles.language,
                 pageSetup = sectPr?.let(::parsePageSetup),
                 header = sectPr?.let { furniture(it, "headerReference", parts, media, numbering, styles, at) }.orEmpty(),
                 footer = sectPr?.let { furniture(it, "footerReference", parts, media, numbering, styles, at) }.orEmpty(),
@@ -844,6 +845,16 @@ object DocxReader {
             private set
         var defaultRun: Map<String, Element> = emptyMap()
             private set
+
+        /**
+         * The language the document is written in, as its default run
+         * properties name it. A right-to-left document names it in w:bidi,
+         * which is where Word keeps a complex script's language, and a
+         * left-to-right one in w:val.
+         */
+        val language: String?
+            get() = defaultRun["lang"]?.let { attr(it, "bidi") ?: attr(it, "val") }
+                ?.trim()?.takeIf { it.isNotEmpty() }
 
         init {
             val root = bytes?.let { runCatching { parseXml(it).documentElement }.getOrNull() }

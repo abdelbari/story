@@ -16,6 +16,7 @@ import org.apache.pdfbox.pdmodel.PDPageContentStream
 import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.pdmodel.font.PDType0Font
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayOutputStream
@@ -229,6 +230,22 @@ class ArabicPdfTest {
             document.save(bytes)
         }
         return bytes.toByteArray()
+    }
+
+    @Test
+    fun `the language the file says it is written in reaches the document`() {
+        // A PDF names it in its catalogue, and the readers have always
+        // used it to decide which way the lines run. Thrown away after
+        // that, it left Word to proof an Arabic paper in the language of
+        // whoever opened it — every word of it underlined in red.
+        val model = PdfReader().extract(taggedArabicPdf(listOf("\u0627\u0644\u0627\u0633\u062a\u0645\u0627\u0631\u0629"), language = "ar-DZ"))
+        assertEquals("ar-DZ", model.defaultLanguage)
+    }
+
+    @Test
+    fun `a file that names no language has none put on it`() {
+        val model = PdfReader().extract(taggedArabicPdf(listOf("\u0627\u0644\u0627\u0633\u062a\u0645\u0627\u0631\u0629"), language = null))
+        assertNull(model.defaultLanguage)
     }
 
     private fun taggedArabicPdf(

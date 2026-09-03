@@ -668,4 +668,36 @@ class LookRoundTripTest {
         assertTrue(read.evenHeader.isEmpty() && read.evenFooter.isEmpty())
         assertEquals("The Journal", (read.header.single() as Paragraph).text)
     }
+
+    @Test
+    fun `the language a document is written in survives the round trip`() {
+        // Told nothing, Word proofs a file in the language of whoever
+        // opens it — so an Arabic paper opens with every word of it
+        // underlined in red.
+        val arabic = DocumentModel(
+            blocks = listOf(Paragraph(listOf(TextRun("\u0627\u0644\u0627\u0633\u062a\u0645\u0627\u0631\u0629")))),
+            defaultLanguage = "ar-DZ",
+            defaultDirection = TextDirection.RTL,
+        )
+        val docx = DocxWriter.toByteArray(arabic)
+        // A complex script's language goes in w:bidi, which is the slot
+        // Word reads it from; w:val is for the Latin run of a document.
+        assertTrue(partOf(docx, "word/styles.xml").contains("""<w:lang w:bidi="ar-DZ"/>"""))
+        assertEquals("ar-DZ", DocxReader.read(docx).defaultLanguage)
+
+        val french = DocumentModel(
+            blocks = listOf(Paragraph(listOf(TextRun("le formulaire")))),
+            defaultLanguage = "fr-FR",
+        )
+        val written = DocxWriter.toByteArray(french)
+        assertTrue(partOf(written, "word/styles.xml").contains("""<w:lang w:val="fr-FR"/>"""))
+        assertEquals("fr-FR", DocxReader.read(written).defaultLanguage)
+    }
+
+    @Test
+    fun `a document that names no language has none put on it`() {
+        val docx = DocxWriter.toByteArray(DocumentModel(listOf(Paragraph(listOf(TextRun("plain"))))))
+        assertFalse(partOf(docx, "word/styles.xml").contains("<w:lang"))
+        assertEquals(null, DocxReader.read(docx).defaultLanguage)
+    }
 }

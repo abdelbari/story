@@ -122,7 +122,7 @@ class AndroidPdfReader(context: Context) {
             // The same passes the engine's reader makes over what it read:
             // the addresses a page writes out become links, and the notes
             // under its rules go to the marks that call them.
-            if (fromTags != null) return Footnotes.refine(Links.refine(fromTags))
+            if (fromTags != null) return spoken(doc, Footnotes.refine(Links.refine(fromTags)))
             // Everything below ran the position heuristics, so it scores as
             // untagged — even when a tree exists but yielded nothing.
             val confidence = 0.6f
@@ -144,8 +144,23 @@ class AndroidPdfReader(context: Context) {
             } else {
                 plainTextFallback(doc, confidence, images)
             }
-            Footnotes.refine(Links.refine(model))
+            spoken(doc, Footnotes.refine(Links.refine(model)))
         }
+
+    /**
+     * [model] with the language the file says it is written in.
+     *
+     * A PDF names it in its catalogue and the readers have always used it
+     * to decide which way the lines run — and then thrown it away. Word,
+     * told nothing, proofs a document in the language of whoever opens it,
+     * so an Arabic paper arrives with every word of it underlined in red;
+     * and a preview with no language on it is read aloud in the wrong one.
+     */
+    private fun spoken(document: PDDocument, model: DocumentModel): DocumentModel {
+        val language = runCatching { document.documentCatalog.language }.getOrNull()
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: return model
+        return model.copy(defaultLanguage = language)
+    }
 
     /**
      * Draws what somebody typed into a form onto the page they typed it on.
