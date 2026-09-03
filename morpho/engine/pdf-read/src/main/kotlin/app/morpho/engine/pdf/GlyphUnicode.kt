@@ -56,6 +56,7 @@ import java.util.IdentityHashMap
 internal class GlyphUnicode {
 
     private val correctors = IdentityHashMap<PDFont, Corrector?>()
+    private val voices = IdentityHashMap<PDFont, Voice?>()
 
     /** What [position] says, unless its font's ToUnicode is broken and its cmap knows better. */
     fun of(position: TextPosition): String {
@@ -69,7 +70,87 @@ internal class GlyphUnicode {
             Corrector.forEmbedded(font).also { correctors[font] = it }
         }
         val corrected = corrector?.correct(codes[0], declared) ?: declared
-        return SymbolFonts.character(font.name, corrected) ?: corrected
+        val said = SymbolFonts.character(font.name, corrected) ?: corrected
+        return if (saysNothing(said)) heard(font, codes[0]) else said
+    }
+
+    /**
+     * A glyph the file names with nothing that is a character: a NUL, or a
+     * control, which is what a ToUnicode map holds where the producer had
+     * nothing to put in it.
+     *
+     * Chrome writes one for every mark it draws over an Arabic letter, so
+     * a vowelled page — a verse, a line of poetry, a school book — arrives
+     * with a NUL in the middle of every second word. Nothing downstream can
+     * make anything of it: Word will not hold one, and a reader sees the
+     * word broken in half by a space that is not a space.
+     *
+     * A blank is not nothing. A space says the words either side of it are
+     * two words, which is as much as any letter says.
+     */
+    private fun saysNothing(text: String): Boolean {
+        if (text.isEmpty()) return true
+        var at = 0
+        while (at < text.length) {
+            val codePoint = text.codePointAt(at)
+            if (!Character.isISOControl(codePoint) && !Character.isWhitespace(codePoint)) {
+                if (Character.getType(codePoint) != Character.UNASSIGNED.toInt()) return false
+            }
+            if (Character.isWhitespace(codePoint)) return false
+            at += Character.charCount(codePoint)
+        }
+        return true
+    }
+
+    /**
+     * What the font itself calls the glyph [code] draws, or nothing where
+     * it will not say either.
+     *
+     * This is not the cmap overruling ToUnicode — that is [Corrector]'s
+     * work and takes a font proved wrong before it will act. Here ToUnicode
+     * has said nothing at all, so there is nothing to overrule and no
+     * evidence to gather: the only question is whether the font knows, and
+     * an answer of any kind beats a character no document can hold.
+     */
+    private fun heard(font: PDFont, code: Int): String {
+        val voice = if (voices.containsKey(font)) {
+            voices[font]
+        } else {
+            Voice.forEmbedded(font).also { voices[font] = it }
+        }
+        return voice?.speak(code).orEmpty()
+    }
+
+    /** An embedded font's own reading of its glyphs, for the ones the file leaves unnamed. */
+    private class Voice(private val cid: PDCIDFontType2, private val cmap: CmapLookup) {
+
+        fun speak(code: Int): String? {
+            val gid = runCatching { cid.codeToGID(code) }.getOrNull() ?: return null
+            if (gid <= 0) return null
+            val candidates = cmap.getCharCodes(gid)?.takeIf { it.isNotEmpty() } ?: return null
+            // The plainest of the readings a glyph has: a nominal letter
+            // ahead of the presentation form of one, and nothing from the
+            // private-use area, which names a shape rather than a
+            // character and would be a blank box in a word processor.
+            return candidates
+                .filter { it !in PRIVATE_USE && !Character.isISOControl(it) }
+                .minByOrNull { if (it in PRESENTATION_FORMS) it + 0x110000 else it }
+                ?.let { String(Character.toChars(it)) }
+        }
+
+        companion object {
+            private val PRESENTATION_FORMS = 0xFB00..0xFEFF
+            private val PRIVATE_USE = 0xE000..0xF8FF
+
+            fun forEmbedded(font: PDFont): Voice? {
+                val type0 = font as? PDType0Font ?: return null
+                val cid = type0.descendantFont as? PDCIDFontType2 ?: return null
+                if (cid.fontDescriptor?.fontFile2 == null) return null
+                val ttf = cid.trueTypeFont ?: return null
+                val cmap = runCatching { ttf.getUnicodeCmapLookup(true) }.getOrNull() ?: return null
+                return Voice(cid, cmap)
+            }
+        }
     }
 
     private class Corrector(private val cid: PDCIDFontType2, private val cmap: CmapLookup) {

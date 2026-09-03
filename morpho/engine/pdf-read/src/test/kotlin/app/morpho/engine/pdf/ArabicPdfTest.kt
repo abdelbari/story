@@ -483,6 +483,76 @@ class ArabicPdfTest {
 
 
     @Test
+    fun `a vowelled line comes back in the order a keyboard types it`() {
+        // A page paints a shadda and the vowel over it in whichever order
+        // the producer wrote them. Unicode's canonical order is the vowel
+        // first, and it is the order every Arabic keyboard produces and
+        // every search box holds. The two render identically — which is
+        // what makes the wrong one so easy to ship, and so baffling to a
+        // reader whose search finds nothing in a document that plainly
+        // says the words in front of them.
+        // Lam, then a shadda and a fatha over it in the page's order.
+        val written = "\u0644\u0651\u064E\u0647"
+        val pdf = rtlPdf(listOf(listOf(written)))
+        // The same word, the vowel written before the shadda.
+        assertEquals("\u0644\u064E\u0651\u0647", paragraphText(pdf))
+    }
+
+    @Test
+    fun `a glyph the file will not name is asked of the font`() {
+        // Chrome writes a ToUnicode entry of U+0000 for the shadda it draws
+        // over an Arabic letter, and Word writes one for a glyph it has
+        // nothing to say about. U+0000 is not a character: it is the
+        // producer declining to answer, and it is not a fact to be
+        // preserved. The font underneath is asked instead — which is not
+        // the cmap overruling the file, because the file said nothing.
+        val silent = silenceToUnicode(taggedArabicPdf(listOf(title, inWord, research), subset = false), 'ل')
+        assertEquals("$title $inWord $research", paragraphs(silent).first().text)
+    }
+
+    @Test
+    fun `a glyph neither the file nor the font will name is left out, not left as a NUL`() {
+        // A subset font keeps no cmap, so nothing anywhere knows what the
+        // glyph is. A word missing a letter is a word; a word with a NUL
+        // through the middle of it is not, and every reader downstream —
+        // Word, the preview, a search box — makes something different of
+        // it, all of them wrong.
+        val silent = silenceToUnicode(taggedArabicPdf(listOf(title, inWord, research)), 'ل')
+        val text = paragraphs(silent).first().text
+        assertTrue(text.none { it == '\u0000' }, "a NUL reached the document: ${text.map { "%04X".format(it.code) }}")
+        // Every ل is gone, since nothing anywhere could say what it was,
+        // and every letter the file did name is still there.
+        assertTrue(text.contains(inWord), "the letters the file did name went too: $text")
+        assertEquals("ااستمارة $inWord ابحث", text)
+    }
+
+    /**
+     * [pdf] with every ToUnicode entry for [letter] emptied — mapped to
+     * U+0000, the way a browser maps the mark glyphs it draws over Arabic
+     * letters and the way a word processor maps a glyph it cannot place.
+     */
+    private fun silenceToUnicode(pdf: ByteArray, letter: Char): ByteArray {
+        val out = ByteArrayOutputStream()
+        PDDocument.load(pdf).use { document ->
+            var silenced = 0
+            val page = document.getPage(0)
+            for (name in page.resources.fontNames) {
+                val font = page.resources.getFont(name)
+                val stream = font.cosObject.getDictionaryObject(COSName.TO_UNICODE) as? COSStream ?: continue
+                val text = stream.createInputStream().use { it.readBytes().toString(Charsets.ISO_8859_1) }
+                val quiet = Regex("<%04X>".format(letter.code)).replace(text) {
+                    silenced++
+                    "<0000>"
+                }
+                stream.createOutputStream().use { it.write(quiet.toByteArray(Charsets.ISO_8859_1)) }
+            }
+            assertTrue(silenced >= 1, "fixture silenced no mapping at all")
+            document.save(out)
+        }
+        return out.toByteArray()
+    }
+
+    @Test
     fun `an arabic line whose leftmost word is latin still reads arabic-first`() {
         // The affiliation line of a real paper: "جامعة الوادي، nebbar@…" —
         // painted, its leftmost glyph is the "n" of the address. Read on its
