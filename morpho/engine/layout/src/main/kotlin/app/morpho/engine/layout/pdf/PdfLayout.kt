@@ -215,10 +215,18 @@ object PdfLayout {
         // Text stretches between table regions, each remembering its lines.
         val stretches = mutableListOf<List<PdfLine>>()
         val tablesWithAnchor = mutableListOf<Pair<PdfLine, Table>>()
+        // The rules a table drew round itself belong to it, and to nothing
+        // else: left in the general pile they are read as rules above and
+        // below the paragraphs either side of the table, so a bordered
+        // table came back with no border and a stray line over the
+        // sentence under it.
+        val ownRules = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<PdfRule, Boolean>())
         var cursor = 0
         for (held in regions) {
             val region = held.region
             if (region.start > cursor) stretches += lines.subList(cursor, region.start)
+            val drawn = rulesAround(region, lines, rules)
+            ownRules += drawn
             // A table found by the alignment of its columns is the biggest
             // guess this reader makes; it says so.
             tablesWithAnchor += lines[region.start] to
@@ -226,9 +234,11 @@ object PdfLayout {
                     region,
                     (confidence - GUESSED_FROM_ALIGNMENT).coerceAtLeast(LEAST_SURE),
                     held.repeatingHead,
+                    ruled = drawn.size >= RULES_OF_A_BORDER,
                 )
             cursor = region.end
         }
+        val bodyRules = if (ownRules.isEmpty()) rules else rules.filterNot { it in ownRules }
         if (cursor < lines.size) stretches += lines.subList(cursor, lines.size)
 
         val textLines = stretches.flatten()
@@ -295,7 +305,7 @@ object PdfLayout {
                 first.page,
                 flows[first] ?: 0,
                 first.baselineY,
-                paragraph(clusterLines, kind, sureness, blockByPage, next, rules, flatClusters.getOrNull(index - 1)?.lastOrNull()),
+                paragraph(clusterLines, kind, sureness, blockByPage, next, bodyRules, flatClusters.getOrNull(index - 1)?.lastOrNull()),
             )
         }
         val textCount = positioned.size
@@ -587,6 +597,7 @@ object PdfLayout {
         region: PdfTableDetector.Region,
         confidence: Float,
         repeatingHead: Int = 0,
+        ruled: Boolean = false,
     ): Table {
         // A table of Arabic is laid out from the right: its first column is
         // the rightmost. The cells were gathered across the page from the
@@ -616,13 +627,58 @@ object PdfLayout {
             },
             confidence = confidence,
             columnWidthsPt = columnWidthsOf(region)?.let(::inReadingOrder),
-            // A table found by the alignment of its columns is one nothing
-            // was drawn around: the page shows no rules, so neither does
-            // the conversion.
-            ruled = false,
+            // Only where the page drew them. A table found by the
+            // alignment of its columns alone is one nothing was drawn
+            // around, and ruling it in the conversion would add ink the
+            // source never had.
+            ruled = ruled,
             direction = if (rightToLeft) TextDirection.RTL else TextDirection.LTR,
         )
     }
+
+    /**
+     * Rules the page drew across [region]: its border, the line under its
+     * head, the lines between its rows.
+     *
+     * A table is known here by the alignment of its columns, which says
+     * nothing about whether anything was drawn around it — and the rules
+     * themselves were left in the pile every paragraph is measured
+     * against, so a bordered table came back with no border and the
+     * paragraphs either side of it gained a rule they never had. A rule
+     * within the table's own band, reaching across the width the table
+     * occupies, is the table's.
+     *
+     * The band is opened out by a line either side: the border above a
+     * table is drawn above the ascenders of its head, and the one below is
+     * below the descenders of its last row.
+     */
+    private fun rulesAround(
+        region: PdfTableDetector.Region,
+        lines: List<PdfLine>,
+        rules: List<PdfRule>,
+    ): List<PdfRule> {
+        if (rules.isEmpty()) return emptyList()
+        val own = lines.subList(region.start, region.end)
+        val page = own.firstOrNull()?.page ?: return emptyList()
+        if (own.any { it.page != page }) return emptyList()
+        val size = own.maxOf { it.maxFontSize }
+        val top = own.minOf { it.baselineY } - TABLE_BORDER_LINES * size
+        val bottom = own.maxOf { it.baselineY } + TABLE_BORDER_LINES * size
+        val left = region.rows.minOf { row -> row.minOf { it.xStart } }
+        val right = region.rows.maxOf { row -> row.maxOf { it.xEnd } }
+        val width = right - left
+        if (width <= 0f) return emptyList()
+        return rules.filter { rule ->
+            rule.page == page && rule.y in top..bottom &&
+                rule.right - rule.left >= RULE_LEAST_SHARE * width
+        }
+    }
+
+    /** How far past its first and last baseline a table's own border may be drawn, in type sizes. */
+    private const val TABLE_BORDER_LINES = 1.5f
+
+    /** Rules across a table's band before it counts as a table the page drew lines around. */
+    private const val RULES_OF_A_BORDER = 2
 
     /**
      * The width of each column of [region], in points: the columns are cut

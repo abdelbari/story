@@ -100,6 +100,44 @@ class PdfTableDetectionTest {
     }
 
     @Test
+    fun `a table the page ruled keeps its rules, and the paragraphs beside it gain none`() {
+        // Left in the pile every paragraph is measured against, a table's
+        // own border is read as a rule above the paragraph under it and
+        // below the one over it: the table came back with no border, and
+        // two sentences that never had one gained a line.
+        val before = proseLine("a sentence of ordinary prose before the table")
+        val head = line("Name" to 72f, "Value" to 250f)
+        val first = line("Speed" to 72f, "42" to 250f)
+        val second = line("Mass" to 72f, "7" to 250f)
+        val after = proseLine("a sentence of ordinary prose after the table")
+        val borders = listOf(head.baselineY - 12f, first.baselineY - 6f, second.baselineY + 6f)
+            .map { PdfRule(page = 1, y = it, left = 60f, right = 520f) }
+        val model = PdfLayout.reconstruct(
+            listOf(before, head, first, second, after),
+            confidence = 0.6f,
+            rules = borders,
+        )
+        val table = model.blocks.filterIsInstance<Table>().single()
+        assertTrue(table.ruled, "the page drew lines round it and the table came back with none")
+        assertTrue(
+            model.blocks.filterIsInstance<Paragraph>().none { it.style.ruleAbove || it.style.ruleBelow },
+            "the table's own border was drawn on the prose beside it",
+        )
+    }
+
+    @Test
+    fun `a table nothing was drawn around is not ruled`() {
+        val model = PdfLayout.reconstruct(
+            listOf(
+                line("Name" to 72f, "Value" to 250f),
+                line("Speed" to 72f, "42" to 250f),
+            ),
+            confidence = 0.6f,
+        )
+        assertTrue(!model.blocks.filterIsInstance<Table>().single().ruled)
+    }
+
+    @Test
     fun `a table is never founded on columns that only nearly line up`() {
         // The guard on the reading above. Two lines with a wide gap in
         // each of them share the clear space in the middle, and that is
