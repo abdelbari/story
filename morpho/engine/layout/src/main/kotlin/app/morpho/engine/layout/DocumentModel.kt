@@ -294,6 +294,17 @@ class ImageBlock(
      */
     val widthPt: Float? = null,
     val heightPt: Float? = null,
+    /**
+     * What the picture shows, in words.
+     *
+     * A tagged PDF's figure carries the description its author wrote, and
+     * a running head photographed because its words are drawn as outlines
+     * has words that are nowhere else in the document. Without either, a
+     * screen reader says "image" and stops, and Word's own accessibility
+     * check calls the document out. Null where nothing is known — which is
+     * most pictures, and honest.
+     */
+    val description: String? = null,
 ) : Block {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -304,6 +315,7 @@ class ImageBlock(
             confidence == other.confidence &&
             widthPt == other.widthPt &&
             heightPt == other.heightPt &&
+            description == other.description &&
             bytes.contentEquals(other.bytes)
     }
 
@@ -315,6 +327,7 @@ class ImageBlock(
         result = 31 * result + confidence.hashCode()
         result = 31 * result + (widthPt?.hashCode() ?: 0)
         result = 31 * result + (heightPt?.hashCode() ?: 0)
+        result = 31 * result + (description?.hashCode() ?: 0)
         return result
     }
 }

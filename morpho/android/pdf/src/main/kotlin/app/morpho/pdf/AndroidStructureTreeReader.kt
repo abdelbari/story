@@ -1904,7 +1904,7 @@ internal object AndroidStructureTreeReader {
 
         /** A Figure resolves to its image through the marked-content ids. */
         private fun emitFigure(element: PDStructureElement) {
-            val image = figureImage(element) ?: return emitDrawnFigure(element)
+            val image = figureImage(element) ?: return emitDrawnFigure(element, said(element))
             usedImages += image
             sawText = true
             blocks += ImageBlock(
@@ -1913,7 +1913,26 @@ internal object AndroidStructureTreeReader {
                 widthPx = image.widthPx,
                 heightPx = image.heightPx,
                 confidence = CONFIDENCE,
+                description = said(element),
             )
+        }
+
+        /**
+         * What the producer said a Figure shows.
+         *
+         * A tagged PDF carries it on the element — the description its
+         * author wrote for a reader who cannot see the picture, or the
+         * text the figure stands in for. It is the one thing about a
+         * picture a file can state outright, and it was being thrown away:
+         * every converted document handed its pictures on unlabelled, for
+         * a screen reader to call "image" and Word's own accessibility
+         * check to complain about.
+         */
+        private fun said(element: PDStructureElement): String? {
+            val alt = runCatching { element.alternateDescription }.getOrNull()
+                ?.trim()?.takeIf { it.isNotEmpty() }
+            if (alt != null) return alt
+            return runCatching { element.actualText }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
         }
 
         /**
@@ -1924,10 +1943,19 @@ internal object AndroidStructureTreeReader {
          * it there can be. Nothing is emitted for a Figure that drew
          * nothing, or for a page that will not draw.
          */
-        private fun emitDrawnFigure(element: PDStructureElement) {
+        private fun emitDrawnFigure(element: PDStructureElement, said: String?) {
             val picture = texts.drawnUnder(markedContentIds(element)) ?: return
             sawText = true
-            blocks += picture
+            blocks += if (said == null) picture else ImageBlock(
+                bytes = picture.bytes,
+                mimeType = picture.mimeType,
+                widthPx = picture.widthPx,
+                heightPx = picture.heightPx,
+                confidence = picture.confidence,
+                widthPt = picture.widthPt,
+                heightPt = picture.heightPt,
+                description = said,
+            )
         }
 
         /** Every marked content the tree hangs under [element], with its page. */

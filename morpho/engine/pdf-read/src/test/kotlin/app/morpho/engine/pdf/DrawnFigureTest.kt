@@ -33,6 +33,8 @@ import javax.imageio.ImageIO
  */
 class DrawnFigureTest {
 
+    private val FIGURE_ALT = "Sales by quarter, rising through the year"
+
     private val height = PDRectangle.A4.height
 
     private fun show(content: PDPageContentStream, x: Float, topY: Float, text: String) {
@@ -150,6 +152,22 @@ class DrawnFigureTest {
         assertTrue(text.contains("3"), "and its labels are still text of the page: $text")
     }
 
+    @Test
+    fun `a figure comes back saying what its author said it shows`() {
+        // A tagged PDF carries the description its author wrote for a
+        // reader who cannot see the picture. It is the one thing about a
+        // picture a file can state outright, and it was thrown away —
+        // every converted document handed its pictures on unlabelled.
+        val model = PdfReader().extract(taggedReport())
+        val pictures = model.blocks.filterIsInstance<ImageBlock>()
+        assertTrue(pictures.isNotEmpty(), "no figure was kept at all")
+        assertEquals(
+            listOf(FIGURE_ALT),
+            pictures.mapNotNull { it.description },
+            "the figure's own description was lost",
+        )
+    }
+
     /**
      * A tagged report whose Figure is drawn rather than placed — which is
      * what a word processor exports when the figure is a chart it made
@@ -186,6 +204,8 @@ class DrawnFigureTest {
 
                 val figure = PDStructureElement(StandardStructureTypes.Figure, document)
                 figure.page = page
+                // What the author wrote for a reader who cannot see it.
+                figure.alternateDescription = FIGURE_ALT
                 document.appendKid(figure)
                 val properties = COSDictionary().apply { setInt(COSName.MCID, mcid) }
                 content.beginMarkedContent(COSName.getPDFName("Figure"), PDPropertyList.create(properties))

@@ -498,6 +498,12 @@ object DocxReader {
         val extent = descendantsNS(drawing, WP_NS, "extent").firstOrNull()
         val cx = extent?.getAttribute("cx")?.toLongOrNull() ?: 0L
         val cy = extent?.getAttribute("cy")?.toLongOrNull() ?: 0L
+        // What the picture shows, as Word keeps it: the alternative text
+        // on the drawing's own properties. It is the only words a
+        // photographed running head has, and reading it back is what
+        // keeps them through a second conversion.
+        val said = descendantsNS(drawing, WP_NS, "docPr").firstOrNull()
+            ?.getAttribute("descr")?.trim()?.takeIf { it.isNotEmpty() }
         return ImageBlock(
             bytes = bytes,
             mimeType = mime,
@@ -506,6 +512,7 @@ object DocxReader {
             confidence = 1f,
             widthPt = (cx.toFloat() / EMU_PER_PT).takeIf { it > 0f },
             heightPt = (cy.toFloat() / EMU_PER_PT).takeIf { it > 0f },
+            description = said,
         )
     }
 

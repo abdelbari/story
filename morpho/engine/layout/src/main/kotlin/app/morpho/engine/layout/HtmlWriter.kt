@@ -590,7 +590,12 @@ object HtmlWriter {
             sb.append(""" width="${image.widthPx.coerceAtLeast(1)}"""")
             sb.append(""" height="${image.heightPx.coerceAtLeast(1)}"""")
         }
-        sb.append(""" alt=""/>""")
+        // What the picture shows, where the source said: a tagged figure's
+        // own description, or the words of a running head that had to be
+        // photographed. An empty alt is right for a picture nobody
+        // described — it tells a screen reader to pass over it — and
+        // wrong for one that carries the only copy of some words.
+        sb.append(""" alt="""").append(escape(image.description.orEmpty())).append(""""/>""")
         return sb.toString()
     }
 

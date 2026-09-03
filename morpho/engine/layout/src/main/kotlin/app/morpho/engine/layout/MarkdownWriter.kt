@@ -110,10 +110,21 @@ object MarkdownWriter {
         }
     }
 
-    /** A picture as the self-contained image Markdown writes. */
+    /**
+     * A picture as the self-contained image Markdown writes, described in
+     * the slot Markdown keeps for it — a tagged figure's own description,
+     * or the words of a running head that had to be photographed. A
+     * bracket inside the description would close that slot early, so the
+     * few characters that can are escaped.
+     */
     private fun pictureOf(image: ImageBlock): String =
-        "![image](data:" + image.mimeType + ";base64," +
+        "![" + altOf(image) + "](data:" + image.mimeType + ";base64," +
             java.util.Base64.getEncoder().encodeToString(image.bytes) + ")"
+
+    private fun altOf(image: ImageBlock): String {
+        val said = image.description?.replace("\n", " ")?.trim()?.takeIf { it.isNotEmpty() } ?: return "image"
+        return said.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+    }
 
     /**
      * Whether [text] is a note's mark rather than words carrying a note.

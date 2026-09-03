@@ -1113,14 +1113,21 @@ object DocxWriter {
         cy = cy.coerceAtLeast(1)
 
         val name = xmlEscape("Image ${entry.docPrId}")
+        // What the picture shows, where the source said. Word keeps it as
+        // the picture's alternative text: a screen reader reads it, and
+        // Word's own accessibility check asks for it. A running head
+        // photographed because its words are drawn as outlines has its
+        // words nowhere else in the document, and this is where they go.
+        val said = entry.block.description?.trim()?.takeIf { it.isNotEmpty() }
+        val described = said?.let { """ descr="${xmlEscape(it)}"""" }.orEmpty()
         sb.append("<w:drawing>")
         sb.append("""<wp:inline xmlns:wp="$WP_NS" distT="0" distB="0" distL="0" distR="0">""")
         sb.append("""<wp:extent cx="$cx" cy="$cy"/>""")
-        sb.append("""<wp:docPr id="${entry.docPrId}" name="$name"/>""")
+        sb.append("""<wp:docPr id="${entry.docPrId}" name="$name"$described/>""")
         sb.append("""<a:graphic xmlns:a="$A_NS">""")
         sb.append("""<a:graphicData uri="$PIC_NS">""")
         sb.append("""<pic:pic xmlns:pic="$PIC_NS">""")
-        sb.append("""<pic:nvPicPr><pic:cNvPr id="${entry.docPrId}" name="$name"/><pic:cNvPicPr/></pic:nvPicPr>""")
+        sb.append("""<pic:nvPicPr><pic:cNvPr id="${entry.docPrId}" name="$name"$described/><pic:cNvPicPr/></pic:nvPicPr>""")
         sb.append("""<pic:blipFill><a:blip xmlns:r="$R_NS" r:embed="${entry.relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>""")
         sb.append("""<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="$cx" cy="$cy"/></a:xfrm>""")
         sb.append("""<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>""")

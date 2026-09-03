@@ -111,6 +111,32 @@ class FurnitureTest {
     }
 
     @Test
+    fun `a head that had to be photographed still says what it said`() {
+        // The band holds a mark no reading of its words accounts for, so
+        // it comes back as a picture. The words it did hold are then
+        // nowhere in the document: not searchable, not read aloud, gone.
+        // They are kept as what the picture shows, which is where a reader
+        // and a screen reader both look.
+        val pdf = tagged("en") { pages(numbers = listOf(48, 49, 50), numberX = 60f, drawn = true) }
+        val head = PdfReader().extract(pdf).header.single() as ImageBlock
+        assertEquals(headline, head.description)
+    }
+
+    @Test
+    fun `a foot that gave up only its digits is not described by them`() {
+        // A band whose words are drawn as outlines yields its digits and
+        // nothing else. Read aloud that is noise, and noise offered as a
+        // description says the picture has been accounted for when it has
+        // not.
+        val pdf = tagged("en") { pages(numbers = listOf(2024, 2024, 2024), numberX = 60f, drawn = true) }
+        val foot = PdfReader().extract(pdf).footer.single() as ImageBlock
+        assertTrue(
+            foot.description == null || foot.description!!.any { it.isLetter() },
+            "the foot was described as \"${foot.description}\"",
+        )
+    }
+
+    @Test
     fun `a number that advances by one each page is the page number, written as a field`() {
         val pdf = tagged("en") { pages(numbers = listOf(48, 49, 50), numberX = 60f, drawn = true) }
         val model = PdfReader().extract(pdf)

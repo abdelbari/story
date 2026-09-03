@@ -179,7 +179,7 @@ object PageFurniture {
         if (number == null) {
             if (said) return listOf(Paragraph(words, plain))
             val picture = crop.of(page, box[0], box[1], box[2], box[3], emptyList(), false)?.image
-            if (picture != null) return listOf(picture)
+            if (picture != null) return listOf(described(picture, words))
             return if (words.isEmpty()) emptyList() else listOf(Paragraph(words, plain))
         }
         val numberBox = number.box
@@ -196,7 +196,7 @@ object PageFurniture {
             if (said) return listOf(Paragraph(words, plain), centred)
             val picture = crop.of(page, box[0], box[1], box[2], box[3], listOf(numberBox), false)
                 ?: return if (words.isEmpty()) listOf(centred) else listOf(Paragraph(words, plain), centred)
-            return listOf(picture.image, centred)
+            return listOf(described(picture.image, words), centred)
         }
         // The number at one end: the rest of the furniture as a picture in
         // the line, a tab to where the number sat, and the field — all on
@@ -209,7 +209,7 @@ object PageFurniture {
             words
         } else {
             crop.of(page, cropLeft, box[1], cropRight, box[3], emptyList(), false)
-                ?.let { listOf(TextRun("", image = it.image)) }
+                ?.let { listOf(TextRun("", image = described(it.image, words))) }
                 ?: words
         }
         val numberFirst = if (rtl) atRight else atLeft
@@ -238,6 +238,38 @@ object PageFurniture {
                     ruleBelow = ruleBelow && !shown,
                 ),
             )
+        )
+    }
+
+    /**
+     * [picture] told what it shows, from the words the band held.
+     *
+     * A band is photographed when its ink is not all accounted for by
+     * what was read there — a logo beside the running head, a mark the
+     * reading has no name for. The words it did hold are then nowhere in
+     * the document at all: not searchable, not read aloud, gone. Saying
+     * them on the picture is where a reader looks for them.
+     *
+     * Only where they are words. A band whose text is drawn as outlines
+     * gives up its digits and nothing else — the paper this was built for
+     * yields "58 48 2022 01 05" from a foot that reads "The Journal of…,
+     * volume 05, number 01, June 2022, pp. 48-58". Read aloud that is
+     * noise, and noise offered as a description is worse than none: it
+     * tells a reader the picture has been accounted for when it has not.
+     */
+    private fun described(picture: ImageBlock, words: List<TextRun>): ImageBlock {
+        val said = words.joinToString(separator = "") { it.text }.trim().takeIf { it.isNotEmpty() }
+            ?: return picture
+        if (said.none { it.isLetter() }) return picture
+        return ImageBlock(
+            bytes = picture.bytes,
+            mimeType = picture.mimeType,
+            widthPx = picture.widthPx,
+            heightPx = picture.heightPx,
+            confidence = picture.confidence,
+            widthPt = picture.widthPt,
+            heightPt = picture.heightPt,
+            description = said,
         )
     }
 
