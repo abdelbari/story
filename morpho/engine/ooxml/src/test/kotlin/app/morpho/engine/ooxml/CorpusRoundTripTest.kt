@@ -124,6 +124,37 @@ class CorpusRoundTripTest {
         )
     }
 
+    @ParameterizedTest(name = "{0}: writing settles rather than drifting")
+    @MethodSource("corpusFiles")
+    fun `a document written from a document read back is written the same way again`(name: String) {
+        // Once a document has been through the reader, writing it must
+        // settle: anything that changed on every pass — an id renumbering
+        // itself, a property accreting, a run splitting again — would grow
+        // without bound in a document converted more than once, and would
+        // never be noticed by a test that converts a document only once.
+        val once = DocxWriter.toByteArray(PlainTextImporter.import(corpusText(name)))
+        val twice = DocxWriter.toByteArray(DocxReader.read(once))
+        val thrice = DocxWriter.toByteArray(DocxReader.read(twice))
+        assertEquals(
+            documentXmlText(twice),
+            documentXmlText(thrice),
+            "$name drifted between the second writing and the third",
+        )
+    }
+
+    private fun documentXmlText(docx: ByteArray): String =
+        String(
+            java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(docx)).use { zip ->
+                var found: ByteArray? = null
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    if (entry.name == "word/document.xml") found = zip.readBytes()
+                }
+                found ?: ByteArray(0)
+            },
+            Charsets.UTF_8,
+        )
+
     @ParameterizedTest(name = "{0}: reader round-trip preserves structure")
     @MethodSource("corpusFiles")
     fun `reading the docx back reproduces the model structure`(name: String) {
