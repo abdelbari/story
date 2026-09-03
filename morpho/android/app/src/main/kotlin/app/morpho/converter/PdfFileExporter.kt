@@ -788,13 +788,57 @@ internal object PdfFileExporter {
         fun shows(paragraph: Paragraph): Boolean =
             paragraph.text.isNotEmpty() || paragraph.runs.any { it.image != null }
 
+        /**
+         * A table inside a cell as the lines it holds: one line to a row,
+         * its cells set apart by a space, and any picture in it after
+         * them.
+         *
+         * A page cannot draw a table inside a cell of a table — the width
+         * to draw it in is whatever is left of the cell, and the cell's
+         * own height is not known until the table inside it has been laid
+         * out. But the words are the document's: dropped, a form or an
+         * invoice laid out this way shows a blank cell where its figures
+         * were, and nothing anywhere says so. The Markdown writer gives
+         * the same answer to the same question.
+         */
+        fun linesOf(table: Table): List<Block> {
+            val pictures = mutableListOf<Block>()
+            fun wordsIn(blocks: List<Block>): List<TextRun> =
+                blocks.flatMap { block ->
+                    when (block) {
+                        is Paragraph -> block.runs
+                        is Table -> block.rows.flatMap { row ->
+                            row.cells.flatMap { wordsIn(it.blocks) }
+                        }
+                        is ImageBlock -> {
+                            pictures += block
+                            emptyList()
+                        }
+                    }
+                }
+            val out = mutableListOf<Block>()
+            for (row in table.rows) {
+                val runs = mutableListOf<TextRun>()
+                for (cell in row.cells) {
+                    val own = wordsIn(cell.blocks)
+                    if (own.isEmpty()) continue
+                    if (runs.isNotEmpty()) runs += TextRun(" ")
+                    runs += own
+                }
+                if (runs.any { it.text.isNotBlank() }) out += Paragraph(runs)
+            }
+            return out + pictures
+        }
+
         /** A cell's content, laid out to the width it is drawn at. */
         fun piecesOf(cell: TableCell, width: Float): List<Piece> {
             val textWidth = (width - 2 * CELL_PADDING).toInt().coerceAtLeast(1)
             // Numbered items restart per cell, same contiguity rule as
             // the top-level walk.
             val counts = ListCounts()
-            return cell.blocks.mapNotNull { held ->
+            return cell.blocks
+                .flatMap { held -> if (held is Table) linesOf(held) else listOf(held) }
+                .mapNotNull { held ->
                 when (held) {
                     is Paragraph -> held.takeIf { shows(it) }?.let { para ->
                         val numbered = counts.next(para.style)
@@ -817,7 +861,8 @@ internal object PdfFileExporter {
                     // a letterhead, the photo on a CV, the product beside
                     // its price.
                     is ImageBlock -> picture(held, textWidth.toFloat(), cursor.sheet)
-                    // A table inside a table is a stated gap.
+                    // Flattened above, so nothing reaches here; a table
+                    // inside a table inside a cell is flattened with it.
                     is Table -> null
                 }
             }
