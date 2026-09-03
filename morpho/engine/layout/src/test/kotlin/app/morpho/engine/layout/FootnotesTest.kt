@@ -39,6 +39,51 @@ class FootnotesTest {
     }
 
     @Test
+    fun `a mark on a line of its own carries the note under it`() {
+        // Read off a page with no tags, the mark at the foot of a page is
+        // its own paragraph — small, and not raised, since nothing shares
+        // its line to be raised above. The note is the paragraph under it.
+        val model = Footnotes.refine(
+            DocumentModel(
+                listOf(
+                    paragraph(TextRun("ربيحة نبار "), TextRun("*", superscript = true, fontSizePt = 8f)),
+                    paragraph(TextRun("من شروط البحث العلمي الالمام بجميع المعلومات")),
+                    paragraph(TextRun("*", fontSizePt = 8f), rule = true),
+                    paragraph(TextRun("أستاذ محاضر .")),
+                )
+            )
+        )
+        assertEquals(2, model.blocks.size, "both the mark and its words left the text")
+        val mark = (model.blocks[0] as Paragraph).runs.last()
+        val note = mark.note?.single() as Paragraph
+        assertEquals("أستاذ محاضر .", note.text)
+    }
+
+    @Test
+    fun `a mark on a line of its own with nothing to point at is left alone`() {
+        // The far end is what keeps the shape honest: without a raised
+        // mark earlier in the document, a short line under a rule is just
+        // a short line under a rule — a page number, a fragment.
+        val blocks = listOf(
+            paragraph(TextRun("Ordinary words of the document.")),
+            paragraph(TextRun("48", fontSizePt = 9f), rule = true),
+            paragraph(TextRun("Volume 4, number 2.")),
+        )
+        assertEquals(blocks, Footnotes.refine(DocumentModel(blocks)).blocks)
+    }
+
+    @Test
+    fun `two marks in a row are not a note and its words`() {
+        val blocks = listOf(
+            paragraph(TextRun("Text with a mark "), TextRun("*", superscript = true)),
+            paragraph(TextRun("*"), rule = true),
+            paragraph(TextRun("†")),
+        )
+        // The second mark is not the words of the first one's note.
+        assertEquals(blocks, Footnotes.refine(DocumentModel(blocks)).blocks)
+    }
+
+    @Test
     fun `a second note on the same page needs no rule of its own`() {
         val model = Footnotes.refine(
             DocumentModel(

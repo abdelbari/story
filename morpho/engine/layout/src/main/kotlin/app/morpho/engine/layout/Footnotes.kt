@@ -15,13 +15,24 @@ package app.morpho.engine.layout
  * note moves there, and a writer with footnotes of its own sets it at the
  * foot of whatever page the mark lands on.
  *
- * A mark with nothing to point at is left where it is: better an odd
+ * A page may also set the mark on a line of its own, small, with the
+ * words of the note under it — read off a page with no tags, that is two
+ * paragraphs rather than one, and the mark is not raised because there is
+ * nothing on its line for it to be raised above. Those two are a note as
+ * much as the one is.
+ *
+ * What keeps either shape honest is the far end: a mark is only a note's
+ * mark when the same mark is raised somewhere earlier in the document. A
+ * mark with nothing to point at is left where it is — better an odd
  * paragraph than a note that disappears.
  */
 object Footnotes {
 
     /** A mark is this short — "*", "1", "†", "12". */
     private const val LONGEST_MARK = 3
+
+    /** A note as the page set it: its mark, where the mark is, and where its words are. */
+    private class Found(val mark: String, val markIndex: Int, val bodyIndex: Int)
 
     /** [document] with each note moved onto the mark that refers to it. */
     fun refine(document: DocumentModel): DocumentModel {
@@ -30,23 +41,29 @@ object Footnotes {
         val blocks = document.blocks.toMutableList()
         val placed = mutableSetOf<Int>()
         val spokenFor = mutableSetOf<Pair<Int, Int>>()
-        for ((index, mark) in notes) {
-            val note = blocks[index] as? Paragraph ?: continue
+        for (found in notes) {
+            val note = blocks[found.bodyIndex] as? Paragraph ?: continue
             // The note without its own mark, which the writer sets again,
             // and without the page's separator rule: a writer that knows
             // notes draws that rule itself, and two would be one too many.
-            val body = note.copy(
-                runs = note.runs.drop(1).trimLeadingSpace(),
-                style = note.style.copy(ruleAbove = false),
-            )
+            val body = if (found.bodyIndex == found.markIndex) {
+                note.copy(
+                    runs = note.runs.drop(1).trimLeadingSpace(),
+                    style = note.style.copy(ruleAbove = false),
+                )
+            } else {
+                note.copy(style = note.style.copy(ruleAbove = false))
+            }
             if (body.text.isBlank()) continue
-            val reference = referenceTo(blocks, mark, before = index, spokenFor = spokenFor) ?: continue
+            val reference =
+                referenceTo(blocks, found.mark, before = found.markIndex, spokenFor = spokenFor) ?: continue
             spokenFor += reference
             val paragraph = blocks[reference.first] as Paragraph
             val runs = paragraph.runs.toMutableList()
             runs[reference.second] = runs[reference.second].copy(note = listOf(body))
             blocks[reference.first] = paragraph.copy(runs = runs)
-            placed += index
+            placed += found.markIndex
+            placed += found.bodyIndex
         }
         if (placed.isEmpty()) return document
         return document.copy(blocks = blocks.filterIndexed { index, _ -> index !in placed })
@@ -65,22 +82,48 @@ object Footnotes {
      * under a page's separator rule, and any that follow it in the same
      * small type, which is how a page with two notes sets its second.
      */
-    private fun notesIn(blocks: List<Block>): List<Pair<Int, String>> {
-        val notes = mutableListOf<Pair<Int, String>>()
+    private fun notesIn(blocks: List<Block>): List<Found> {
+        val notes = mutableListOf<Found>()
         var following = false
-        for ((index, block) in blocks.withIndex()) {
-            val paragraph = block as? Paragraph
-            val mark = paragraph?.let(::markOf)
-            if (mark == null) {
-                following = false
-                continue
-            }
-            if (paragraph.style.ruleAbove || following) {
-                notes += index to mark
-                following = true
+        var index = 0
+        while (index < blocks.size) {
+            val paragraph = blocks[index] as? Paragraph
+            val opening = paragraph?.let(::markOf)
+            val alone = paragraph?.let(::loneMark)
+            val under = paragraph != null && (paragraph.style.ruleAbove || following)
+            val words = (blocks.getOrNull(index + 1) as? Paragraph)?.takeIf { loneMark(it) == null }
+            when {
+                under && opening != null -> {
+                    notes += Found(opening, index, index)
+                    following = true
+                    index++
+                }
+                // The mark on a line of its own, the note under it.
+                under && alone != null && words != null -> {
+                    notes += Found(alone, index, index + 1)
+                    following = true
+                    index += 2
+                }
+                else -> {
+                    following = false
+                    index++
+                }
             }
         }
         return notes
+    }
+
+    /**
+     * The mark a paragraph consists of and nothing else, or null when it
+     * says more than a mark says. A word is not a mark, however short,
+     * but a single letter may be one: a page that letters its notes أ ب
+     * ت sets them the same way a page that stars them does.
+     */
+    private fun loneMark(paragraph: Paragraph): String? {
+        val mark = paragraph.text.trim()
+        if (mark.isEmpty() || mark.length > LONGEST_MARK) return null
+        if (mark.length > 1 && mark.any { it.isLetter() }) return null
+        return mark
     }
 
     /** The raised mark a note opens with, or null when the paragraph does not open with one. */

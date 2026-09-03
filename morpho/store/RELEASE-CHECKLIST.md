@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 512 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 515 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -52,7 +52,9 @@ Work through, in this order — each exercises a path nothing else covers:
 - [ ] **The footnote on the paper's first page** must sit at the foot of
       the page in Word, under Word's own separator, with the star as its
       mark — not in the middle of the abstract, and not with two rules
-      above it.
+      above it. Check an untagged PDF the same way: a page with no tags
+      sets the mark on a line of its own, and the note must still be a
+      note.
 - [ ] **A section that starts on a fresh page** — the paper's list of
       references — must start on a fresh page in Word too, and no ordinary
       page turn may have become a forced break.
