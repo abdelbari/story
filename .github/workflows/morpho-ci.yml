@@ -74,6 +74,48 @@ jobs:
         working-directory: morpho/android
         run: ./gradlew :app:assembleRelease :app:bundleRelease
 
+      # Recognition reads its language models out of the app's own assets at
+      # runtime. Nothing in a build says whether they are still in the
+      # artifact: resource shrinking does not touch assets today, and if a
+      # packaging option, an ABI split or a future tool ever did, the app
+      # would build, install, and fail at the first scan with an
+      # UnsatisfiedLinkError nobody saw coming — only for the people who
+      # installed a release build. An engine test already holds the language
+      # table to the packs in the source tree; this holds the shipped file
+      # to them.
+      - name: The language packs are in the file that ships
+        working-directory: morpho/android
+        run: |
+          set -uo pipefail
+          wanted=$(cd pdf/src/main/assets/tessdata && ls *.traineddata 2>/dev/null)
+          if [ -z "$wanted" ]; then
+            echo "::error::Found no language packs in the source tree to look for. The layout changed — fix this guard, never skip it."
+            exit 1
+          fi
+          bundle=$(find app/build/outputs -name '*.aab' 2>/dev/null | head -n 1)
+          apk=$(find app/build/outputs -name '*release*.apk' 2>/dev/null | head -n 1)
+          artifact="${bundle:-$apk}"
+          if [ -z "$artifact" ]; then
+            echo "::error::Found no release bundle or APK to inspect. The build layout changed — fix this guard, never skip it."
+            exit 1
+          fi
+          echo "Inspecting $artifact"
+          held=$(unzip -Z1 "$artifact" 2>/dev/null | grep -F '.traineddata' || true)
+          missing=""
+          for pack in $wanted; do
+            case "$held" in
+              *"$pack"*) ;;
+              *) missing="$missing $pack" ;;
+            esac
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::The release artifact is missing language packs:$missing. On-device recognition would fail for every scan in those languages, in release builds only. Packs found in the artifact:"
+            echo "$held"
+            exit 1
+          fi
+          echo "Every language pack the app can ask for is in $artifact:"
+          echo "$held"
+
       # The Zero-Upload guarantee is a product promise, so it is checked by a
       # machine rather than by memory: the merged manifest is what actually
       # ships, and it includes every permission any dependency asks for.
