@@ -107,6 +107,92 @@ object PdfColumns {
     }
 
     /**
+     * The x of a clear strip down the middle of a page's ink, or null when
+     * the page is set in one column.
+     *
+     * [marks] is the horizontal extent of every mark on the page, word by
+     * word or letter by letter — not line by line. A page whose columns
+     * are set on the same grid paints both of them on the same baselines,
+     * so every line of it reaches from the first column's margin to the
+     * second's: read line by line, such a page has no clear strip at all,
+     * and the columns can only be told apart by the marks themselves.
+     *
+     * The widest strip no mark crosses wins, and its middle is the gutter.
+     * Both sides must hold a fair share of the marks, or a page with one
+     * short column of notes beside a wide one would be cut in two.
+     */
+    fun gutterOfMarks(marksByLine: List<List<Pair<Float, Float>>>): Float? {
+        val marks = marksByLine.flatten()
+        if (marks.size < LEAST_MARKS) return null
+        val left = marks.minOf { it.first }
+        val right = marks.maxOf { it.second }
+        val width = right - left
+        if (width <= 0f) return null
+        val from = left + SEARCH_FROM * width
+        val to = left + SEARCH_TO * width
+        val step = (to - from) / PROBES
+        if (step <= 0f) return null
+        var runStart: Float? = null
+        var best: Pair<Float, Float>? = null
+        var probe = from
+        fun keep(run: Pair<Float, Float>) {
+            if (best == null || run.second - run.first > best!!.second - best!!.first) best = run
+        }
+        while (probe <= to) {
+            val crossed = marks.any { it.first < probe && it.second > probe }
+            if (!crossed) {
+                if (runStart == null) runStart = probe
+            } else if (runStart != null) {
+                keep(runStart!! to probe)
+                runStart = null
+            }
+            probe += step
+        }
+        runStart?.let { keep(it to to) }
+        val strip = best ?: return null
+        if (strip.second - strip.first < LEAST_GUTTER_SHARE * width) return null
+        val gutter = (strip.first + strip.second) / 2
+        val before = marks.count { it.second <= gutter }
+        val after = marks.count { it.first >= gutter }
+        if (before + after < marks.size) return null
+        if (before < LEAST_SIDE_SHARE * marks.size || after < LEAST_SIDE_SHARE * marks.size) return null
+        // A column of prose fills its measure: its lines run to the far
+        // margin and break where the words stop, and only the last line of
+        // each paragraph falls short. A column of a table does not — its
+        // cells hold what they hold. Without this a page that is mostly one
+        // wide table of two columns would be cut into two columns of text
+        // and stop being a table at all.
+        if (!filled(marksByLine, left, gutter) { it.second <= gutter }) return null
+        if (!filled(marksByLine, gutter, right) { it.first >= gutter }) return null
+        return gutter
+    }
+
+    /** Whether the lines on one side of a gutter fill the measure they are set in. */
+    private fun filled(
+        marksByLine: List<List<Pair<Float, Float>>>,
+        from: Float,
+        to: Float,
+        onThisSide: (Pair<Float, Float>) -> Boolean,
+    ): Boolean {
+        val width = to - from
+        if (width <= 0f) return false
+        val widths = marksByLine
+            .map { line -> line.filter(onThisSide) }
+            .filter { it.isNotEmpty() }
+            .map { it.maxOf { mark -> mark.second } - it.minOf { mark -> mark.first } }
+            .sorted()
+        if (widths.size < LEAST_LINES) return false
+        val median = widths[widths.size / 2]
+        return median >= FILLS_ITS_MEASURE * width
+    }
+
+    /** Below this many marks a page says too little about how it is set. */
+    private const val LEAST_MARKS = 200
+
+    /** Of the measure it is set in, the share a column of prose fills at the middle line. */
+    private const val FILLS_ITS_MEASURE = 0.75f
+
+    /**
      * The x of a strip down the middle of [lines] that few of them cross,
      * or null when the lines are set in one column. The widest such strip
      * wins, and its middle is the gutter.

@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 550 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 553 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -107,7 +107,11 @@ Work through, in this order — each exercises a path nothing else covers:
 - [ ] **A two-column paper without tags** — a journal article from an
       older tool. Each column must be read to its foot before the next one
       starts, and a heading that runs across both must sit between the
-      bands, not inside one.
+      bands, not inside one. Nothing may come back as a table: a page of
+      prose in two columns read as a grid of cells is the failure to watch
+      for. Try one whose columns are set on the same grid, which is how a
+      journal sets them — both columns' lines level with each other across
+      the page.
 - [ ] **An Arabic document with a table in it**, opened in real Word. The
       first column must be the rightmost one, as it is in the original —
       a mirrored table reads as a different table, not a wrong-looking one.

@@ -1,8 +1,8 @@
 package app.morpho.pdf
 
-import app.morpho.engine.layout.pdf.InternalLinks
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
+import app.morpho.engine.layout.pdf.InternalLinks
 import com.tom_roush.pdfbox.pdmodel.interactive.action.PDActionGoTo
 import com.tom_roush.pdfbox.pdmodel.interactive.action.PDActionURI
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink

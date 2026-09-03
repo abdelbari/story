@@ -2,6 +2,7 @@ package app.morpho.pdf
 
 import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.ExtractedText
+import app.morpho.engine.layout.pdf.PdfColumns
 import app.morpho.engine.layout.pdf.PdfLine
 import app.morpho.engine.layout.pdf.PdfLook
 import app.morpho.engine.layout.pdf.PdfPageSheet
@@ -55,13 +56,55 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
     private class PendingLine(
         val visual: String,
         val painters: List<PdfLook?>,
+        /** Where each character of [visual] was painted, left edge and right. */
+        val starts: List<Float>,
+        val ends: List<Float>,
         val x: Float,
         val xEnd: Float,
         val baselineY: Float,
         val maxFontSize: Float,
         val page: Int,
         val segments: List<PdfSegment>,
-    )
+    ) {
+        /** The line's own marks, ignoring the spaces no glyph painted. */
+        fun marks(): List<Pair<Float, Float>> =
+            visual.indices.filter { !visual[it].isWhitespace() }.map { starts[it] to ends[it] }
+
+        /**
+         * The line cut at [gutter], as the two lines it turns out to be —
+         * or null when all of it lies on one side. Visual order runs left
+         * to right, so the cut is one place in the line.
+         */
+        fun cutAt(gutter: Float): Pair<PendingLine, PendingLine>? {
+            val at = visual.indices.firstOrNull { starts[it] >= gutter } ?: return null
+            if (at == 0) return null
+            val left = slice(0, at) ?: return null
+            val right = slice(at, visual.length) ?: return null
+            return left to right
+        }
+
+        private fun slice(from: Int, to: Int): PendingLine? {
+            val text = visual.substring(from, to)
+            if (text.isBlank()) return null
+            val ink = (from until to).filter { !visual[it].isWhitespace() }
+            if (ink.isEmpty()) return null
+            return PendingLine(
+                visual = text,
+                painters = painters.subList(from, to),
+                starts = starts.subList(from, to),
+                ends = ends.subList(from, to),
+                x = ink.minOf { starts[it] },
+                xEnd = ink.maxOf { ends[it] },
+                baselineY = baselineY,
+                maxFontSize = maxFontSize,
+                page = page,
+                segments = segments.filter {
+                    val middle = (it.xStart + it.xEnd) / 2
+                    middle >= ink.minOf { i -> starts[i] } && middle <= ink.maxOf { i -> ends[i] }
+                },
+            )
+        }
+    }
 
     private val pending = mutableListOf<PendingLine>()
     /** The sheet of every page that drew text, filled as the pages are read. */
@@ -116,6 +159,7 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         resetLine()
         writeText(document, Writer.nullWriter())
         flushLine()
+        cutColumns()
         // Every line is reconstructed against the document's direction —
         // its /Lang, else the direction most of its text runs in — because
         // a line cannot tell its own: an Arabic line whose leftmost word is
@@ -177,6 +221,40 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
     }
 
     /**
+     * Cuts every page set in columns into its columns.
+     *
+     * A journal sets its two columns on the same grid, so both are painted
+     * on the same baselines and every line reaches from the first column's
+     * margin to the second's. Read that way the page has no clear strip
+     * down its middle at all: [PdfColumns] can find nothing to work with,
+     * and the alignment of the two columns reads as a table of two, so a
+     * paper comes back as a grid with half a sentence in every cell.
+     *
+     * The marks themselves say where the columns are — a strip no letter
+     * of the page crosses — and a line that reaches across it is two
+     * lines. Cut here, where every character still knows where it was
+     * painted, and everything downstream sees a page it understands.
+     */
+    private fun cutColumns() {
+        val byPage = pending.groupBy { it.page }
+        if (byPage.isEmpty()) return
+        val cut = mutableListOf<PendingLine>()
+        for ((_, lines) in byPage.entries.sortedBy { it.key }) {
+            val gutter = PdfColumns.gutterOfMarks(lines.map { it.marks() })
+            if (gutter == null) {
+                cut += lines
+                continue
+            }
+            for (line in lines) {
+                val halves = line.cutAt(gutter)
+                if (halves == null) cut += line else cut += listOf(halves.first, halves.second)
+            }
+        }
+        pending.clear()
+        pending += cut
+    }
+
+    /**
      * How far off a line's baseline a glyph may sit and still belong to it.
      * A footnote mark is set small and raised a third of the line's height,
      * and a fixed hair of tolerance leaves it stranded as a line of its own
@@ -217,6 +295,8 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         val ordered = inVisualOrder(lineGlyphs)
         val visual = StringBuilder()
         val painters = mutableListOf<PdfLook?>()
+        val starts = mutableListOf<Float>()
+        val ends = mutableListOf<Float>()
         val baseline = dominantBaseline(ordered)
         val lineSize = ordered.filter { abs(it.yDirAdj - baseline) <= SAME_LINE_TOLERANCE_PT }
             .maxOfOrNull { it.fontSizeInPt } ?: 0f
@@ -240,11 +320,20 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
                 if (gap > WORD_GAP_FACTOR * position.fontSizeInPt) {
                     visual.append(' ')
                     painters += null
+                    starts += previous.xDirAdj + previous.widthDirAdj
+                    ends += position.xDirAdj
                 }
             }
             val look = lookOf(position, raised(position, baseline, lineSize))
             visual.append(unicode)
-            repeat(unicode.length) { painters += look }
+            repeat(unicode.length) {
+                painters += look
+                // Where the character was painted, kept alongside its look:
+                // a page set in columns is cut apart by these, and nothing
+                // else on the page says where one column ends.
+                starts += position.xDirAdj
+                ends += position.xDirAdj + position.widthDirAdj
+            }
             previous = position
         }
         val ink = ordered.filter { !it.unicode.isNullOrBlank() }
@@ -252,6 +341,8 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
             pending += PendingLine(
                 visual = visual.toString(),
                 painters = painters,
+                starts = starts.toList(),
+                ends = ends.toList(),
                 x = ink.minOf { it.xDirAdj },
                 xEnd = ink.maxOf { it.xDirAdj + it.widthDirAdj },
                 baselineY = baseline,

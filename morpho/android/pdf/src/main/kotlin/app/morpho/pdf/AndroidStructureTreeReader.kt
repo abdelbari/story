@@ -6,6 +6,7 @@ import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ExtractedText
 import app.morpho.engine.layout.ImageBlock
+import app.morpho.engine.layout.ListLabels
 import app.morpho.engine.layout.ListMarker
 import app.morpho.engine.layout.PageSetup
 import app.morpho.engine.layout.Paragraph
@@ -213,11 +214,6 @@ internal object AndroidStructureTreeReader {
     /** Rules across a table before it counts as one the page ruled. */
     private const val TABLE_RULES_TO_BE_RULED = 2
     /** The characters a producer draws as a list marker. */
-    private const val MARKER_CHARACTERS = "\u2022\u00B7\u2219\u2212\u2013\u2014-*\u25AA\u25AB\u25CF\u25CB\u25E6\u2023\u2043\u00BB\u203A"
-    /** What an enumerator ends with: "3.", "أ-", "a)". */
-    private const val LABEL_TERMINATORS = "-.)\u2013\u061B:"
-    /** An enumerator is this many characters at most, its terminator included. */
-    private const val LONGEST_LABEL = 3
     /** A filled rectangle no taller than this is a rule, not a box. */
     private const val RULE_MAX_THICKNESS_PT = 4f
     /** A rule shorter than this is a dash or a tick, not a rule. */
@@ -1689,7 +1685,7 @@ internal object AndroidStructureTreeReader {
                     // the writer as well would show two — and the page's own
                     // label says more than a bullet does anyway: "أ-", "3-",
                     // and the dash of a second level are all lost by one.
-                    listMarker = marker.takeIf { !drawsItsOwnLabel(text) },
+                    listMarker = marker.takeIf { !ListLabels.opensWithLabel(text) },
                     listLevel = level,
                     alignment = placement?.alignment,
                     firstLineIndentPt = placement?.firstLineIndentPt,
@@ -1699,23 +1695,6 @@ internal object AndroidStructureTreeReader {
                 confidence = CONFIDENCE,
             )
             for (inner in nested) emitList(inner, depth + 1, level + 1)
-        }
-
-        /**
-         * Whether a list item's text opens with the label the page drew for
-         * it: a marker character — a bullet, a dash, a star — or a short
-         * enumerator such as "أ-", "3." or "a)", either of them followed by
-         * a space, which is what separates a label from a sentence that
-         * merely begins with a dash.
-         */
-        private fun drawsItsOwnLabel(text: String): Boolean {
-            val space = text.indexOfFirst { it == ' ' || it == '\t' }
-            if (space <= 0) return false
-            val label = text.substring(0, space)
-            if (label.length == 1) return label[0] in MARKER_CHARACTERS
-            if (label.length > LONGEST_LABEL) return false
-            if (label.last() !in LABEL_TERMINATORS) return false
-            return label.dropLast(1).all { it.isLetterOrDigit() }
         }
 
         private fun emitTable(table: PDStructureElement, depth: Int) {
