@@ -361,12 +361,20 @@ object PdfLayout {
             )
         }
 
-        var inForce: Pair<Int, Int>? = null
+        // The shape the document is measured at, which is the one most of
+        // its pages have. A document opening on a page of another shape —
+        // a cover, a wide table at the front — is set on that page before
+        // it is set on its own, so the shape in force at the start is the
+        // one the document as a whole is written at, and the first page
+        // says so if it differs.
+        val dominant = shapeByPage.values.groupingBy { it }.eachCount()
+            .maxByOrNull { it.value }?.key
+        var inForce: Pair<Int, Int>? = dominant
         var waiting: PageSetup? = null
         return blocks.mapIndexed { index, block ->
             val shape = shapeByPage[pageOf.getOrNull(index) ?: -1]
             if (shape != null && shape != inForce) {
-                if (inForce != null) waiting = setupOf(shape)
+                waiting = setupOf(shape)
                 inForce = shape
             }
             val setup = waiting

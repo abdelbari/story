@@ -78,9 +78,25 @@ class TurnedSectionTest {
     }
 
     @Test
-    fun `the first paragraph never starts a section`() {
-        // The shape the document opens on is the document's own.
-        val model = PdfReader().extract(report(listOf(landscape, PDRectangle.A4, PDRectangle.A4)))
+    fun `a document that opens on a page of another shape says so`() {
+        // A cover, a wide table at the front: the document is measured at
+        // the shape most of its pages have, so the page it opens on is a
+        // section of its own or it is written at a shape it never had.
+        val model = PdfReader().extract(report(listOf(landscape, PDRectangle.A4, PDRectangle.A4, PDRectangle.A4)))
+        val paragraphs = model.blocks.filterIsInstance<Paragraph>()
+        assertTrue(model.pageSetup!!.widthPt < model.pageSetup!!.heightPt, "the report is portrait")
+        val opening = paragraphs.first().style.sectionSetup
+        assertNotNull(opening, "the page it opens on said nothing about its shape")
+        assertTrue(opening!!.widthPt > opening.heightPt, "the page it opens on is wide")
+        // And the page after it turns to the shape the rest of it has.
+        val second = paragraphs.first { it.text.contains("Page 2") }.style.sectionSetup
+        assertNotNull(second)
+        assertTrue(second!!.widthPt < second.heightPt)
+    }
+
+    @Test
+    fun `a document that opens on its own shape says nothing at its start`() {
+        val model = PdfReader().extract(report(listOf(PDRectangle.A4, PDRectangle.A4, landscape, PDRectangle.A4)))
         assertNull(model.blocks.filterIsInstance<Paragraph>().first().style.sectionSetup)
     }
 }
