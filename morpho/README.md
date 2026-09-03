@@ -621,7 +621,10 @@ device-test pass because no line of this app has ever run on physical
 hardware.
 
 Known and deliberate for 1.0: process death while the save dialog is open
-discards the in-memory conversion; a table inside a cell is drawn in the
+discards the in-memory conversion; a PDF the phone exports carries neither
+what the document says about itself nor the language it is written in,
+because Android's own PDF writer has nowhere to put either — every other
+path carries both; a table inside a cell is drawn in the
 exported PDF as the lines it holds — one line to a row, its cells set
 apart — rather than as a table, since the width to draw one in is whatever
 is left of the cell and the cell's own height is not known until the
