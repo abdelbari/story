@@ -86,6 +86,17 @@ class AndroidOcrReader(private val context: Context) {
                 check(tess.init(dataParent.absolutePath, languages)) {
                     "Tesseract failed to initialize for $languages"
                 }
+                // Work the page out before reading it. Left unasked,
+                // recognition reads the whole image as ONE BLOCK of text
+                // and does no layout analysis at all — that is the
+                // library's default, stated in its own documentation for
+                // this call and set in Tesseract's own source. A two-column
+                // page then reads straight across the gutter, half a
+                // sentence from each column at a time, and nothing is
+                // classified, so a heading, a caption and a line of body
+                // text all come back alike. Every scan this app has ever
+                // read was read that way.
+                tess.setPageSegMode(PAGE_SEGMENTATION)
                 // Ask for the font of every word as well as its box. The
                 // fast models this app ships answer nothing — the newer
                 // recogniser reports no font at all — but it is one call,
@@ -291,6 +302,23 @@ class AndroidOcrReader(private val context: Context) {
 
         /** Tesseract's name for "tell me the font of each word too". */
         private const val FONT_INFO = "hocr_font_info"
+
+        /**
+         * How much of a page recognition is asked to work out.
+         *
+         * Everything: the columns, the blocks and the lines, which is what
+         * the reading this feeds is built to take. Asked for nothing,
+         * recognition reads a page as a single block of text — its own
+         * default, and the one thing it must not do here, since a
+         * two-column paper then reads across the gutter and no line of it
+         * is a heading, a caption or anything else.
+         *
+         * Not the mode that detects orientation and script as well: that
+         * one reads `osd.traineddata`, which is not among the packs this
+         * app ships, and asking for a pack that is not there is how
+         * recognition stops working for a whole locale.
+         */
+        const val PAGE_SEGMENTATION = TessBaseAPI.PageSegMode.PSM_AUTO
 
         private const val RENDER_DPI = 200f
 
