@@ -79,6 +79,120 @@ class BothPathsAgreeTest {
         }
     }
 
+    /**
+     * Three paragraphs the page shows as three: its lines a line-pitch
+     * apart and its paragraphs half as much again, which is what a page
+     * of prose looks like.
+     */
+    private val prose = listOf(
+        listOf(
+            "من شروط البحث العلمي الالمام بجميع المعلومات المتصلة بموضوع البحث",
+            "والاطلاع على المصادر والدراسات السابقة، ويتم ذلك من خلال استعمال",
+            "مجموعة من الأدوات البحثية، إذ لكل نوع من الأبحاث أدوات مناسبة لها",
+        ),
+        listOf(
+            "وتقسم الأسئلة إلى أربعة أنواع وهي كالتالي في هذه الورقة البحثية",
+            "الأسئلة المفتوحة أو الحرة، وفيها يترك للمبحوث الإجابة على الأسئلة",
+        ),
+        listOf(
+            "المطروحة بطريقته الخاصة وبألفاظه التي يعتبرها ملائمة، ويستخدم هذا",
+            "النوع من الأسئلة لما لا يكون لدى الباحث دراية تامة ومعلومات وافية",
+            "عن الموضوع الذي يبحث فيه، وهي أسئلة تحتاج إلى وقت طويل لتحليلها",
+        ),
+    )
+
+    @Test
+    fun `where a page shows its paragraphs, both readers find the same ones`() {
+        // The tags say outright where each paragraph begins; the untagged
+        // reading has only the space between the lines to go on. Where the
+        // page leaves that space, the two must agree — and it is the
+        // paragraph splitting, the most-guessed part of the reading, that
+        // this holds still. Comparing words alone would not: a reading
+        // that ran three paragraphs into one has every word of them.
+        //
+        // At this pitch the threshold that binds is the one measured in
+        // type sizes rather than in line pitches, and widening it is what
+        // makes this fail — which is how it was checked to be worth
+        // having.
+        val fromTags = paragraphsOf(PdfReader().extract(pages(prose, tagged = true)))
+        val fromPositions = paragraphsOf(PdfReader().extract(pages(prose, tagged = false)))
+        assertEquals(prose.size, fromTags.size, "the tags were not read as they were written: $fromTags")
+        assertEquals(
+            fromTags,
+            fromPositions,
+            "the untagged reading found different paragraphs from the ones the producer declared",
+        )
+    }
+
+    private fun paragraphsOf(model: app.morpho.engine.layout.DocumentModel): List<String> =
+        model.blocks.filterIsInstance<Paragraph>()
+            .map { it.text.replace(Regex("\\s+"), " ").trim() }
+            .filter { it.isNotEmpty() }
+
+    /**
+     * [paragraphs] painted down one page, each as a tagged paragraph of
+     * its own where [tagged], with a plain line's space inside a paragraph
+     * and half as much again between them.
+     */
+    private fun pages(paragraphs: List<List<String>>, tagged: Boolean): ByteArray {
+        val bytes = ByteArrayOutputStream()
+        PDDocument().use { document ->
+            val page = PDPage(PDRectangle.A4)
+            document.addPage(page)
+            document.documentCatalog.language = "ar"
+            val holder = if (tagged) {
+                val root = PDStructureTreeRoot()
+                document.documentCatalog.structureTreeRoot = root
+                PDStructureElement(StandardStructureTypes.DOCUMENT, root).also {
+                    it.page = page
+                    root.appendKid(it)
+                }
+            } else {
+                null
+            }
+            val arabic: PDFont = PDType0Font.load(
+                document,
+                javaClass.getResourceAsStream("/fonts/NotoNaskhArabic-Regular.ttf") ?: error("test font missing"),
+                false,
+            )
+            var mcid = 0
+            var top = 110f
+            PDPageContentStream(document, page).use { content ->
+                for (lines in paragraphs) {
+                    val element = holder?.let {
+                        PDStructureElement(StandardStructureTypes.P, it).apply {
+                            this.page = page
+                            it.appendKid(this)
+                        }
+                    }
+                    val properties = COSDictionary().apply { setInt(COSName.MCID, mcid) }
+                    if (tagged) content.beginMarkedContent(COSName.P, PDPropertyList.create(properties))
+                    for (line in lines) {
+                        val width = arabic.getStringWidth(line) / 1000f * 12f
+                        content.beginText()
+                        content.setFont(arabic, 12f)
+                        content.newLineAtOffset(510f - width, PDRectangle.A4.height - top)
+                        content.showText(line.reversed())
+                        content.endText()
+                        top += LINE_PITCH_PT
+                    }
+                    if (tagged) {
+                        content.endMarkedContent()
+                        element?.appendKid(PDMarkedContent(COSName.P, properties))
+                    }
+                    mcid++
+                    top += PARAGRAPH_GAP_PT - LINE_PITCH_PT
+                }
+            }
+            document.save(bytes)
+        }
+        return bytes.toByteArray()
+    }
+
+    /** A line's step down the page, and a paragraph's, as a page of prose sets them. */
+    private val LINE_PITCH_PT = 22f
+    private val PARAGRAPH_GAP_PT = 34f
+
     private fun words(model: app.morpho.engine.layout.DocumentModel): List<String> =
         model.blocks.filterIsInstance<Paragraph>()
             .flatMap { it.text.split(Regex("\\s+")) }
