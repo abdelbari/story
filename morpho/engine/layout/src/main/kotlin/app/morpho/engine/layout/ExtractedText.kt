@@ -69,7 +69,60 @@ object ExtractedText {
     // then becomes the two letters لا — in logical order. Folding first
     // would hand the reversal two letters to swap.
     private fun reorder(text: String, base: TextDirection?): Bidi.Reordered =
-        collapseSpaces(foldPresentationForms(Bidi.reorder(text, base)))
+        collapseSpaces(canonical(foldPresentationForms(Bidi.reorder(text, base))))
+
+    /**
+     * Each letter and the marks written over and under it, put in the one
+     * order Unicode calls canonical.
+     *
+     * A vowelled Arabic page — a verse, a line of classical poetry, a
+     * school book — sets a shadda and a fatha over the same letter, and
+     * the page paints them in whatever order the producer wrote them.
+     * Unicode says a fatha comes before a shadda, and that is the order
+     * every keyboard types and every search box holds: get it the other
+     * way round and the converted document *renders* correctly and can
+     * still not be searched, because the phrase a reader types is a
+     * different string from the one in the file.
+     *
+     * Only a letter that carries a mark is touched, and only into the form
+     * that means the same thing: a hamza written over an alef becomes the
+     * one letter Unicode has for that, which is what a document holds and
+     * what Word writes.
+     */
+    private fun canonical(reordered: Bidi.Reordered): Bidi.Reordered {
+        val text = reordered.text
+        if (text.none(::isMark)) return reordered
+        val out = StringBuilder(text.length)
+        val sources = ArrayList<Int>(text.length)
+        var i = 0
+        while (i < text.length) {
+            var end = i + 1
+            while (end < text.length && isMark(text[end])) end++
+            if (end - i == 1) {
+                out.append(text[i])
+                sources += reordered.sources[i]
+                i = end
+                continue
+            }
+            val cluster = text.substring(i, end)
+            val settled = Normalizer.normalize(cluster, Normalizer.Form.NFC)
+            out.append(settled)
+            // The letter keeps its own painter and every mark on it keeps
+            // the painter of a mark: they are set in the one font at the
+            // one size, being one letter as far as the page is concerned.
+            for (at in settled.indices) sources += reordered.sources[minOf(i + at, end - 1)]
+            i = end
+        }
+        return Bidi.Reordered(out.toString(), sources.toIntArray())
+    }
+
+    /** A mark written over or under the letter before it. */
+    private fun isMark(c: Char): Boolean = when (Character.getType(c)) {
+        Character.NON_SPACING_MARK.toInt(),
+        Character.COMBINING_SPACING_MARK.toInt(),
+        Character.ENCLOSING_MARK.toInt() -> true
+        else -> false
+    }
 
     /**
      * Runs of spaces become one. On a page, spacing is geometry — Word

@@ -68,6 +68,43 @@ class VisualToLogicalTest {
     }
 
     @Test
+    fun `the marks on a letter come back in the order a keyboard types them`() {
+        // A dot below is written before a dot above whatever order a page
+        // paints them in — Unicode's canonical order, and the order every
+        // keyboard produces and every search box holds. The two render
+        // identically, which is what makes the wrong one so easy to ship
+        // and so baffling to a reader whose search finds nothing in a
+        // document that plainly says the words. A vowelled Arabic page —
+        // a verse, a line of poetry, a school book — is the case that
+        // matters, and it is read end to end in ArabicPdfTest.
+        assertEquals("q\u0323\u0307", ExtractedText.toLogical("q\u0307\u0323"))
+    }
+
+    @Test
+    fun `a mark written over a letter becomes the letter Unicode has for it`() {
+        // The one letter, not a letter and a mark: what a document holds,
+        // what a reader types, and what every other file in the world has.
+        assertEquals("\u00E9t\u00E9", ExtractedText.toLogical("e\u0301te\u0301"))
+    }
+
+    @Test
+    fun `a letter with no marks on it is left exactly as it was`() {
+        assertEquals("الاستمارة", ExtractedText.toLogical("ةرامتسالا", TextDirection.RTL))
+        assertEquals("The form in scientific research", ExtractedText.toLogical("The form in scientific research"))
+    }
+
+    @Test
+    fun `what painted a letter still paints its marks`() {
+        // A vowelled word set in bold stays bold all the way through, mark
+        // and letter alike: every character of the result carries a
+        // painter, and the cluster's marks carry the cluster's.
+        val painted = "q\u0307\u0323e\u0301"
+        val logical = ExtractedText.toLogical(painted, List(painted.length) { "bold" })
+        assertEquals(logical.text.length, logical.painters.size)
+        assertEquals(List(logical.text.length) { "bold" }, logical.painters)
+    }
+
+    @Test
     fun `runs of spaces collapse to one`() {
         assertEquals("تاريخ القبول: 2022", ExtractedText.toLogical("2022      :لوبقلا خيرات", TextDirection.RTL))
     }
