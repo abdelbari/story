@@ -121,8 +121,22 @@ object PdfLayout {
         rules: List<PdfRule> = emptyList(),
         outline: List<PdfOutlineEntry> = emptyList(),
     ): DocumentModel {
-        val body = withoutRunningHeadsAndFeet(lines, sheets)
-        return reconstructBody(body.ifEmpty { lines }, confidence, images, sheets, rules, outline)
+        // What every page repeats at its head and its foot is the page's
+        // own furniture, not text of the document: taken out of the
+        // reading, and put back where a document keeps it.
+        val split = PageFurniture.of(lines, sheets)
+        val model = reconstructBody(split.body, confidence, images, sheets, rules, outline)
+        if (split.header.isEmpty() && split.footer.isEmpty()) return model
+        val page = model.pageSetup
+        return model.copy(
+            header = split.header,
+            footer = split.footer,
+            pageSetup = page?.copy(
+                headerDistancePt = split.headerDistancePt ?: page.headerDistancePt,
+                footerDistancePt = split.footerDistancePt ?: page.footerDistancePt,
+                firstPageNumber = split.firstPageNumber ?: page.firstPageNumber,
+            ),
+        )
     }
 
     private fun reconstructBody(
@@ -306,34 +320,6 @@ object PdfLayout {
             .toSet()
     }
 
-    /**
-     * The lines without the page's furniture: a running header or footer
-     * repeats in the same place in the margin of page after page, and is
-     * not part of the text. Page numbers differ from page to page, so lines
-     * are compared with their digits masked; a document of one or two pages
-     * has nothing to compare and keeps everything.
-     */
-    private fun withoutRunningHeadsAndFeet(
-        lines: List<PdfLine>,
-        sheets: List<PdfPageSheet>,
-    ): List<PdfLine> {
-        val heightByPage = sheets.associate { it.page to it.heightPt }
-        val pages = lines.map { it.page }.distinct().size
-        if (pages < REPEATS_TO_BE_RUNNING) return lines
-        fun inMargin(line: PdfLine): Boolean {
-            val height = heightByPage[line.page]?.takeIf { it > 0f } ?: return false
-            return line.baselineY < MARGIN_BAND_SHARE * height ||
-                line.baselineY > (1f - MARGIN_BAND_SHARE) * height
-        }
-        val running = lines.filter(::inMargin)
-            .groupBy { DIGITS.replace(it.text, "#") to (it.baselineY / SAME_PLACE_PT).toInt() }
-            .filterValues { group -> group.map { it.page }.distinct().size >= REPEATS_TO_BE_RUNNING }
-            .values.flatten()
-            .toCollection(java.util.Collections.newSetFromMap(java.util.IdentityHashMap()))
-        return lines.filterNot { it in running }
-    }
-
-    private val DIGITS = Regex("[0-9\u0660-\u0669]")
 
     /**
      * The page the document was set on: the first sheet that drew text,

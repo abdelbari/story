@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 522 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 529 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -47,7 +47,10 @@ Work through, in this order — each exercises a path nothing else covers:
       footnote, and the page's own margins should all
       match the page; nothing should be split or joined that the page does
       not split or join. Check an untagged PDF the same way: it should also
-      keep its faces and weights, drop the running header and footer, and
+      keep its faces and weights, take the running header and footer out of
+      the text and into Word's own — with the page number counting on from
+      where the paper starts, where the head or foot is text rather than
+      artwork — and
       break its paragraphs where the page does.
 - [ ] **The footnote on the paper's first page** must sit at the foot of
       the page in Word, under Word's own separator, with the star as its
@@ -82,6 +85,12 @@ Work through, in this order — each exercises a path nothing else covers:
       "أ-" and "3-" — must sit at the right-hand end of its line, as a
       real character and not a blank box, and each item must carry one
       marker, not two.
+- [ ] **The head and foot of an untagged paper** — one from an older tool
+      or a scanner. Whatever of them is text must be in Word's own header
+      and footer rather than in the middle of the reading, and the page
+      number must count on from the paper's own first number. A head drawn
+      as artwork cannot be found this way and will be missing; a head of
+      plain text must be there.
 - [ ] **The head and foot of the Arabic paper**, in Word and in the app's
       preview. Every page should carry the journal's running head — its
       title, the author, the two rules — at the same distance from the top
