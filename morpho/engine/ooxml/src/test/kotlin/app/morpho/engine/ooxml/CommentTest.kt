@@ -184,6 +184,63 @@ class CommentTest {
     }
 
     @Test
+    fun `a note whose subject stops and starts again points at the first stretch only`() {
+        // Word gives a comment one stretch of the text and no more, so a
+        // subject that stops and starts again cannot be written as it
+        // stands. A stretch from the first run to the last would swallow
+        // everything between them — which is what a note left beside one
+        // line of a two-column page would do to half a column — so the
+        // note keeps the unbroken stretch it opens on. Pointing at less of
+        // the subject is honest; pointing at text it is not about is not.
+        val model = DocumentModel(
+            blocks = listOf(
+                Paragraph(
+                    listOf(
+                        TextRun("about this", commentIds = listOf(1)),
+                        TextRun(" not this "),
+                        TextRun("nor this"),
+                        TextRun(" but this too", commentIds = listOf(1)),
+                    )
+                )
+            ),
+            comments = listOf(Comment(id = 1, text = "Which is it?")),
+        )
+        val read = DocxReader.read(DocxWriter.toByteArray(model))
+        val id = read.comments.single().id
+        val covered = (read.blocks.single() as Paragraph).runs
+            .filter { id in it.commentIds }
+            .joinToString("") { it.text }
+        assertEquals("about this", covered, "the note reached past the stretch it opened on")
+    }
+
+    @Test
+    fun `a note over runs standing next to each other keeps every one of them`() {
+        // The ordinary case, and the one the rule above must not spoil: a
+        // reader's highlight covers every word under it, so the runs it
+        // marks stand next to one another and the whole of it is kept.
+        val model = DocumentModel(
+            blocks = listOf(
+                Paragraph(
+                    listOf(
+                        TextRun("before "),
+                        TextRun("all", commentIds = listOf(1)),
+                        TextRun(" of", commentIds = listOf(1)),
+                        TextRun(" this", commentIds = listOf(1)),
+                        TextRun(" after"),
+                    )
+                )
+            ),
+            comments = listOf(Comment(id = 1, text = "Source?")),
+        )
+        val read = DocxReader.read(DocxWriter.toByteArray(model))
+        val id = read.comments.single().id
+        val covered = (read.blocks.single() as Paragraph).runs
+            .filter { id in it.commentIds }
+            .joinToString("") { it.text }
+        assertEquals("all of this", covered)
+    }
+
+    @Test
     fun `a document nobody has commented on is written as it always was`() {
         val docx = DocxWriter.toByteArray(
             DocumentModel(listOf(Paragraph(listOf(TextRun("Nothing to say about this.")))))

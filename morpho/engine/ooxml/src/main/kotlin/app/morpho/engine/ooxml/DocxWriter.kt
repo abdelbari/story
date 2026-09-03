@@ -290,6 +290,10 @@ object DocxWriter {
         private val closes = IdentityHashMap<TextRun, MutableList<Entry>>()
         private val lastRun = LinkedHashMap<Int, TextRun>()
 
+        /** Where each note's stretch has reached, as a count of runs walked. */
+        private val lastAt = LinkedHashMap<Int, Int>()
+        private var walked = 0
+
         val entries: List<Entry> get() = byId.values.toList()
 
         init {
@@ -310,13 +314,36 @@ object DocxWriter {
         private fun walk(blocks: List<Block>, known: Map<Int, Comment>) {
             for (block in blocks) {
                 when (block) {
-                    is Paragraph -> for (run in block.runs) for (id in run.commentIds) {
-                        val comment = known[id] ?: continue
-                        val entry = byId.getOrPut(id) { Entry(byId.size, comment) }
-                        // The first run a note covers is the one it opens
-                        // on; every later one only moves where it closes.
-                        if (lastRun.put(id, run) == null) {
-                            opens.getOrPut(run) { mutableListOf() } += entry
+                    is Paragraph -> for (run in block.runs) {
+                        val at = walked++
+                        for (id in run.commentIds) {
+                            val comment = known[id] ?: continue
+                            val entry = byId.getOrPut(id) { Entry(byId.size, comment) }
+                            // The first run a note covers is the one it
+                            // opens on; a run next to the last one it
+                            // covered moves where it closes.
+                            if (lastRun[id] == null) {
+                                opens.getOrPut(run) { mutableListOf() } += entry
+                                lastRun[id] = run
+                                lastAt[id] = at
+                                continue
+                            }
+                            // A note whose subject stops and starts again
+                            // is a note Word cannot write: it gives a
+                            // comment one stretch of the text, and a
+                            // stretch from the first run to the last would
+                            // swallow everything in between — a note left
+                            // beside one line of a page of two columns
+                            // would be a note on half the column and the
+                            // top of the next. So the stretch is the
+                            // unbroken one the note opens on, and a run
+                            // beyond the break is left out of it: pointing
+                            // at less of the subject is honest, pointing
+                            // at text the note is not about is not.
+                            if (at == (lastAt[id] ?: -2) + 1) {
+                                lastRun[id] = run
+                                lastAt[id] = at
+                            }
                         }
                     }
                     is Table -> for (row in block.rows) for (cell in row.cells) walk(cell.blocks, known)
