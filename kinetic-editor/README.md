@@ -41,7 +41,7 @@ environment, so the app has not been assembled by Gradle there. Instead:
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
   geometry) runs on the JVM: the 41 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 44-scenario executable sandbox suite.
+  4.13.2, alongside a 43-scenario executable sandbox suite.
 
 ---
 
