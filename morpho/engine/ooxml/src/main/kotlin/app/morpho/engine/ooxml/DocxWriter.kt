@@ -82,7 +82,9 @@ object DocxWriter {
                 zip.part("word/footer1.xml", furnitureXml("ftr", document.footer, document, numbering, images, links, ImagePlan.PART_FOOTER))
                 partRelsXml(images, links, ImagePlan.PART_FOOTER)?.let { zip.part("word/_rels/footer1.xml.rels", it) }
             }
-            for (entry in images.entries) {
+            // A picture drawn many times over is stored once and pointed at
+            // by every drawing of it.
+            for (entry in images.media()) {
                 zip.partBytes("word/media/${entry.fileName}", entry.block.bytes)
             }
         }
@@ -272,6 +274,13 @@ object DocxWriter {
 
         val entries = mutableListOf<Entry>()
         private val byBlock = IdentityHashMap<ImageBlock, Entry>()
+        /**
+         * The file each picture was stored as, by what the picture holds. A
+         * logo drawn on every page of a document is one picture: storing it
+         * once and pointing every drawing at it is the difference between a
+         * file of a few hundred kilobytes and one of many megabytes.
+         */
+        private val fileByContent = HashMap<Long, MutableList<Pair<ByteArray, String>>>()
 
         init {
             assign(document.blocks, PART_DOCUMENT)
@@ -304,12 +313,27 @@ object DocxWriter {
             val entry = Entry(
                 block = block,
                 relId = "rIdImg$index",
-                fileName = "image$index.$extension",
+                fileName = fileNameFor(block.bytes, "image$index.$extension"),
                 docPrId = index,
                 part = part,
             )
             entries += entry
             byBlock[block] = entry
+        }
+
+        /** [candidate], unless the same picture is already stored as another file. */
+        private fun fileNameFor(bytes: ByteArray, candidate: String): String {
+            val key = bytes.size.toLong() * 31 + bytes.contentHashCode()
+            val kept = fileByContent.getOrPut(key) { mutableListOf() }
+            kept.firstOrNull { it.first.contentEquals(bytes) }?.let { return it.second }
+            kept += bytes to candidate
+            return candidate
+        }
+
+        /** Every picture that has to be stored, once each. */
+        fun media(): List<Entry> {
+            val seen = HashSet<String>()
+            return entries.filter { seen.add(it.fileName) }
         }
 
         companion object {

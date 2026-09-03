@@ -526,7 +526,7 @@ internal object StructureTreeReader {
                 pageHeightByIndex[index] = if (turned) width else height
                 val extractor =
                     ResolvingMarkedContentExtractor(page, pageLinks?.page(index), pageHighlights?.page(index))
-                runCatching { extractor.processPage(page) }
+                attempt { extractor.processPage(page) }
                 var artifacts = 0
                 for (content in extractor.markedContents.orEmpty()) {
                     collect(content, index)

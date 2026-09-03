@@ -465,8 +465,12 @@ class LookRoundTripTest {
         assertTrue(footer.contains("""<w:r><w:drawing>"""), footer)
         assertTrue(footer.contains("""<w:tab/>"""), footer)
         assertTrue(footer.contains("""<w:fldSimple w:instr=" PAGE "><w:r><w:rPr><w:rtl/></w:rPr><w:t xml:space="preserve">48</w:t></w:r></w:fldSimple>"""), footer)
-        assertTrue(parts.getValue("word/_rels/footer1.xml.rels").contains("media/image2.png"), "footer picture relationship")
-        assertTrue(parts.containsKey("word/media/image1.png") && parts.containsKey("word/media/image2.png"), "media parts")
+        // The header and the footer show the same picture here, and a
+        // picture is stored once however many times it is drawn, so both
+        // relationships point at the one file.
+        assertTrue(parts.getValue("word/_rels/footer1.xml.rels").contains("media/image1.png"), "footer picture relationship")
+        assertEquals(1, parts.keys.count { it.startsWith("word/media/") }, "the same picture was stored twice")
+        assertTrue(parts.containsKey("word/media/image1.png"), "media parts")
     }
 
     @Test

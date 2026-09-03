@@ -50,13 +50,13 @@ class AndroidPdfReader(context: Context) {
             val filled = drawFilledFields(doc)
             val tagged = doc.documentCatalog.structureTreeRoot != null && !filled
 
-            val images = runCatching { AndroidImageCapture().capture(doc) }.getOrDefault(emptyList())
+            val images = attempt { AndroidImageCapture().capture(doc) } ?: emptyList()
 
             // Fast path: read structure straight from the tags when present;
             // Figure elements resolve to captured images via marked content.
             val fromTags =
                 if (tagged) {
-                    runCatching { AndroidStructureTreeReader.read(doc, images) }.getOrNull()
+                    attempt { AndroidStructureTreeReader.read(doc, images) }
                 } else {
                     null
                 }
@@ -69,7 +69,7 @@ class AndroidPdfReader(context: Context) {
             val confidence = 0.6f
 
             val stripper = AndroidPositionTextStripper()
-            val lines = runCatching { stripper.capture(doc) }.getOrDefault(emptyList())
+            val lines = attempt { stripper.capture(doc) } ?: emptyList()
             // A document that names its own chapters says which lines are
             // headings; without one, only the type they were set in tells.
             val outline = AndroidDocumentOutline.read(doc)

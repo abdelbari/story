@@ -60,18 +60,18 @@ class PdfReader {
             val filled = drawFilledFields(doc)
             val tagged = doc.documentCatalog.structureTreeRoot != null && !filled
 
-            val images = runCatching { ImageCapture().capture(doc) }.getOrDefault(emptyList())
+            val images = attempt { ImageCapture().capture(doc) } ?: emptyList()
 
             // Fast path: read structure straight from the tags when present;
             // Figure elements resolve to captured images via marked content.
             val fromTags =
-                if (tagged) runCatching { StructureTreeReader.read(doc, images) }.getOrNull() else null
+                if (tagged) attempt { StructureTreeReader.read(doc, images) } else null
             if (fromTags != null) return Footnotes.refine(Links.refine(fromTags))
             // Everything below ran the position heuristics, so it scores as
             // untagged — even when a tree exists but yielded nothing.
             val confidence = 0.6f
             val stripper = PositionTextStripper()
-            val lines = runCatching { stripper.capture(doc) }.getOrDefault(emptyList())
+            val lines = attempt { stripper.capture(doc) } ?: emptyList()
             // A document that names its own chapters says which lines are
             // headings; without one, only the type they were set in tells.
             val outline = DocumentOutline.read(doc)

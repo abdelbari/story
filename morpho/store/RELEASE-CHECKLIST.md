@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 428 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 432 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -132,7 +132,12 @@ Work through, in this order — each exercises a path nothing else covers:
 - [ ] **Rotate the screen** during a conversion and while the save dialog is
       open. (Process death during the save dialog is a known, documented gap.)
 - [ ] **Each of the five languages**, with Arabic checked for full RTL layout.
-- [ ] A **large document** (100+ pages) for memory behaviour.
+- [ ] A **large document** (100+ pages) for memory behaviour. On a desktop
+      JVM, 220 pages of the Arabic paper convert in about six seconds and
+      need roughly 240 MB; the app asks for a large heap for this reason.
+      A document too big for the device must say so — it must never come
+      back short. Watch for missing pages at the end, which is what a
+      swallowed out-of-memory used to look like.
 
 Report anything wrong and it can be fixed from the description.
 

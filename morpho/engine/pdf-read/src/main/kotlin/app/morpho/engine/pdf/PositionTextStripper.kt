@@ -192,7 +192,16 @@ internal class PositionTextStripper : PDFTextStripper() {
 
     override fun writeParagraphEnd() = flushLine()
 
-    override fun writePageEnd() = flushLine()
+    override fun writePageEnd() {
+        flushLine()
+        // The order glyphs were painted in and the colours they were painted
+        // with are wanted only while the line they belong to is being built,
+        // and a line does not cross a page. Keeping them for the whole
+        // document keeps every glyph of it in memory as well: a book runs
+        // out of room on a phone long before it runs out of pages.
+        paintOrder.clear()
+        colors.clear()
+    }
 
     private fun flushLine() {
         if (lineGlyphs.isEmpty()) {

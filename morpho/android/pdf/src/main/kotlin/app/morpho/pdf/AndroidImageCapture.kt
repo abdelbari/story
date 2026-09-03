@@ -17,6 +17,7 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import java.io.ByteArrayOutputStream
+import java.util.IdentityHashMap
 
 /**
  * Android twin of the engine's ImageCapture (:engine:pdf-read), built on the
@@ -27,6 +28,14 @@ import java.io.ByteArrayOutputStream
 internal class AndroidImageCapture : PDFStreamEngine() {
 
     private val captured = mutableListOf<PdfImage>()
+    /**
+     * Every picture already encoded, by the object the page draws. A logo
+     * in a running header is one picture drawn on every page: encoding it
+     * once and handing the same bytes to each page is the difference
+     * between a document that converts and one that runs out of memory.
+     */
+    private val encoded = IdentityHashMap<Any, ByteArray>()
+    private val failed = HashSet<Any>()
     private var pageNumber = 0
     private var pageHeight = 0f
     private val mcidStack = ArrayDeque<Int>()
@@ -42,11 +51,13 @@ internal class AndroidImageCapture : PDFStreamEngine() {
 
     fun capture(doc: PDDocument): List<PdfImage> {
         captured.clear()
+        encoded.clear()
+        failed.clear()
         for ((index, page) in doc.pages.withIndex()) {
             pageNumber = index + 1
             pageHeight = page.cropBox.height
             mcidStack.clear()
-            runCatching { processPage(page) }
+            attempt { processPage(page) }
         }
         return captured.toList()
     }
@@ -69,11 +80,17 @@ internal class AndroidImageCapture : PDFStreamEngine() {
                 if (xobject.width < MIN_SIDE_PX || xobject.height < MIN_SIDE_PX) return
                 val ctm = graphicsState.currentTransformationMatrix
                 val topDownY = pageHeight - (ctm.translateY + ctm.scalingFactorY)
-                val png = runCatching {
+                val key: Any = xobject.cosObject
+                if (key in failed) return
+                val png = encoded[key] ?: attempt {
                     val out = ByteArrayOutputStream()
                     xobject.image.compress(Bitmap.CompressFormat.PNG, 100, out)
                     out.toByteArray()
-                }.getOrNull() ?: return
+                }?.also { encoded[key] = it }
+                if (png == null) {
+                    failed += key
+                    return
+                }
                 captured += PdfImage(
                     page = pageNumber,
                     topY = topDownY,
