@@ -330,7 +330,12 @@ object HtmlWriter {
             val pieces = run.text.split('\t')
             for ((index, piece) in pieces.withIndex()) {
                 if (index > 0) segments.add(mutableListOf())
-                if (piece.isNotEmpty()) segments.last() += run.copy(text = piece)
+                // A picture is a run with no text of its own. Kept only for
+                // its text it would be dropped, and a footer set as the page
+                // set it — the running head, a tab, the number — came out as
+                // the number alone.
+                val carries = piece.isNotEmpty() || (run.image != null && index == 0)
+                if (carries) segments.last() += run.copy(text = piece)
             }
         }
         for ((index, segment) in segments.withIndex()) {

@@ -54,6 +54,33 @@ class HtmlLookTest {
     }
 
     @Test
+    fun `a picture beside a tab stop stays in the preview`() {
+        // A foot set as the page set it: the running head, a tab, the
+        // page's number. The picture is a run with no text of its own,
+        // and keeping only runs that had text left the number alone.
+        val html = HtmlWriter.write(
+            DocumentModel(
+                blocks = listOf(Paragraph(listOf(TextRun("x")))),
+                footer = listOf(
+                    Paragraph(
+                        runs = listOf(
+                            TextRun("", image = ImageBlock(byteArrayOf(1), "image/png", 10, 4, 100f, 12f)),
+                            TextRun("\t"),
+                            TextRun("48", field = RunField.PAGE_NUMBER),
+                        ),
+                        style = ParagraphStyle(tabStopsPt = listOf(443f)),
+                    )
+                ),
+            )
+        )
+        assertTrue(html.contains("<img"), "the head of the foot is a picture: $html")
+        assertTrue(
+            html.contains("""<span style="position:absolute;inset-inline-start:443.0pt">48</span>"""),
+            "and the number still sits at its stop: $html",
+        )
+    }
+
+    @Test
     fun `a tab without stops keeps its white space`() {
         val html = HtmlWriter.write(DocumentModel(listOf(Paragraph(listOf(TextRun("a\tb"))))))
         assertTrue(html.contains("""<p style="white-space:pre-wrap">a	b</p>"""), html)
