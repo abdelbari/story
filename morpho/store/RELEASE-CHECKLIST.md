@@ -6,7 +6,7 @@ The code side is done and verified in CI on every push.
 ## 1. Before anything else: test on a real device
 
 Nothing in this app has ever run on physical hardware. CI proves it compiles,
-lints, passes 564 engine tests and survives R8 — it cannot prove that OCR
+lints, passes 566 engine tests and survives R8 — it cannot prove that OCR
 reads an Arabic receipt correctly or that a printed PDF looks right.
 
 ```
@@ -75,8 +75,10 @@ Work through, in this order — each exercises a path nothing else covers:
       keep its colour.
 - [ ] **A report with one page turned sideways** — a portrait document
       with a landscape appendix or a wide table. In Word that page must be
-      landscape and the rest portrait. The app's own preview and its PDF
-      export still lay the whole document on one sheet; that is known.
+      landscape and the rest portrait, and the preview's pages must turn
+      with it. A running head on a turned page is still set to the measure
+      the document opens on; that is known. Try it from a Word document
+      with a landscape section as well as from a PDF.
 - [ ] **A document with a table** — one with rules and one that is only
       aligned columns. The columns must keep their widths (a column of
       dates stays narrow), and the second must arrive with no lines

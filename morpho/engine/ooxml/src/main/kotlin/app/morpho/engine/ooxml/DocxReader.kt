@@ -125,7 +125,10 @@ object DocxReader {
                     notesOf(parts[END_NOTES_PART], "endnote", numbering, media, styles)
             )
             return DocumentModel(
-                blocks = parseBlocks(body, numbering, media, depth = 0, notes = notes, styles = styles),
+                blocks = parseBlocks(
+                    body, numbering, media, depth = 0, notes = notes, styles = styles,
+                    sections = sectionShapes(body),
+                ),
                 pageSetup = sectPr?.let(::parsePageSetup),
                 header = sectPr?.let { furniture(it, "headerReference", parts, media, numbering, styles) }.orEmpty(),
                 footer = sectPr?.let { furniture(it, "footerReference", parts, media, numbering, styles) }.orEmpty(),
@@ -267,6 +270,8 @@ object DocxReader {
         notes: Notes = Notes(),
         styles: StyleSheet,
         fromTable: Inherited = Inherited.NONE,
+        /** The shape of each section of the body, in order; empty anywhere but the body. */
+        sections: List<PageSetup?> = emptyList(),
     ): List<Block> {
         require(depth <= MAX_NESTING_DEPTH) {
             "Block nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
@@ -277,16 +282,24 @@ object DocxReader {
         // So does a bookmark opened between paragraphs, which is how Word
         // writes one that was put around several of them at once.
         var openedNames = mutableListOf<String>()
+        // Word says a section's properties on the last paragraph of it, so
+        // the paragraph after one of those starts the next section. The
+        // document's own shape is the one most of it is set on, so the
+        // first section only says anything when it differs from that.
+        var sectionsPassed = 0
+        var startsSection: PageSetup? = sections.firstOrNull()
+            ?.takeIf { first -> sections.size > 1 && first != mostCommon(sections) }
 
         /** [block], starting a page and answering to the names opened before it. */
         fun add(block: Block) {
             val broken = brokenTo && block is Paragraph
             brokenTo = brokenTo && !broken
             blocks += if (block is Paragraph) {
-                val named = block.copy(
-                    style = if (broken) block.style.copy(pageBreakBefore = true) else block.style,
-                    bookmarks = openedNames + block.bookmarks,
-                )
+                var style = block.style
+                if (broken) style = style.copy(pageBreakBefore = true)
+                startsSection?.let { style = style.copy(sectionSetup = it) }
+                startsSection = null
+                val named = block.copy(style = style, bookmarks = openedNames + block.bookmarks)
                 openedNames = mutableListOf()
                 named
             } else {
@@ -309,6 +322,13 @@ object DocxReader {
                     // A break after this paragraph's words leaves it on the
                     // page it began and starts the next one on a fresh page.
                     if (beforeText == false) brokenTo = true
+                    // A paragraph carrying a section's properties is the
+                    // last of that section, whatever else it holds — even
+                    // when it holds nothing and no block came of it.
+                    if (sections.isNotEmpty() && firstChild(firstChild(child, "pPr"), "sectPr") != null) {
+                        sectionsPassed++
+                        startsSection = sections.getOrNull(sectionsPassed)
+                    }
                     if (!inline) blocks += parseImages(child, media)
                     // What a text box holds is text of the document, and it
                     // is written inside the run it is anchored to rather
@@ -677,6 +697,25 @@ object DocxReader {
         }
         return bySize.values.maxByOrNull { it.size }?.first() ?: sections.first()
     }
+
+    /**
+     * The shape each section of the body is set on, in the order the
+     * sections come.
+     *
+     * Word says a section's properties on the last paragraph of it and
+     * the last section's on the body itself, so the shapes are simply the
+     * sectPr elements in document order — and the paragraph that carries
+     * one is the end of its section, which makes the paragraph after it
+     * the start of the next.
+     */
+    /** The shape the most sections share, which is the document's own. */
+    private fun mostCommon(sections: List<PageSetup?>): PageSetup? =
+        sections.groupBy { it?.widthPt to it?.heightPt }
+            .maxByOrNull { (_, alike) -> alike.size }
+            ?.value?.first()
+
+    private fun sectionShapes(body: Element): List<PageSetup?> =
+        descendantsNS(body, W, "sectPr").map(::parsePageSetup)
 
     private fun parsePageSetup(sectPr: Element): PageSetup? {
         val size = firstChild(sectPr, "pgSz") ?: return null

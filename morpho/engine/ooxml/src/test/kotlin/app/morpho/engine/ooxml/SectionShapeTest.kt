@@ -124,4 +124,33 @@ class SectionShapeTest {
         // Both sections name it, so nothing has to be inherited across a turn.
         assertEquals(2, Regex("w:headerReference").findAll(xml).count(), xml)
     }
+
+    @Test
+    fun `a turned section read back from Word is turned still`() {
+        val model = DocumentModel(
+            blocks = listOf(
+                line("Before the wide table."),
+                line("The page of the wide table.", landscape),
+                line("After it, upright again.", portrait),
+            ),
+            pageSetup = portrait,
+        )
+        val read = DocxReader.read(DocxWriter.toByteArray(model))
+        val paragraphs = read.blocks.filterIsInstance<Paragraph>()
+        assertEquals(3, paragraphs.size, paragraphs.map { it.text }.toString())
+        assertEquals(null, paragraphs[0].style.sectionSetup, "the document opens on its own shape")
+        val turned = paragraphs[1].style.sectionSetup
+        assertTrue(turned != null && turned.widthPt > turned.heightPt, "the turn was lost: $turned")
+        val back = paragraphs[2].style.sectionSetup
+        assertTrue(back != null && back.widthPt < back.heightPt, "the turn back was lost: $back")
+        // And the document as a whole keeps the shape most of it has.
+        assertTrue(read.pageSetup!!.widthPt < read.pageSetup!!.heightPt)
+    }
+
+    @Test
+    fun `a document of one shape reads back saying nothing about sections`() {
+        val model = DocumentModel(listOf(line("One."), line("Two.")), pageSetup = portrait)
+        val read = DocxReader.read(DocxWriter.toByteArray(model))
+        assertTrue(read.blocks.filterIsInstance<Paragraph>().all { it.style.sectionSetup == null })
+    }
 }

@@ -414,7 +414,10 @@ object DocxWriter {
         // the properties of a section go on the last paragraph of it, and
         // the last section's go on the body. A document of one shape has
         // one section and is written exactly as it always was.
-        var inForce = document.pageSetup
+        // The shape the document opens on: its own, unless the first
+        // paragraph says otherwise.
+        var inForce = (document.blocks.firstOrNull() as? Paragraph)?.style?.sectionSetup
+            ?: document.pageSetup
         for ((index, block) in document.blocks.withIndex()) {
             val starting = (document.blocks.getOrNull(index + 1) as? Paragraph)?.style?.sectionSetup
             appendBlock(

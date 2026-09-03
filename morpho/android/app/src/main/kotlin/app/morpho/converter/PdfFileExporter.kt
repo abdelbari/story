@@ -165,6 +165,8 @@ internal object PdfFileExporter {
                     counts.clear()
                     0
                 }
+                // A section of its own shape starts a page of that shape.
+                (block as? Paragraph)?.style?.sectionSetup?.let { cursor.turnTo(Sheet.of(it)) }
                 when (block) {
                     is Paragraph -> paragraph(cursor, block, model.defaultDirection, numberedCount)
                     is ImageBlock -> image(cursor, block)
@@ -183,9 +185,25 @@ internal object PdfFileExporter {
     /** One open page and a top-down write position within it; [furnish] draws each page's head and foot as it opens. */
     private class Cursor(
         private val pdf: PdfDocument,
-        val sheet: Sheet,
+        sheet: Sheet,
         private val furnish: (Canvas, Int) -> Unit,
     ) {
+        /**
+         * The sheet the pages are drawn on. A document turns a page
+         * sideways for a wide table and turns back after it, so this
+         * changes where a section does.
+         */
+        var sheet: Sheet = sheet
+            private set
+
+        /** Starts a fresh page on [next], which is what a change of section is. */
+        fun turnTo(next: Sheet) {
+            if (next.width == sheet.width && next.height == sheet.height) return
+            closePage()
+            sheet = next
+            openPage()
+        }
+
         private var page: PdfDocument.Page? = null
         private var pageCount = 0
         var y = 0f
