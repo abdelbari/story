@@ -126,6 +126,47 @@ class PdfTableDetectionTest {
     }
 
     @Test
+    fun `the columns of a ruled table are measured where the page ruled them`() {
+        // Measured from the ink instead, a column of one-word headings
+        // under a column of sentences comes back a third of the width the
+        // page gave it, and the converted table is a different shape from
+        // the one it was read from. A page that drew the sides of its
+        // columns said exactly where they are.
+        val head = line("Name" to 80f, "Value" to 260f)
+        val first = line("Speed" to 80f, "42" to 260f)
+        val second = line("Mass" to 80f, "7" to 260f)
+        val borders = listOf(head.baselineY - 12f, second.baselineY + 6f)
+            .map { PdfRule(page = 1, y = it, left = 60f, right = 520f) }
+        // The sides of the cells, drawn a row at a time as a page draws them.
+        val sides = listOf(head, first, second).flatMap { row ->
+            listOf(60f, 240f, 520f).map { at ->
+                PdfDrawing(
+                    page = 1, left = at - 0.5f, top = row.baselineY - 12f,
+                    right = at + 0.5f, bottom = row.baselineY + 6f,
+                )
+            }
+        }
+        val model = PdfLayout.reconstruct(
+            listOf(head, first, second),
+            confidence = 0.6f,
+            rules = borders,
+            drawings = sides,
+        )
+        val table = model.blocks.filterIsInstance<Table>().single()
+        assertTrue(table.ruled)
+        assertEquals(listOf(180f, 280f), table.columnWidthsPt, "the columns were measured off the ink")
+    }
+
+    @Test
+    fun `a table the page drew no sides for is measured from its ink`() {
+        val head = line("Name" to 80f, "Value" to 260f)
+        val first = line("Speed" to 80f, "42" to 260f)
+        val model = PdfLayout.reconstruct(listOf(head, first), confidence = 0.6f)
+        val widths = model.blocks.filterIsInstance<Table>().single().columnWidthsPt
+        assertTrue(widths != null && widths.size == 2, "the columns were not measured at all: $widths")
+    }
+
+    @Test
     fun `a table nothing was drawn around is not ruled`() {
         val model = PdfLayout.reconstruct(
             listOf(

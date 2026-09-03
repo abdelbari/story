@@ -159,6 +159,7 @@ object PdfLayout {
         rules: List<PdfRule> = emptyList(),
         outline: List<PdfOutlineEntry> = emptyList(),
         crop: PageFurniture.Crop? = null,
+        drawings: List<PdfDrawing> = emptyList(),
     ): DocumentModel {
         // What every page repeats at its head and its foot is the page's
         // own furniture, not text of the document: taken out of the
@@ -168,7 +169,7 @@ object PdfLayout {
         val split = PageFurniture.of(lines, sheets, rules, crop, images)
         // The pictures the page owns are the page's; only the document's
         // own go into the reading.
-        val model = reconstructBody(split.body, confidence, split.bodyImages, sheets, rules, outline)
+        val model = reconstructBody(split.body, confidence, split.bodyImages, sheets, rules, outline, drawings)
         if (split.header.isEmpty() && split.footer.isEmpty() &&
             split.evenHeader.isEmpty() && split.evenFooter.isEmpty()
         ) {
@@ -196,6 +197,7 @@ object PdfLayout {
         sheets: List<PdfPageSheet>,
         rules: List<PdfRule>,
         outline: List<PdfOutlineEntry> = emptyList(),
+        drawings: List<PdfDrawing> = emptyList(),
     ): DocumentModel {
         val blockByPage = asPainted.groupBy { it.page }.mapValues { (_, pageLines) -> blockOf(pageLines) }
         // A page set in two columns paints its lines down the page, not down
@@ -235,6 +237,7 @@ object PdfLayout {
                     (confidence - GUESSED_FROM_ALIGNMENT).coerceAtLeast(LEAST_SURE),
                     held.repeatingHead,
                     ruled = drawn.size >= RULES_OF_A_BORDER,
+                    edges = if (drawn.size < RULES_OF_A_BORDER) null else columnEdges(region, lines, drawings),
                 )
             cursor = region.end
         }
@@ -601,6 +604,8 @@ object PdfLayout {
         confidence: Float,
         repeatingHead: Int = 0,
         ruled: Boolean = false,
+        /** Where the page ruled the sides of its columns, when it ruled them. */
+        edges: List<Float>? = null,
     ): Table {
         // A table of Arabic is laid out from the right: its first column is
         // the rightmost. The cells were gathered across the page from the
@@ -629,7 +634,7 @@ object PdfLayout {
                 )
             },
             confidence = confidence,
-            columnWidthsPt = columnWidthsOf(region)?.let(::inReadingOrder),
+            columnWidthsPt = (widthsBetween(edges) ?: columnWidthsOf(region))?.let(::inReadingOrder),
             // Only where the page drew them. A table found by the
             // alignment of its columns alone is one nothing was drawn
             // around, and ruling it in the conversion would add ink the
@@ -679,6 +684,67 @@ object PdfLayout {
 
     /** How far past its first and last baseline a table's own border may be drawn, in type sizes. */
     private const val TABLE_BORDER_LINES = 1.5f
+
+    /** Wider than this and a drawn thing is a box, not the side of a column. */
+    private const val UPRIGHT_THICKNESS_PT = 3f
+
+    /** An upright shorter than this many type sizes is a tick, not the side of a cell. */
+    private const val UPRIGHT_REACH = 1f
+
+    /** Uprights within this of each other are the one side, drawn twice. */
+    private const val SAME_UPRIGHT_PT = 2f
+
+    /**
+     * Where the page ruled the sides of a table's columns, or null where it
+     * ruled none of them or not all of them.
+     *
+     * A table's columns are measured from the ink inside its cells unless
+     * the page says otherwise, and the ink is a poor measure: a column of
+     * one-word headings under a column of sentences comes back a third of
+     * the width the page gave it, and a converted report's table is a
+     * different shape from the one it was read from. A page that drew the
+     * sides of its columns said exactly where they are, and that is worth
+     * more than any measurement of what stands between them.
+     *
+     * All of them or none: a table with a side missing would be cut into
+     * the wrong number of columns, which is worse than measuring them.
+     */
+    private fun columnEdges(
+        region: PdfTableDetector.Region,
+        lines: List<PdfLine>,
+        drawings: List<PdfDrawing>,
+    ): List<Float>? {
+        if (drawings.isEmpty()) return null
+        val own = lines.subList(region.start, region.end)
+        val page = own.firstOrNull()?.page ?: return null
+        if (own.any { it.page != page }) return null
+        val size = own.maxOf { it.maxFontSize }
+        val top = own.minOf { it.baselineY } - TABLE_BORDER_LINES * size
+        val bottom = own.maxOf { it.baselineY } + TABLE_BORDER_LINES * size
+        if (bottom <= top) return null
+        // A page rules a table cell by cell, so its sides are drawn a row
+        // at a time rather than once down the whole table: what marks one
+        // is that it is thin, that it stands inside the table's band, and
+        // that it is at least as tall as a line of it.
+        val standing = drawings
+            .filter { drawing ->
+                drawing.page == page && drawing.widthPt <= UPRIGHT_THICKNESS_PT &&
+                    drawing.heightPt >= UPRIGHT_REACH * size &&
+                    drawing.bottom > top && drawing.top < bottom
+            }
+            .map { (it.left + it.right) / 2 }
+            .sorted()
+        if (standing.isEmpty()) return null
+        val edges = mutableListOf(standing.first())
+        for (at in standing) if (at - edges.last() > SAME_UPRIGHT_PT) edges += at
+        // One side more than there are columns: the two outer sides and one
+        // between each pair.
+        return edges.takeIf { it.size == region.rows.first().size + 1 }
+    }
+
+    /** The width of each column between [edges], or null where the page ruled none. */
+    private fun widthsBetween(edges: List<Float>?): List<Float>? =
+        edges?.zipWithNext { left, right -> right - left }?.takeIf { widths -> widths.all { it > 0f } }
 
     /** Rules across a table's band before it counts as a table the page drew lines around. */
     private const val RULES_OF_A_BORDER = 2

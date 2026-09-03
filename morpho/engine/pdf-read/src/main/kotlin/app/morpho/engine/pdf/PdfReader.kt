@@ -151,6 +151,11 @@ class PdfReader {
                     crop = { page, left, top, right, bottom, masks, trim ->
                         PageImages.crop(doc, page - 1, left, top, right, bottom, masks, trim)
                     },
+                    // What the page drew as well as what it wrote: the
+                    // sides of a table's columns are in here, and they say
+                    // where the columns are better than the ink between
+                    // them ever could.
+                    drawings = stripper.drawings(),
                 )
             } else {
                 plainTextFallback(doc, confidence, images)
