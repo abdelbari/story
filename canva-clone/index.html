@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Canvia — Design anything</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%238b3dff'/%3E%3Cstop offset='1' stop-color='%23ff5ca8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='24' fill='url(%23g)'/%3E%3Ctext x='50' y='68' font-size='52' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'%3EC%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <!-- ======================= HOME ======================= -->
+  <div id="home-view" data-testid="home-view" hidden>
+    <header class="home-hero">
+      <div class="home-topbar">
+        <div class="logo" data-testid="logo">Canvia</div>
+        <button class="btn btn-ghost-light" id="btn-import-design" data-testid="btn-import">Import design</button>
+      </div>
+      <h1>What will you design today?</h1>
+      <div class="preset-row" id="preset-row" data-testid="preset-row"></div>
+      <div class="custom-size" id="custom-size" data-testid="custom-size">
+        <input type="number" id="custom-w" data-testid="custom-w" min="40" max="4000" value="1080" aria-label="Width">
+        <span>×</span>
+        <input type="number" id="custom-h" data-testid="custom-h" min="40" max="4000" value="1080" aria-label="Height">
+        <button class="btn btn-primary" id="btn-custom-create" data-testid="custom-create">Create custom</button>
+      </div>
+    </header>
+    <main class="home-main">
+      <section id="recent-section" hidden>
+        <h2>Recent designs</h2>
+        <div class="recent-grid" id="recent-grid" data-testid="recent-grid"></div>
+      </section>
+      <section>
+        <h2>Start from a template</h2>
+        <div class="template-gallery" id="template-gallery" data-testid="template-gallery"></div>
+      </section>
+    </main>
+    <input type="file" id="import-file" accept=".json,application/json" hidden>
+  </div>
+
+  <!-- ======================= EDITOR ======================= -->
+  <div id="editor-view" data-testid="editor-view" hidden>
+    <header class="topbar" id="topbar"></header>
+    <div class="ctxbar" id="ctxbar" data-testid="ctxbar"></div>
+    <div class="editor-body">
+      <nav class="rail" id="rail" data-testid="rail"></nav>
+      <aside class="panel" id="panel" data-testid="panel" hidden></aside>
+      <div class="workspace-wrap">
+        <div class="workspace" id="workspace" data-testid="workspace">
+          <div class="sizer" id="sizer">
+            <div class="scaler" id="scaler">
+              <div class="cc-page" id="page" data-testid="page"></div>
+              <div class="cc-overlay" id="overlay"></div>
+            </div>
+          </div>
+        </div>
+        <div class="zoombar" id="zoombar" data-testid="zoombar"></div>
+        <div class="hint" id="hint" hidden></div>
+      </div>
+    </div>
+    <footer class="pagestrip" id="pagestrip" data-testid="pagestrip"></footer>
+  </div>
+
+  <div id="popover-root"></div>
+  <div id="contextmenu-root"></div>
+  <div id="dialog-root"></div>
+  <div id="toast-root" aria-live="polite"></div>
+  <canvas id="confetti-canvas" hidden></canvas>
+  <input type="file" id="upload-file" accept="image/*" multiple hidden>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
