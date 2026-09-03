@@ -33,6 +33,7 @@ import com.kinetic.editor.core.model.motionAt
 import com.kinetic.editor.core.model.gainAt
 import com.kinetic.editor.core.model.layoutKey
 import com.kinetic.editor.core.model.overlayAnimAt
+import com.kinetic.editor.core.model.overlayScaleFor
 import com.kinetic.editor.core.model.snapToFrame
 import com.kinetic.editor.core.model.videoStructureHash
 import com.kinetic.editor.core.mvi.EditorIntent
@@ -529,6 +530,25 @@ class CoreLogicTest {
         val cleared = reduce(graded, EditorIntent.ApplyFilter(c.id, ColorGradeSpec.NEUTRAL, null))
         assertNull(cleared.mainTrack.clips[0].lut)
         assertTrue(cleared.mainTrack.clips[0].grade.isNeutral)
+    }
+
+    @Test
+    fun anOverlayIsTheSameSizeOnScreenAsItIsInTheRender() {
+        // The preview lays a box out as a fraction of the frame; media3 draws
+        // the same overlay at its NATIVE pixel size times a scale. This is the
+        // property that has to hold between them, and it is the one that
+        // silently drifts when the two are separate arithmetic.
+        val frameW = 1080
+        for (assetW in listOf(64, 256, 1920, 4096)) {
+            for (fraction in listOf(0.05f, 0.35f, 1f)) {
+                val drawnPx = overlayScaleFor(fraction, frameW, assetW) * assetW
+                val previewPx = fraction * frameW
+                assertEquals("asset ${assetW}px at $fraction", previewPx, drawnPx, 1e-2f)
+            }
+        }
+        // Unknown geometry must not divide by nothing; a wrong size beats no frame.
+        assertEquals(0.35f, overlayScaleFor(0.35f, 1080, 0), 1e-4f)
+        assertEquals(0.35f, overlayScaleFor(0.35f, 0, 256), 1e-4f)
     }
 
     @Test

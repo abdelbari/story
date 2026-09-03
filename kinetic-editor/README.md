@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 54 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 55 pure-JVM logic tests
 python3 tools/check-shaders.py   # compiles the GLSL (needs glslang-tools)
 ```
 
@@ -50,8 +50,8 @@ environment, so the app has not been assembled by Gradle there. Instead:
   the shader on purpose: it catches both a renamed uniform and a syntax error.
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 54 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 56-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 55 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 57-scenario executable sandbox suite.
 
 ---
 
@@ -296,8 +296,12 @@ during pinch-zoom. Instead:
   nothing but that enum.
 - TEXT/STICKER tracks → one composition-level `OverlayEffect` with
   alpha-gated, fade-edged windows (composition time == timeline time). Sticker
-  scale is folded with the canvas width so it, too, means "fraction of the
-  frame's width" on any canvas rather than the asset's native pixel size.
+  scale is folded with the canvas width by `overlayScaleFor` — the one place
+  that converts between "fraction of the frame", which is how the preview lays
+  a box out, and "times the asset's native pixel size", which is how media3
+  draws one. The picture-in-picture compositor uses it too, and a test holds
+  the property that actually matters: an overlay is the same size on screen as
+  it is in the render.
 - Composition-level `Presentation.createForWidthAndHeight` fixes the canvas.
 - `Transformer` + `DefaultEncoderFactory(VideoEncoderSettings(bitrate))` renders
   hardware-to-hardware; progress is polled into a cold `callbackFlow`;

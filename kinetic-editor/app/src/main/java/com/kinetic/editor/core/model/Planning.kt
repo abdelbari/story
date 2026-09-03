@@ -324,3 +324,29 @@ fun motionAt(base: TransformSpec, motion: ClipMotion, progress: Float): Transfor
         )
     }
 }
+
+/* ------------------------------ overlay sizing ----------------------------- */
+
+/**
+ * The multiplier media3 needs so an overlay covers [fractionOfWidth] of the
+ * frame it is drawn into.
+ *
+ * The compositor and the overlay effect both draw at the source's NATIVE pixel
+ * size times a scale, so the same sticker would come out a different size on
+ * every canvas and the same picture-in-picture a different size for every
+ * source resolution. The preview, meanwhile, lays its boxes out as a plain
+ * fraction of the frame. This is the conversion between the two, in one place,
+ * so "scale means fraction of the frame's width" holds on both sides — and can
+ * be tested rather than reasoned about.
+ *
+ * Height needs no conversion: media3 scales both axes by this, which preserves
+ * the source's own proportions, exactly as the preview does.
+ */
+fun overlayScaleFor(fractionOfWidth: Float, frameWidthPx: Int, assetWidthPx: Int): Float =
+    if (assetWidthPx > 0 && frameWidthPx > 0) {
+        fractionOfWidth * frameWidthPx / assetWidthPx
+    } else {
+        // Unknown geometry: fall back to the raw fraction rather than dividing
+        // by nothing. Wrong size beats no frame.
+        fractionOfWidth
+    }

@@ -22,6 +22,7 @@ import com.kinetic.editor.core.model.OverlayAnim
 import com.kinetic.editor.core.model.OverlayAnimState
 import com.kinetic.editor.core.model.TextSpec
 import com.kinetic.editor.core.model.overlayAnimAt
+import com.kinetic.editor.core.model.overlayScaleFor
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TrackType
 
@@ -150,7 +151,7 @@ private class TimedStickerOverlay(
     private val endUs: Long,
 ) : BitmapOverlay() {
 
-    private val scale = spec.scale * canvasWidth / bitmap.width
+    private val scale = overlayScaleFor(spec.scale, canvasWidth, bitmap.width)
 
     override fun getBitmap(presentationTimeUs: Long): Bitmap = bitmap
 

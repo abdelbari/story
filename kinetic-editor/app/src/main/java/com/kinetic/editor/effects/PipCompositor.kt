@@ -7,6 +7,7 @@ import androidx.media3.common.util.Size
 import androidx.media3.effect.StaticOverlaySettings
 import com.kinetic.editor.core.model.PipSpec
 import com.kinetic.editor.core.model.PipWindow
+import com.kinetic.editor.core.model.overlayScaleFor
 import com.kinetic.editor.core.model.pipWindowAt
 
 /**
@@ -62,13 +63,11 @@ class PipCompositorSettings(
 
         override fun getScale(): Pair<Float, Float> {
             val sizes = inputSizes
-            val primary = sizes.getOrNull(0)
-            val overlay = sizes.getOrNull(inputId)
-            val s = if (primary != null && overlay != null && overlay.width > 0) {
-                pip.scale * primary.width / overlay.width
-            } else {
-                pip.scale
-            }
+            val s = overlayScaleFor(
+                fractionOfWidth = pip.scale,
+                frameWidthPx = sizes.getOrNull(0)?.width ?: 0,
+                assetWidthPx = sizes.getOrNull(inputId)?.width ?: 0,
+            )
             return Pair.create(s, s)
         }
 
