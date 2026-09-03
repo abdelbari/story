@@ -30,3 +30,14 @@ How it stands up:
 
 What it cannot do is draw: the stubs have no canvas behind them, so this
 checks what a reader *reads*, never what a page *looks like*.
+
+And what a stub checks is the code, not the library. `Log` and `Paint`
+stand in for classes whose shape is settled and whose use here is a line
+or two; `TessBaseAPI` stands in for a library this build cannot fetch, so
+its four methods are written to match what the reader already calls. That
+catches a change to the reader. It does not catch a wrong belief about the
+library: a call to some *other* method of Tesseract, added to the stub to
+make it compile, would compile here and fail in CI's Android job — which
+is the one place the real library is on the classpath. Anything that needs
+recognition's own output, rather than the code around it, has to be
+proved there.
