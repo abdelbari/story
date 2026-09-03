@@ -223,6 +223,17 @@ class PackageIntegrityTest {
                 }
             }
             faults += commentFaults(document, parts["word/comments.xml"]?.let(::parse))
+            // A link into the document names a place, and a name nothing
+            // defines is a link that does nothing when it is clicked —
+            // which is the whole of what a converted contents page is for.
+            val bookmarked = descendants(document)
+                .filter { it.namespaceURI == w && it.localName == "bookmarkStart" }
+                .mapNotNull { it.getAttributeNS(w, "name").ifEmpty { null } }.toSet()
+            for (element in descendants(document)) {
+                if (element.namespaceURI != w || element.localName != "hyperlink") continue
+                val anchor = element.getAttributeNS(w, "anchor").ifEmpty { null } ?: continue
+                if (anchor !in bookmarked) faults += "a link points at $anchor, which no bookmark defines"
+            }
         }
         return faults
     }

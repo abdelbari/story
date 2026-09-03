@@ -1655,6 +1655,7 @@ internal object AndroidStructureTreeReader {
             }
             applySpacing()
             markPageBreaks()
+            pointInternalLinks()
             val paragraphs = blocks.filterIsInstance<Paragraph>()
             val rtl = paragraphs.count { it.style.direction == TextDirection.RTL }
             val defaultDirection =
@@ -1700,6 +1701,41 @@ internal object AndroidStructureTreeReader {
          * where its text could have run cannot be explained that way: the
          * producer broke it, and the break is part of the document.
          */
+        /**
+         * Every link that led to a page of the PDF pointed at a place in
+         * the document instead.
+         *
+         * Nothing outside a PDF knows what "page 12" means, so a link to
+         * one is marked as it is read and [InternalLinks] turns the mark
+         * into a name given to the first paragraph of that page — and it
+         * says outright that it is the only thing which ever does, since
+         * a mark that reached a converted file would be a link to a
+         * scheme no reader has. The reading of a page with no tags has
+         * always called it. This reading imported it and never called it,
+         * so every internal link of every tagged file went out as that
+         * mark: a book's, a manual's or a thesis's contents page, which is
+         * made of nothing else, converted to a page of dead links.
+         *
+         * Which page each block begins on is already known, from the
+         * placements the page breaks are worked out from — as an index
+         * counting from zero, where a link's mark names the page counting
+         * from one. Handed over unconverted, every link led one page short
+         * of where it should: the mark for page two found the paragraph
+         * that opens page three, and the last page of the file had no
+         * paragraph answering for it at all, so the link to it was dropped.
+         */
+        private fun pointInternalLinks() {
+            val paged = blocks.mapIndexed { index, block ->
+                // Zero where nothing placed the block, which is no page at
+                // all: a page counts from one.
+                (placementByBlockIndex[index]?.firstPage?.plus(1) ?: 0) to block
+            }
+            val pointed = InternalLinks.resolve(paged)
+            check(pointed.size == blocks.size)
+            blocks.clear()
+            blocks.addAll(pointed)
+        }
+
         private fun markPageBreaks() {
             // A note is pinned to the foot of its page whatever the text
             // above it does, so a page whose text stopped half way still
