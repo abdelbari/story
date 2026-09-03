@@ -305,7 +305,10 @@ object PdfLayout {
                 first.page,
                 flows[first] ?: 0,
                 first.baselineY,
-                paragraph(clusterLines, kind, sureness, blockByPage, next, bodyRules, flatClusters.getOrNull(index - 1)?.lastOrNull()),
+                paragraph(
+                    clusterLines, kind, sureness, blockByPage, next, bodyRules,
+                    flatClusters.getOrNull(index - 1)?.lastOrNull(),
+                ),
             )
         }
         val textCount = positioned.size
@@ -844,6 +847,26 @@ object PdfLayout {
         return startsIn > INDENT_SHIFT_PT
     }
 
+    /** How far a line stands in from the edge its block starts at. */
+    private fun depthOf(line: PdfLine, block: Pair<Float, Float>?, direction: TextDirection?): Float {
+        if (block == null) return 0f
+        return (if (direction == TextDirection.RTL) block.second - line.xEnd else line.x - block.first)
+            .coerceAtLeast(0f)
+    }
+
+    /** Depths within this of each other are the one depth. */
+    private const val SAME_DEPTH_PT = 6f
+
+    /** What a sentence stops on, a bracket or a quote closed after it allowed for. */
+    private const val SENTENCE_ENDS = ".:!?\u061F\u06D4\u2026"
+    private const val CLOSERS = ")]}\u00BB\u203A\u0022\u0027\u201D\u2019"
+
+    /** Whether [text] reaches the end of a sentence rather than stopping mid-way. */
+    private fun finishesASentence(text: String): Boolean {
+        val trimmed = text.trimEnd().trimEnd { it in CLOSERS }
+        return trimmed.lastOrNull()?.let { it in SENTENCE_ENDS } ?: false
+    }
+
     private fun endGap(line: PdfLine, block: Pair<Float, Float>, rtl: Boolean): Float =
         (if (rtl) line.x - block.first else block.second - line.xEnd).coerceAtLeast(0f)
 
@@ -873,6 +896,26 @@ object PdfLayout {
         // rule about gaps alone reads a page of items as one paragraph,
         // and a converted checklist comes back as a wall of prose.
         if (ListLabels.opensWithLabel(line.text)) return true
+        // And a line that has come back out to the edge its block starts
+        // at, under an item that finished what it was saying, is the prose
+        // after the list rather than the rest of that item. Without it the
+        // sentence after a list is swallowed by the item above it.
+        //
+        // The geometry alone will not do, and was tried and withdrawn once
+        // before: an item that does not hang carries on at the margin too,
+        // so the rule split the items of a real Arabic paper after their
+        // first line. What tells the two apart is whether the item had
+        // finished — a line that stops mid-sentence is being carried on,
+        // wherever the line under it begins.
+        if (ListLabels.opensWithLabel(previous.text) && finishesASentence(previous.text)) {
+            val edge = blockByPage[line.page]
+            val direction = Bidi.firstStrongDirection(previous.text)
+            if (edge != null &&
+                depthOf(line, edge, direction) + SAME_DEPTH_PT < depthOf(previous, edge, direction)
+            ) {
+                return true
+            }
+        }
         val size = max(previous.maxFontSize, line.maxFontSize)
         val pitch = if (medianPitch > 0f) medianPitch else FALLBACK_PITCH_FACTOR * size
         // Either reading of "further apart than the lines of a paragraph":

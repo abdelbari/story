@@ -106,6 +106,48 @@ class ParagraphBreaksTest {
         assertEquals(3, paragraphs.size, "read as ${paragraphs.size}: ${paragraphs.map { it.text }}")
     }
 
+    /** A list of three items set in from the margin, with prose after it. */
+    private fun listThen(lastItemEnds: String): List<PdfLine> {
+        val out = mutableListOf<PdfLine>()
+        var y = 100f
+        for (item in 1..3) {
+            out += line("\u2022 an item of the list set in from the margin", 130f, 430f, y)
+            y += 21f
+        }
+        out[out.size - 1] = out.last().copy(
+            text = "\u2022 an item of the list set in from the margin$lastItemEnds",
+        )
+        out += line("prose after the list, back at the margin the block", 100f, 470f, y)
+        out += line("starts from, carrying on for a second line of it", 100f, 464f, y + 21f)
+        return out
+    }
+
+    @Test
+    fun `the prose after a finished item is not the rest of that item`() {
+        // Without this the sentence after a list is swallowed by the item
+        // above it — every list on every page.
+        val paragraphs = paragraphs(listThen("."))
+        assertEquals(4, paragraphs.size, "read as ${paragraphs.size}: ${paragraphs.map { it.text.take(30) }}")
+        assertTrue(
+            paragraphs.last().text.startsWith("prose after the list"),
+            "the prose was joined to the item: ${paragraphs.last().text.take(60)}",
+        )
+    }
+
+    @Test
+    fun `an item that stopped mid-sentence carries on wherever the next line begins`() {
+        // The guard, and the reason the geometry alone will not do: an item
+        // that does not hang carries on at the margin too. A rule that read
+        // the indent and nothing else was tried once and withdrawn, because
+        // it split the items of a real Arabic paper after their first line.
+        val paragraphs = paragraphs(listThen(" and"))
+        assertEquals(3, paragraphs.size, "read as ${paragraphs.size}: ${paragraphs.map { it.text.take(30) }}")
+        assertTrue(
+            paragraphs.last().text.contains("prose after the list"),
+            "the item's own carrying-on line was cut off: ${paragraphs.last().text.take(60)}",
+        )
+    }
+
     @Test
     fun `lines evenly spaced and evenly set are one paragraph, not nine`() {
         // The guard on both readings above: nothing here says a paragraph
