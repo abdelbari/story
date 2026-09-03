@@ -161,7 +161,7 @@ internal object PdfFileExporter {
             val opening = (model.blocks.firstOrNull() as? Paragraph)?.style?.sectionSetup
             val sheet = Sheet.of(opening ?: model.pageSetup)
             val furniture = Furniture(model, sheet)
-            val cursor = Cursor(pdf, sheet) { canvas, ordinal -> furniture.draw(canvas, ordinal) }
+            val cursor = Cursor(pdf, sheet) { canvas, ordinal, on -> furniture.draw(canvas, ordinal, on) }
             cursor.openPage()
             val counts = ListCounts()
             for (block in model.blocks) {
@@ -188,11 +188,11 @@ internal object PdfFileExporter {
         }
     }
 
-    /** One open page and a top-down write position within it; [furnish] draws each page's head and foot as it opens. */
+    /** One open page and a top-down write position within it; [furnish] draws each page's head and foot, on the sheet that page is set on, as it opens. */
     private class Cursor(
         private val pdf: PdfDocument,
         sheet: Sheet,
-        private val furnish: (Canvas, Int) -> Unit,
+        private val furnish: (Canvas, Int, Sheet) -> Unit,
     ) {
         /**
          * The sheet the pages are drawn on. A document turns a page
@@ -239,7 +239,7 @@ internal object PdfFileExporter {
                 PdfDocument.PageInfo.Builder(sheet.width, sheet.height, pageCount).create()
             )
             page = opened
-            furnish(opened.canvas, pageCount)
+            furnish(opened.canvas, pageCount, sheet)
             y = sheet.marginTop
         }
 
@@ -297,30 +297,37 @@ internal object PdfFileExporter {
      * page-number field with this page's number — because that is what it
      * is on the page, and a text layout would wrap or reorder it.
      */
-    private class Furniture(private val model: DocumentModel, private val sheet: Sheet) {
+    /**
+     * [opening] is the sheet the document opens on, which is where its
+     * pages are numbered from; every other measurement is made against
+     * the sheet the page being drawn is set on, since a document turns a
+     * page sideways for a wide table and the head goes on the wide page
+     * as it goes on the others.
+     */
+    private class Furniture(private val model: DocumentModel, private val opening: Sheet) {
         private val bitmaps = IdentityHashMap<ImageBlock, Bitmap?>()
 
-        fun draw(canvas: Canvas, ordinal: Int) {
-            val number = sheet.firstPageNumber + ordinal - 1
+        fun draw(canvas: Canvas, ordinal: Int, sheet: Sheet) {
+            val number = opening.firstPageNumber + ordinal - 1
             if (model.header.isNotEmpty()) {
                 var y = sheet.headerDistance
-                for (block in model.header) y += drawBlock(canvas, block, y, number)
+                for (block in model.header) y += drawBlock(canvas, block, y, number, sheet)
             }
             if (model.footer.isNotEmpty()) {
-                val height = model.footer.sumOf { heightOf(it, number).toDouble() }.toFloat()
+                val height = model.footer.sumOf { heightOf(it, number, sheet).toDouble() }.toFloat()
                 var y = sheet.height - sheet.footerDistance - height
-                for (block in model.footer) y += drawBlock(canvas, block, y, number)
+                for (block in model.footer) y += drawBlock(canvas, block, y, number, sheet)
             }
         }
 
-        private fun heightOf(block: Block, number: Int): Float = when (block) {
+        private fun heightOf(block: Block, number: Int, sheet: Sheet): Float = when (block) {
             is ImageBlock -> pictureSize(block, sheet.contentWidth.toFloat()).second
-            is Paragraph -> line(block, number).height
+            is Paragraph -> line(block, number, sheet).height
             is Table -> 0f
         }
 
         /** Draws [block] with its top at [y]; returns its height. */
-        private fun drawBlock(canvas: Canvas, block: Block, y: Float, number: Int): Float = when (block) {
+        private fun drawBlock(canvas: Canvas, block: Block, y: Float, number: Int, sheet: Sheet): Float = when (block) {
             is ImageBlock -> {
                 val (width, height) = pictureSize(block, sheet.contentWidth.toFloat())
                 val bitmap = bitmapOf(block)
@@ -331,7 +338,7 @@ internal object PdfFileExporter {
                 height
             }
             is Paragraph -> {
-                val line = line(block, number)
+                val line = line(block, number, sheet)
                 for (piece in line.pieces) piece.draw(canvas, y + line.baseline)
                 line.height
             }
@@ -367,7 +374,7 @@ internal object PdfFileExporter {
          * start edge in logical order, a tab jumping to the next stop, a
          * picture standing on the baseline as Word stands one.
          */
-        private fun line(paragraph: Paragraph, number: Int): Line {
+        private fun line(paragraph: Paragraph, number: Int, sheet: Sheet): Line {
             val rightToLeft = rtl(paragraph)
             val left = sheet.marginLeft
             val right = sheet.width - sheet.marginRight

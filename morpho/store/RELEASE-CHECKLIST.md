@@ -76,9 +76,11 @@ Work through, in this order — each exercises a path nothing else covers:
 - [ ] **A report with one page turned sideways** — a portrait document
       with a landscape appendix or a wide table. In Word that page must be
       landscape and the rest portrait, and the preview's pages must turn
-      with it. A running head on a turned page is still set to the measure
-      the document opens on; that is known. Try it from a Word document
-      with a landscape section as well as from a PDF.
+      with it, with the running head running the full width of the turned
+      page and the numbering carrying straight on across the turn. Try it
+      from a Word document with a landscape section as well as from a PDF.
+      The preview's HTML still lays the whole document on one sheet; that
+      is known.
 - [ ] **A document with a table** — one with rules and one that is only
       aligned columns. The columns must keep their widths (a column of
       dates stays narrow), and the second must arrive with no lines
