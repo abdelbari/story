@@ -101,6 +101,21 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
             return left to right
         }
 
+        /**
+         * The line as the pieces a page's gutters cut it into, in the
+         * order they stand across the page. A piece that lies wholly in
+         * one column meets no gutter but its own and stays whole.
+         */
+        fun cutInto(strips: List<Pair<Float, Float>>): List<PendingLine> {
+            var pieces = listOf(this)
+            for (strip in strips) {
+                pieces = pieces.flatMap { piece ->
+                    piece.cutAt(strip)?.let { listOf(it.first, it.second) } ?: listOf(piece)
+                }
+            }
+            return pieces
+        }
+
         private fun slice(from: Int, to: Int): PendingLine? {
             val text = visual.substring(from, to)
             if (text.isBlank()) return null
@@ -319,18 +334,42 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         if (byPage.isEmpty()) return
         val cut = mutableListOf<PendingLine>()
         for ((_, lines) in byPage.entries.sortedBy { it.key }) {
-            val strip = PdfColumns.gutterOfMarks(lines.map { it.marks() })
-            if (strip == null) {
+            val strips = gutters(lines, depth = 0)
+            if (strips.isEmpty()) {
                 cut += lines
                 continue
             }
-            for (line in lines) {
-                val halves = line.cutAt(strip)
-                if (halves == null) cut += line else cut += listOf(halves.first, halves.second)
-            }
+            for (line in lines) cut += line.cutInto(strips)
         }
         pending.clear()
         pending += cut
+    }
+
+    /**
+     * Every strip the lines of a page agree on leaving clear, in the order
+     * they stand across it.
+     *
+     * A page of three columns is a page of two, one of which is a page of
+     * two — so each side is asked the same question again. Asked once, a
+     * page of three gave up its second gutter alone, and the two columns
+     * left on the other side of it were read as a table of two with half a
+     * sentence in every cell, which is the very thing finding the first
+     * gutter was for.
+     *
+     * A line that runs across a strip rather than stopping at it — a
+     * title, a heading over the columns, the running head — is left out of
+     * the question the columns under it are asked, having nothing to say
+     * about where they divide.
+     */
+    private fun gutters(lines: List<PendingLine>, depth: Int): List<Pair<Float, Float>> {
+        if (depth >= PdfColumns.DEEPEST_SPLIT) return emptyList()
+        val strip = PdfColumns.gutterOfMarks(lines.map { it.marks() }) ?: return emptyList()
+        val halves = lines.mapNotNull { it.cutAt(strip) }
+        return (
+            gutters(halves.map { it.first }, depth + 1) +
+                listOf(strip) +
+                gutters(halves.map { it.second }, depth + 1)
+            ).sortedBy { it.first }
     }
 
     /**
