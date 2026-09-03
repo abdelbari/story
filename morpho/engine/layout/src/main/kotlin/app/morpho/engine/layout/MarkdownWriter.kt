@@ -19,7 +19,9 @@ package app.morpho.engine.layout
  *
  * Honest losses, stated rather than hidden: Markdown has no underline (the
  * flag is dropped), no text direction markup (RTL survives in the characters
- * themselves, not in syntax), and no per-run language tags. Images become
+ * themselves, not in syntax), no per-run language tags, and no way to name
+ * a typeface, a size, a colour or a highlight — the words keep their order
+ * and their emphasis, and everything about how they looked is gone. Images become
  * self-contained data-URI image syntax — large but faithful, and one-way:
  * [PlainTextImporter] reads such a line back as literal text, not an image.
  * A note is one-way too: read back, its reference is literal text and its

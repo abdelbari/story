@@ -63,20 +63,30 @@ import kotlin.math.roundToInt
  * the face, size and weight it carries, raised or lowered where it is a
  * super- or subscript; paragraph indents, tab stops, the space before and
  * after a paragraph and the pitch of its lines as measured, the pitch
- * exact the way Word sets it; the running head and foot drawn on every
- * page at their distance from the edge, a page-number field counting from
- * where the source did; a page begun where the source began one, so the
+ * exact the way Word sets it; the running head and foot drawn at their
+ * distance from the edge of every page that carries them — which is not a
+ * title page that carried none, and is whichever side of the opening the
+ * page falls on where a book heads its two sides differently — with a
+ * page-number field counting from where the source did; a page begun
+ * where the source began one, so the
  * pages hold what the same pages held; paragraphs split across pages
- * line-by-line. Honest
- * v1 limits, documented rather than hidden: tables take the widths their
- * columns were measured at, are ruled only where the page ruled them, and
- * spread a cell across the columns it covers, hold pictures as well as
- * words, and carry a row longer than the page left over the page, cut
- * between lines, but they draw a cell that covers several rows in the
- * first of them alone and skip a table inside a cell; images scale
- * into the content box at their measured size, else at the CSS px→pt
- * ratio; list markers are plain text prefixes, so an RTL numbered item
- * shows its number on the right but with Western digits.
+ * line-by-line.
+ *
+ * Tables take the widths their columns were measured at, are ruled only
+ * where the page ruled them, spread a cell across the columns it covers
+ * and down the rows it covers, hold pictures as well as words, repeat a
+ * head that was marked as one, and carry a row longer than the page over
+ * to the next, cut between lines.
+ *
+ * Honest limits, documented rather than hidden: a table inside a cell is
+ * skipped; images scale into the content box at their measured size, else
+ * at the CSS px→pt ratio; list markers are plain text prefixes, so an RTL
+ * numbered item shows its number on the right but with Western digits; and
+ * a link is drawn in the colour and underline it carries but is not
+ * clickable, because the platform's own PDF writer has no way to put an
+ * annotation on a page and re-writing the finished file through a second
+ * library to add them would cost a phone the memory of a second copy of
+ * the document.
  */
 internal object PdfFileExporter {
 
