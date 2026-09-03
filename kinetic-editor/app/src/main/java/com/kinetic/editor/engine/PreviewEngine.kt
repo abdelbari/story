@@ -196,6 +196,7 @@ class PreviewEngine(
         latestState = state
         rebuildSegments(state)
         rebuildFx(state)
+        publishOverlays(state)
         for (slave in slaves.values) slave.refresh(state)
     }
 
@@ -442,8 +443,23 @@ class PreviewEngine(
             val slave = slaves.getOrPut(track.id.value) { SlavePlayer(ExoPlayer.Builder(context).build()) }
             slave.rebuild(state, track)
         }
-        _overlays.value = slaveTracks
-            .filter { it.type == TrackType.VIDEO_OVERLAY }
+        publishOverlays(state)
+    }
+
+    /**
+     * Republishes the PiP placement windows the UI lays its boxes out from.
+     *
+     * Called on the COSMETIC path as well as the structural one, and that is the
+     * point: dragging the PiP size/position sliders changes no playlist, so it
+     * routes as cosmetic and never reaches rebuildSlaves — the box on screen
+     * would sit still while the exported one moved. Putting placement in the
+     * structural hash instead would tear down and re-prepare the PiP player on
+     * every frame of the drag. Handles are values, so a commit that does not
+     * touch placement produces an equal list and the StateFlow stays silent.
+     */
+    private fun publishOverlays(state: TimelineState) {
+        _overlays.value = state.tracks
+            .filter { it.type == TrackType.VIDEO_OVERLAY && it.clips.isNotEmpty() }
             .map { OverlayHandle(it.id.value, pipWindows(state.placements(it))) }
     }
 

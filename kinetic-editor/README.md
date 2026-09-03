@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 39 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 40 pure-JVM logic tests
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
@@ -40,8 +40,8 @@ environment, so the app has not been assembled by Gradle there. Instead:
   undefined name and a missing import in `EditorScreen`.)
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 39 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 42-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 40 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 43-scenario executable sandbox suite.
 
 ---
 
@@ -106,6 +106,14 @@ must actually move:
 |---|---|---|---|
 | Cosmetic (grade/LUT/transition/volume/speed/text) | always | volatile FX + segment snapshot swap | ~µs |
 | Audio / PiP structure | `audioStructureHash()`, `overlayStructureHash()` | rebuild slave playlists | ms, rare |
+
+The line between the first two rows is load-bearing in both directions. A PiP's
+placement is deliberately *absent* from `overlayStructureHash`, so dragging its
+size or position does not tear down and re-prepare the PiP player sixty times a
+second — but the preview still has to follow, so `publishOverlays` runs on the
+cosmetic path too and re-emits the placement windows the UI lays its boxes out
+from. Handles are values, so a commit that touches no placement produces an
+equal list and the flow stays silent. A unit test pins both halves.
 | Video structure (trim/reorder/add/remove) | `videoStructureHash()` | rebuild `ConcatenatingMediaSource2`, position-preserving | ~100 ms, rare |
 
 This is why dragging a saturation slider during playback re-renders every frame

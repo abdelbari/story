@@ -49,6 +49,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -376,6 +377,31 @@ class CoreLogicTest {
         assertEquals(1f, spec.scale, 1e-3f)
         assertEquals(30f, spec.rotationDeg, 1e-3f)
         assertEquals("sticker:s", EditorIntent.SetSticker(stickerClip.id, spec).coalesceKey)
+    }
+
+    @Test
+    fun pipPlacementIsCosmeticNotStructural() {
+        // The routing contract PreviewEngine.publishOverlays depends on: moving
+        // or resizing a PiP must NOT land in the structural hash, or the slave
+        // player would be torn down and re-prepared on every frame of the drag.
+        // Trim and placement in time must, because those do change the playlist.
+        val pipClip = ClipModel(
+            ClipId("p"), MediaRef("uri://pip", 4_000, true, false, 30f), 0, 4_000,
+            startMs = 1_000, pip = PipSpec(),
+        )
+        val base = TimelineState.empty()
+        val withPip = base.copy(
+            tracks = base.tracks.map {
+                if (it.type == TrackType.VIDEO_OVERLAY) it.copy(clips = persistentListOf(pipClip)) else it
+            }.toPersistentList(),
+        )
+
+        val moved = reduce(withPip, EditorIntent.SetPip(pipClip.id, PipSpec(scale = 0.9f)))
+        assertEquals(withPip.overlayStructureHash(), moved.overlayStructureHash())
+        assertEquals(0.9f, moved.tracks.first { it.type == TrackType.VIDEO_OVERLAY }.clips[0].pip!!.scale, 1e-3f)
+
+        val trimmed = reduce(withPip, EditorIntent.TrimClip(pipClip.id, 500, 4_000))
+        assertNotEquals(withPip.overlayStructureHash(), trimmed.overlayStructureHash())
     }
 
     @Test
