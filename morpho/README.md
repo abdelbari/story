@@ -346,6 +346,34 @@ for.
   of entries this way, out of its eighteen, and a guess is worse than the
   join.
 
+  The count reconciles exactly, which is how that claim can be checked
+  rather than taken on trust: eighteen paragraphs read through the tags
+  become eleven read without them, and the seven differences are those
+  four wrong joins plus three the untagged reading gets *more* right than
+  the tags do. Four of the eighteen are not entries at all but the tail
+  of one — a place and a publisher the author left on a line of their own,
+  "الجزائر: ديوان المطبوعات الجامعية" under the entry it belongs to, and
+  "للنشر" under another — and the untagged reading puts three of the four
+  back where they belong. The tagged reading keeps them apart because the
+  file says to: the paragraphs are the author's, and reproducing the
+  document as it stands is the job.
+
+  Across the whole paper the two readings differ in eleven places and no
+  more, which is the first time that gap has been counted rather than
+  estimated: eight where the untagged reading runs paragraphs together —
+  the six in the bibliography above, and two in the body where a line
+  stops a hair short of its margin and the reading cannot tell that from
+  a line that filled up — and three where it breaks one paragraph in two,
+  one of them a citation the page set on a line of its own. Aligned in
+  both directions, nothing is left over on either side. Each of the three
+  classes was looked at for a rule that would settle it: the bibliography
+  has none, since its entries are indented by anything between nothing
+  and forty-four points with no pattern to it; and the one clean rule
+  available for the third — that a line holding nothing but a bracketed
+  citation is the tail of the line above — fires once in the three
+  thousand eight hundred paragraphs of the corpus, which is not enough to
+  earn a rule that could be wrong somewhere else.
+
   Where the file *is* tagged, none of that applies and none of it happens:
   the producer says outright where each paragraph begins, and the tagged
   reading — which is the reading that paper actually gets, and every
