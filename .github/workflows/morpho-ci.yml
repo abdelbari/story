@@ -90,6 +90,41 @@ jobs:
         working-directory: morpho/android
         run: ./gradlew :app:assembleRelease :app:bundleRelease
 
+      # TEMPORARY, and to be removed once it has answered: this container
+      # cannot fetch cz.adaptech.tesseract4android at all (404 on the POM
+      # and on maven-metadata), so the recognition API can only be guessed
+      # at from memory — and a guess is what the reader that drives it
+      # would then be written against. CI has the real archive. This prints
+      # its signatures so the reader can be written against the truth
+      # instead. It never fails the build.
+      - name: TEMPORARY — print the recognition API this build actually has
+        working-directory: morpho/android
+        run: |
+          set -uo pipefail
+          aar=$(find ~/.gradle/caches -name 'tesseract4android-*.aar' 2>/dev/null | head -n 1)
+          if [ -z "$aar" ]; then
+            echo "no tesseract archive in the cache; what is there:"
+            find ~/.gradle/caches -iname '*tesseract*' 2>/dev/null | head -n 20
+            exit 0
+          fi
+          echo "archive: $aar"
+          tmp=$(mktemp -d)
+          unzip -q -o "$aar" -d "$tmp" || true
+          echo "--- what the archive holds ---"
+          unzip -Z1 "$aar" | head -n 20
+          jar=$(find "$tmp" -name '*.jar' | head -n 1)
+          echo "--- classes in $jar ---"
+          unzip -Z1 "$jar" | grep -F '.class' | head -n 40
+          for cls in \
+            com.googlecode.tesseract.android.TessBaseAPI \
+            com.googlecode.tesseract.android.ResultIterator \
+            com.googlecode.tesseract.android.PageIterator \
+            'com.googlecode.tesseract.android.TessBaseAPI$PageIteratorLevel' \
+            com.googlecode.leptonica.android.Pixa ; do
+            echo "--- $cls ---"
+            javap -classpath "$jar" "$cls" 2>&1 | head -n 60 || true
+          done
+
       # Recognition reads its language models out of the app's own assets at
       # runtime. Nothing in a build says whether they are still in the
       # artifact: resource shrinking does not touch assets today, and if a
