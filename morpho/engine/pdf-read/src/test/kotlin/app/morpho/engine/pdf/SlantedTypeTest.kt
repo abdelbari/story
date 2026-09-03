@@ -6,6 +6,7 @@ import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.PDPageContentStream
 import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.pdmodel.font.PDType1Font
+import org.apache.pdfbox.pdmodel.graphics.state.RenderingMode
 import org.apache.pdfbox.util.Matrix
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
@@ -100,5 +101,42 @@ class SlantedTypeTest {
             line.runs.filter { it.italic }.joinToString("") { it.text }.trim(),
             "the title in the middle of the line did not come back as the italic it is",
         )
+    }
+
+    @Test
+    fun `a word the page thickened by stroking round it comes back bold`() {
+        // A producer with no bold cut of the typeface draws each letter
+        // and then strokes round it. The font it names is the light one,
+        // exactly as with a faked italic.
+        val bytes = PDDocument().use { doc ->
+            val page = PDPage(PDRectangle.A4)
+            doc.addPage(page)
+            PDPageContentStream(doc, page).use { content ->
+                var x = 72f
+                for ((word, heavy) in listOf("A" to false, "thickened" to true, "word" to false)) {
+                    content.beginText()
+                    content.setFont(PDType1Font.HELVETICA, 12f)
+                    content.setRenderingMode(
+                        if (heavy) RenderingMode.FILL_STROKE else RenderingMode.FILL,
+                    )
+                    content.setLineWidth(if (heavy) 0.4f else 0f)
+                    content.newLineAtOffset(x, 700f)
+                    content.showText("$word ")
+                    content.endText()
+                    x += PDType1Font.HELVETICA.getStringWidth("$word ") / 1000f * 12f
+                }
+            }
+            val out = ByteArrayOutputStream()
+            doc.save(out)
+            out.toByteArray()
+        }
+        val line = paragraphs(bytes).single()
+        assertEquals("A thickened word", line.text)
+        assertEquals(
+            "thickened",
+            line.runs.filter { it.bold }.joinToString("") { it.text }.trim(),
+            "the word the page stroked round did not come back bold",
+        )
+        assertEquals("", line.runs.filter { it.italic }.joinToString("") { it.text })
     }
 }

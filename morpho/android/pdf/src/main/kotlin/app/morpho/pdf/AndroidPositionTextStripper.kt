@@ -10,8 +10,9 @@ import app.morpho.engine.layout.pdf.PdfMarks
 import app.morpho.engine.layout.pdf.PdfPageSheet
 import app.morpho.engine.layout.pdf.PdfRule
 import app.morpho.engine.layout.pdf.PdfRun
-import app.morpho.engine.layout.pdf.PdfSlant
 import app.morpho.engine.layout.pdf.PdfSegment
+import app.morpho.engine.layout.pdf.PdfSlant
+import app.morpho.engine.layout.pdf.PdfWeight
 import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingColor
 import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingColorN
 import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingColorSpace
@@ -131,6 +132,9 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
     private val paintOrder = IdentityHashMap<TextPosition, Int>()
     /** The colour each glyph was painted in, where it was not the plain black a page paints with. */
     private val colors = IdentityHashMap<TextPosition, Int>()
+
+    /** The glyphs the page thickened by stroking round them, which is a bold nothing names. */
+    private val stroked = IdentityHashMap<TextPosition, Boolean>()
     /** Where the pages' link annotations point, when the document has any. */
     private var links: AndroidPageLinks? = null
     private var highlights: AndroidPageHighlights? = null
@@ -168,6 +172,7 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         sheets.clear()
         paintOrder.clear()
         colors.clear()
+        stroked.clear()
         ruleCatcher.rules.clear()
         ruleCatcher.marks.clear()
         paintedSoFar = 0
@@ -254,8 +259,18 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
     override fun processTextPosition(text: TextPosition) {
         paintOrder[text] = paintedSoFar++
         AndroidPaintColor.of(graphicsState)?.let { colors[text] = it }
+        // A producer with no bold cut of the typeface strokes round each
+        // letter to thicken it. The state that says so is gone by the time
+        // the line is assembled, so it is noted here with the glyph.
+        if (thickened()) stroked[text] = true
         super.processTextPosition(text)
     }
+
+    /** Whether the state the current glyph is drawn in strokes round it to embolden it. */
+    private fun thickened(): Boolean = runCatching {
+        val state = graphicsState
+        PdfWeight.strokes(state.textState.renderingMode.intValue(), state.lineWidth)
+    }.getOrDefault(false)
 
     override fun writeString(text: String, textPositions: List<TextPosition>) {
         if (textPositions.isEmpty()) return
@@ -342,6 +357,7 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         // out of room on a phone long before it runs out of pages.
         paintOrder.clear()
         colors.clear()
+        stroked.clear()
     }
 
     private fun flushLine() {
@@ -476,13 +492,30 @@ internal class AndroidPositionTextStripper : PDFTextStripper() {
         return PdfLook(
             fontFamily = name?.substringAfter('+', name)?.substringBefore(',')?.trim()?.ifEmpty { null },
             fontSizePt = position.fontSizeInPt,
-            bold = name?.contains("Bold", ignoreCase = true) ?: false,
+            bold = heavy(position),
             italic = leans(position),
             raised = raised,
             colorRgb = colors[position],
             highlightRgb = highlightAt(position),
             link = linkAt(position),
         )
+    }
+
+    /**
+     * Whether [position] was drawn heavy, and so reads as bold.
+     *
+     * The font's name is what a producer with the bold cut of a typeface
+     * writes there. A subset with a made-up name says it in its
+     * descriptor instead, and a producer with no bold cut says it in
+     * neither — it strokes round each letter to thicken it, exactly as it
+     * skews the matrix to fake a lean.
+     */
+    private fun heavy(position: TextPosition): Boolean {
+        if (stroked[position] == true) return true
+        val font = position.font
+        if (PdfWeight.named(font?.name)) return true
+        val descriptor = runCatching { font?.fontDescriptor }.getOrNull() ?: return false
+        return runCatching { PdfWeight.declares(descriptor.fontWeight, descriptor.flags) }.getOrDefault(false)
     }
 
     /**

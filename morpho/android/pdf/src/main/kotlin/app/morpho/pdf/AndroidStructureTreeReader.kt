@@ -29,6 +29,7 @@ import app.morpho.engine.layout.pdf.PdfRule
 import app.morpho.engine.layout.pdf.PdfRun
 import app.morpho.engine.layout.pdf.PdfRuns
 import app.morpho.engine.layout.pdf.PdfSlant
+import app.morpho.engine.layout.pdf.PdfWeight
 import com.tom_roush.pdfbox.contentstream.operator.DrawObject
 import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingColor
 import com.tom_roush.pdfbox.contentstream.operator.color.SetNonStrokingColorN
@@ -296,6 +297,9 @@ internal object AndroidStructureTreeReader {
         val marks = mutableListOf<Rule>()
         /** The colour each glyph was painted in, where it was not the plain black a page paints with. */
         val colors = IdentityHashMap<TextPosition, Int>()
+
+        /** The glyphs the page thickened by stroking round them, which is a bold nothing names. */
+        val stroked = IdentityHashMap<TextPosition, Boolean>()
         /** Where each glyph points, for the few a link annotation covers. */
         val links = IdentityHashMap<TextPosition, String>()
         /** The colour marked over each glyph a highlight annotation covers. */
@@ -494,12 +498,22 @@ internal object AndroidStructureTreeReader {
 
         override fun processTextPosition(text: TextPosition) {
             AndroidPaintColor.of(graphicsState)?.let { colors[text] = it }
+            // A producer with no bold cut of the typeface strokes round
+            // each letter to thicken it. The state that says so is gone by
+            // the time a line is assembled, so it is noted with the glyph.
+            if (thickened()) stroked[text] = true
             pageLinks?.at(text.xDirAdj + text.widthDirAdj / 2, text.yDirAdj - text.heightDir / 2)
                 ?.let { links[text] = it }
             pageHighlights?.at(text.xDirAdj + text.widthDirAdj / 2, text.yDirAdj - text.heightDir / 2)
                 ?.let { highlights[text] = it }
             super.processTextPosition(text)
         }
+
+        /** Whether the state the current glyph is drawn in strokes round it to embolden it. */
+        private fun thickened(): Boolean = runCatching {
+            val state = graphicsState
+            PdfWeight.strokes(state.textState.renderingMode.intValue(), state.lineWidth)
+        }.getOrDefault(false)
 
         /** A top-level artifact opens: remember what kind the producer said it was, if any. */
         private fun openArtifact(tag: COSName, properties: COSDictionary?) {
@@ -631,6 +645,9 @@ internal object AndroidStructureTreeReader {
         private val drawnByPageAndMcid = HashMap<Long, FloatArray>()
         /** The colour each glyph was painted in, gathered from every page's extractor before it is let go. */
         private val colorByPosition = IdentityHashMap<TextPosition, Int>()
+
+        /** The glyphs the pages thickened by stroking round them, gathered page by page. */
+        private val strokedByPosition = IdentityHashMap<TextPosition, Boolean>()
         /** Where each glyph points, for the few a link annotation covers. */
         private val linkByPosition = IdentityHashMap<TextPosition, String>()
         private val highlightByPosition = IdentityHashMap<TextPosition, Int>()
@@ -680,6 +697,7 @@ internal object AndroidStructureTreeReader {
                     drawnByPageAndMcid[key(index, mcid)] = box
                 }
                 colorByPosition.putAll(extractor.colors)
+                strokedByPosition.putAll(extractor.stroked)
                 linkByPosition.putAll(extractor.links)
                 highlightByPosition.putAll(extractor.highlights)
             }
@@ -1497,13 +1515,20 @@ internal object AndroidStructureTreeReader {
 
         /**
          * Whether [position] was drawn in a bold face. PDFs carry no weight
-         * of their own, so this reads the embedded font's name — the same
-         * evidence a reader has, and what the producer wrote there when the
-         * author pressed bold. Subset prefixes ("ABCDEE+") do not interfere.
+         * of their own, so this reads what the producer wrote when the
+         * author pressed bold: the font's name, where it has a bold cut to
+         * name (subset prefixes like "ABCDEE+" do not interfere); the
+         * font's own declared weight, where the name was made up; and the
+         * stroke round each letter, where the typeface had no bold cut at
+         * all and the producer thickened it by hand.
          */
         private fun isBold(position: TextPosition): Boolean {
-            val name = position.font?.name ?: return false
-            return name.contains("Bold", ignoreCase = true)
+            if (strokedByPosition[position] == true) return true
+            val font = position.font
+            if (PdfWeight.named(font?.name)) return true
+            val descriptor = runCatching { font?.fontDescriptor }.getOrNull() ?: return false
+            return runCatching { PdfWeight.declares(descriptor.fontWeight, descriptor.flags) }
+                .getOrDefault(false)
         }
 
         /**
