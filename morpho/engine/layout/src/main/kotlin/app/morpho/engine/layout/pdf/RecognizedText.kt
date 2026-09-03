@@ -17,6 +17,24 @@ data class RecognizedWord(
     val bottom: Float,
     /** True where recognition said a new line of the page begins here. */
     val startsLine: Boolean = false,
+    /**
+     * How big the type of this word's line is, where recognition said so.
+     *
+     * Its own estimate beats anything worked out from the boxes: a word's
+     * box is only as tall as the tallest letter in it, so "man" and
+     * "Tagged" in one size box at nearly a factor of two apart. Null where
+     * recognition offered none, and the boxes are used instead.
+     */
+    val sizePt: Float? = null,
+    /**
+     * Whether recognition called the word bold or slanted. Both are false
+     * unless it said otherwise, which with the fast models this app ships
+     * is always: the newer recogniser reports no font at all. Carried
+     * because it costs nothing and a model that does report it makes the
+     * difference between finding a paper's headings and missing them.
+     */
+    val bold: Boolean = false,
+    val italic: Boolean = false,
 )
 
 /**
@@ -74,6 +92,7 @@ object RecognizedText {
         if (words.isEmpty()) return null
         val text = words.joinToString(" ") { it.text }
         if (text.isBlank()) return null
+        val looked = words.any { it.bold || it.italic }
         return PdfLine(
             text = text,
             x = words.minOf { it.left },
@@ -88,6 +107,16 @@ object RecognizedText {
             // One segment a word, which is what a table's columns are
             // found from: the gaps between them across a run of lines.
             segments = words.map { PdfSegment(it.text, it.left, it.right) },
+            // Runs only where recognition said something about the type.
+            // Empty means "nothing was captured", which is not the same
+            // as "every word is plain", and the reading treats them
+            // differently.
+            runs = if (!looked) emptyList() else words.mapIndexed { at, word ->
+                PdfRun(
+                    text = word.text + if (at < words.size - 1) " " else "",
+                    look = PdfLook(bold = word.bold, italic = word.italic),
+                )
+            },
         )
     }
 
@@ -107,6 +136,9 @@ object RecognizedText {
      * stop is all extreme, and on a short line it decides the answer.
      */
     private fun sizeOf(words: List<RecognizedWord>): Float {
+        // What recognition measured, where it measured anything: it knows
+        // the line's x-height and its ascenders, and this does not.
+        words.firstNotNullOfOrNull { it.sizePt }?.takeIf { it > 0f }?.let { return it }
         val measured = words.filter { it.text.trim().length > 1 }.ifEmpty { words }
         return measured.maxOf { it.bottom - it.top }.coerceAtLeast(1f)
     }
