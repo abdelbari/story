@@ -529,12 +529,45 @@ internal object PdfFileExporter {
             cursor.sheet.contentWidth,
             pitchOf(block, paint),
         )
+        // A rule the page drew above the paragraph — under a paper's dates,
+        // over the notes at its foot, across the head of a section. The
+        // .docx keeps it as a paragraph border and the preview as a border
+        // of its own; a page exported without it is missing a mark the
+        // original made. Room is kept for the first line as well as the
+        // rule, so a page cannot end with a rule and nothing under it.
+        if (block.style.ruleAbove) {
+            cursor.ensureRoom(RULE_GAP_PT * 2 + layout.getLineBottom(0))
+            drawRule(cursor)
+            cursor.advance(minOf(RULE_GAP_PT, cursor.remaining))
+        }
         drawAcrossPages(cursor, layout)
+        if (block.style.ruleBelow) {
+            cursor.advance(minOf(RULE_GAP_PT, cursor.remaining))
+            drawRule(cursor)
+        }
         // The space the page showed after this paragraph, where a reader
         // measured it — none, when it measured none, so the pages break
         // where the source's do; otherwise the type scale's own.
         val after = block.style.spaceAfterPt?.coerceAtLeast(0f) ?: spacingAfter(block.style.kind)
         cursor.advance(minOf(after, cursor.remaining))
+    }
+
+    /** Clear space between a paragraph's rule and its words. */
+    private const val RULE_GAP_PT = 2f
+
+    /** A rule across the text, where the cursor stands. */
+    private fun drawRule(cursor: Cursor) {
+        val sheet = cursor.sheet
+        cursor.canvas.drawLine(
+            sheet.marginLeft,
+            cursor.y,
+            sheet.marginLeft + sheet.contentWidth,
+            cursor.y,
+            Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                strokeWidth = 0.75f
+                color = 0xFF000000.toInt()
+            },
+        )
     }
 
     /**
