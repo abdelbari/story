@@ -29,6 +29,11 @@ package app.morpho.engine.layout
  * its own text. `\*` is a literal asterisk; unmatched or empty markers stay
  * literal, and emphasis never spans a paragraph break. Underscore emphasis
  * (`_text_`) is out of scope and left verbatim.
+ *
+ * A fenced block of YAML above everything else is what the file says about
+ * itself, not text of it: its title, author, subject and keywords are read
+ * as the document's own, which is the other half of what [MarkdownWriter]
+ * writes. See [FrontMatter].
  */
 object PlainTextImporter {
 
@@ -64,7 +69,12 @@ object PlainTextImporter {
     }
 
     fun import(text: String): DocumentModel {
-        val written = text.replace("\r\n", "\n").replace('\r', '\n').split("\n")
+        val whole = text.replace("\r\n", "\n").replace('\r', '\n').split("\n")
+        // What the file says about itself comes off the top before anything
+        // reads the text: left on, its fence and its fields would be the
+        // document's first paragraph.
+        val said = FrontMatter.read(whole)
+        val written = said?.rest ?: whole
         // The notes come out first: a mark in the middle of a sentence
         // refers to words defined at the end of the document, which a walk
         // that reads one line at a time has not reached yet.
@@ -176,7 +186,15 @@ object PlainTextImporter {
         // direction per run instead of per paragraph.
         // An address typed into a text file is an address; a reader who
         // converts one to Word expects to be able to click it.
-        return Links.refine(Bidi.refine(DocumentModel(blocks = blocks, defaultDirection = defaultDirection)))
+        return Links.refine(
+            Bidi.refine(
+                DocumentModel(
+                    blocks = blocks,
+                    defaultDirection = defaultDirection,
+                    properties = said?.properties ?: DocumentProperties(),
+                )
+            )
+        )
     }
 
     /** Whether a line is shaped like a row of a pipe table. */

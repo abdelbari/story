@@ -30,12 +30,23 @@ package app.morpho.engine.layout
  * to repeat them in; read back they are text of the document like any
  * other, which is the honest half of a loss whose other half — dropping
  * them — loses the words as well as the place.
+ *
+ * What the document says about itself — its title, its author, its subject
+ * and its keywords — goes in the one place Markdown has for it: a fenced
+ * block of YAML above everything else. See [FrontMatter], which
+ * [PlainTextImporter] reads back, so the four fields survive the trip out
+ * and back.
  */
 object MarkdownWriter {
 
     fun write(document: DocumentModel): String {
         val out = StringBuilder()
         val notes = Notes(document.blocks)
+        // What the document says about itself, where Markdown keeps it:
+        // fenced YAML above everything, which is where Pandoc, Jekyll,
+        // Hugo and Obsidian all look for a title. A document that named
+        // itself nothing gets no fence.
+        out.append(FrontMatter.of(document.properties))
         // A page's own head and foot are not text of the document, but a
         // Markdown file has no margins to keep them in, and dropping them
         // loses the journal, the author and the section they name. They go
