@@ -90,8 +90,16 @@ hardware.
 Known and deliberate for 1.0: process death while the save dialog is open
 discards the in-memory conversion; the OOXML reader resolves the main part
 by its conventional path rather than the officeDocument relationship;
-`PdfFileExporter` uses uniform table columns and never splits a row across
-pages.
+`PdfFileExporter` never splits a table row across pages. A document whose
+sections are set on different pages — a report with one landscape table in
+it — is converted at the shape most of it has, so that landscape page comes
+out upright; the document as a whole is the right shape, which is the part
+that shows. An equation is written out the way it reads (a fraction as
+(a+b)/2) rather than kept as an equation, because nothing this converter
+writes can hold one. A Word document's comments are not carried: they are
+about the document rather than part of it. A form somebody filled in is
+read from its pages rather than its tags, since the tags were written
+before the answers were.
 
 After the first real documents come back: OCR page-segmentation and
 resolution tuning (`RENDER_DPI`, and `tessdata_best` if accuracy demands
