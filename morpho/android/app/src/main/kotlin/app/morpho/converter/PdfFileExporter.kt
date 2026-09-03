@@ -382,10 +382,31 @@ internal object PdfFileExporter {
             }
             is Paragraph -> {
                 val line = line(block, number, sheet)
+                // The line a page ruled beside its running head — under a
+                // journal's title, over the foot of a report. The .docx
+                // keeps it as a border of the paragraph and the preview
+                // draws one of its own; a page exported without it is
+                // missing a mark the original made.
+                if (block.style.ruleAbove) furnitureRule(canvas, y, sheet)
                 for (piece in line.pieces) piece.draw(canvas, y + line.baseline)
+                if (block.style.ruleBelow) furnitureRule(canvas, y + line.height, sheet)
                 line.height
             }
             is Table -> 0f
+        }
+
+        /** A rule across the text, at [y], beside a page's furniture. */
+        private fun furnitureRule(canvas: Canvas, y: Float, sheet: Sheet) {
+            canvas.drawLine(
+                sheet.marginLeft,
+                y,
+                sheet.width - sheet.marginRight,
+                y,
+                Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    strokeWidth = 0.75f
+                    color = 0xFF000000.toInt()
+                },
+            )
         }
 
         private fun rtl(paragraph: Paragraph?): Boolean =

@@ -136,6 +136,15 @@ object PageFurniture {
      * that vanished without explanation. Empty only when there is neither a
      * picture nor a word to show.
      *
+     * [wordBoxes] is where on the page those words were drawn. Painted out
+     * of the band, they say whether they were all of it: a head that comes
+     * back blank is an ordinary head, and giving a picture of one in place
+     * of the words it says hands the reader a header that cannot be
+     * edited, searched, or reflowed onto a page of another size. A head
+     * with anything left over — a logo, a banner, the letters of a word
+     * drawn as outlines rather than set in type — is a head only a picture
+     * accounts for. Empty asks for the picture, as before.
+     *
      * Both readers ask this, because a head is a head whether the producer
      * marked it as one or the pages were compared to find it, and a walk
      * written twice is a walk that goes wrong once.
@@ -150,13 +159,25 @@ object PageFurniture {
         number: Numbered?,
         rtl: Boolean,
         words: List<TextRun> = emptyList(),
+        wordBoxes: List<FloatArray> = emptyList(),
+        ruleAbove: Boolean = false,
+        ruleBelow: Boolean = false,
     ): List<Block> {
+        // A line the page drew beside its furniture is drawn again as the
+        // paragraph's own border — but only where the words are given
+        // instead of a picture. In a picture the line is already there,
+        // and drawing it a second time would double it.
         val plain = ParagraphStyle(
             direction = if (rtl) TextDirection.RTL else TextDirection.LTR,
             spaceBeforePt = 0f,
             spaceAfterPt = 0f,
+            ruleAbove = ruleAbove,
+            ruleBelow = ruleBelow,
         )
+        val said = words.isNotEmpty() && wordBoxes.isNotEmpty() &&
+            crop.of(page, box[0], box[1], box[2], box[3], wordBoxes, true) == null
         if (number == null) {
+            if (said) return listOf(Paragraph(words, plain))
             val picture = crop.of(page, box[0], box[1], box[2], box[3], emptyList(), false)?.image
             if (picture != null) return listOf(picture)
             return if (words.isEmpty()) emptyList() else listOf(Paragraph(words, plain))
@@ -172,6 +193,7 @@ object PageFurniture {
                 listOf(number.field),
                 ParagraphStyle(alignment = Alignment.CENTER, spaceBeforePt = 0f, spaceAfterPt = 0f),
             )
+            if (said) return listOf(Paragraph(words, plain), centred)
             val picture = crop.of(page, box[0], box[1], box[2], box[3], listOf(numberBox), false)
                 ?: return if (words.isEmpty()) listOf(centred) else listOf(Paragraph(words, plain), centred)
             return listOf(picture.image, centred)
@@ -183,9 +205,13 @@ object PageFurniture {
         val cropRight = if (atRight) numberBox[0] - FURNITURE_GAP_PT else box[2]
         // The head beside the number: its picture, or its words where the
         // page would not draw.
-        val beside = crop.of(page, cropLeft, box[1], cropRight, box[3], emptyList(), false)
-            ?.let { listOf(TextRun("", image = it.image)) }
-            ?: words
+        val beside = if (said) {
+            words
+        } else {
+            crop.of(page, cropLeft, box[1], cropRight, box[3], emptyList(), false)
+                ?.let { listOf(TextRun("", image = it.image)) }
+                ?: words
+        }
         val numberFirst = if (rtl) atRight else atLeft
         val stop = when {
             numberFirst -> if (rtl) right - cropRight else cropLeft - left
@@ -198,6 +224,7 @@ object PageFurniture {
             beside + listOf(TextRun("\t"), number.field)
         }
         val startIndent = if (numberFirst) 0f else if (rtl) right - cropRight else cropLeft - left
+        val shown = runs.any { it.image != null }
         return listOf(
             Paragraph(
                 runs,
@@ -207,6 +234,8 @@ object PageFurniture {
                     tabStopsPt = listOf(stop).filter { it > 0f },
                     spaceBeforePt = 0f,
                     spaceAfterPt = 0f,
+                    ruleAbove = ruleAbove && !shown,
+                    ruleBelow = ruleBelow && !shown,
                 ),
             )
         )
@@ -214,6 +243,30 @@ object PageFurniture {
 
     /** Clear space left around a rule when the band it belongs to is photographed. */
     private const val RULE_MARGIN_PT = 2f
+
+    /**
+     * How far past a line the ink it drew may reach: this share of the type
+     * size, plus this much again in points. A letter overshoots the
+     * estimate its type size gives — an accent, a hamza, the tail of a jim
+     * — and a page drawn at three times its own resolution softens every
+     * edge by a pixel or two.
+     */
+    private const val EXPLAINED_SHARE = 0.3f
+    private const val EXPLAINED_PAD_PT = 2f
+
+    /**
+     * [left]..[right] by [top]..[bottom] grown by as far past it as ink set
+     * at [fontSizePt] reaches — what a band is painted with to find out
+     * whether anything but the words it was read as was drawn there.
+     *
+     * Both readers ask for these, so both grow a box by the same amount:
+     * a head kept as words by one and photographed by the other would be
+     * the same document converted two ways.
+     */
+    fun mask(left: Float, top: Float, right: Float, bottom: Float, fontSizePt: Float): FloatArray {
+        val pad = fontSizePt * EXPLAINED_SHARE + EXPLAINED_PAD_PT
+        return floatArrayOf(left - EXPLAINED_PAD_PT, top - pad, right + EXPLAINED_PAD_PT, bottom + pad)
+    }
 
     /** Rules this far apart, in the same place across pages, are the same rule. */
     private const val SAME_RULE_PT = 1.5f
@@ -386,7 +439,8 @@ object PageFurniture {
                 } else {
                     height - own.maxOf { it.baselineY + DESCENT_SHARE * it.maxFontSize }
                 }
-                return own.map { line(it, width, counted) } to distance.coerceAtLeast(0f)
+                return ruled(own.map { line(it, width, counted) }, ownRules, own) to
+                    distance.coerceAtLeast(0f)
             }
             // Nothing in the margin that could be read, and no rule drawn
             // there either. The page itself is the last thing left to ask.
@@ -509,6 +563,13 @@ object PageFurniture {
         }
         if (bottom - top < 1f) return null
         val number = numberIn(own, counted, page)
+        // A band the words already account for wants no picture of itself.
+        // Most running heads with a rule under them are perfectly ordinary
+        // text — a journal's title, a book's chapter — and photographing
+        // one hands back a header that cannot be edited, searched, or
+        // reflowed onto a page of another size, in place of the words it
+        // says. The rule is kept as a rule, which is what it is.
+        if (explains(crop, page, own, ownRules, left, top, right, bottom)) return null
         // The generous band, trimmed: what comes back is where the ink is,
         // which is what the band should have been asked for and what the
         // rest of the work is measured against.
@@ -534,6 +595,84 @@ object PageFurniture {
             )
         }
         return if (blocks.isEmpty()) null else blocks to distance.coerceAtLeast(0f)
+    }
+
+    /**
+     * Whether the lines read in a band account for every mark the page
+     * drew there: the band trimmed to its ink sits within what the words
+     * and the rule beside them occupy.
+     *
+     * A head no reader can read fails this at once — there are no words to
+     * do the accounting — and so does a head whose words are only part of
+     * what was drawn, which is the case that matters: the paper whose
+     * footer sets its page number in type and the rest of its line in
+     * outlines has ink either side of the digits, and only a picture of
+     * the band says what it says.
+     */
+    private fun explains(
+        crop: Crop,
+        page: Int,
+        own: List<PdfLine>,
+        rules: List<PdfRule>,
+        left: Float,
+        top: Float,
+        right: Float,
+        bottom: Float,
+    ): Boolean {
+        if (own.isEmpty()) return false
+        // Painted over where every line and every rule was read, the band
+        // is blank if they were all of it. A box around them will not do:
+        // a footer that sets its page number at one edge and its date at
+        // the other spans the whole width between them, and the words
+        // drawn as outlines in the middle sit inside that box while being
+        // exactly what a picture is needed for.
+        val masks = own.map {
+            mask(
+                it.x,
+                it.baselineY - ASCENT_SHARE * it.maxFontSize,
+                it.xEnd,
+                it.baselineY + DESCENT_SHARE * it.maxFontSize,
+                it.maxFontSize,
+            )
+        } + rules.map { mask(it.left, it.y, it.right, it.y, 0f) }
+        return crop.of(page, left, top, right, bottom, masks, true) == null
+    }
+
+    /**
+     * [blocks] carrying the rule the page drew between the furniture and
+     * its text, where it drew one on that side. A running head with a line
+     * under it keeps the line, drawn as a border of the paragraph rather
+     * than printed into a picture of the words.
+     */
+    private fun ruled(
+        blocks: List<Paragraph>,
+        rules: List<PdfRule>,
+        own: List<PdfLine>,
+    ): List<Block> {
+        if (blocks.isEmpty() || rules.isEmpty()) return blocks
+        // Which side of the words the page drew its line on, not which end
+        // of the page they sit at: a book rules under its running head and
+        // over its foot, and a page that does the other thing is drawn the
+        // way it was drawn.
+        val above = own.minOf { it.baselineY - ASCENT_SHARE * it.maxFontSize }
+        val below = own.maxOf { it.baselineY }
+        var over = false
+        var under = false
+        for (rule in rules) {
+            if (rule.y < above) over = true
+            if (rule.y > below) under = true
+        }
+        if (!over && !under) return blocks
+        var out = blocks
+        if (over) {
+            out = listOf(out.first().let { it.copy(style = it.style.copy(ruleAbove = true)) }) +
+                out.drop(1)
+        }
+        if (under) {
+            out = out.dropLast(1) +
+                out.last().let { it.copy(style = it.style.copy(ruleBelow = true)) }
+        }
+        return out
     }
 
     /** The narrower of two edges, or whichever of them there is. */

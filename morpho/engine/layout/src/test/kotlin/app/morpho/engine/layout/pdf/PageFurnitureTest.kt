@@ -165,6 +165,85 @@ class PageFurnitureTest {
         }
     }
 
+    /**
+     * A crop seam that knows where the ink on its pages is: it answers
+     * with a picture of whatever falls inside the box it was asked for
+     * and was not painted out by a mask, and with nothing at all when
+     * none does — which is what a real one does with a blank band.
+     */
+    private class Drawn(private vararg val ink: FloatArray) : PageFurniture.Crop {
+        override fun of(
+            page: Int,
+            left: Float,
+            top: Float,
+            right: Float,
+            bottom: Float,
+            masks: List<FloatArray>,
+            trim: Boolean,
+        ): PageFurniture.Cropped? {
+            fun meets(box: FloatArray) =
+                box[0] < right && box[2] > left && box[1] < bottom && box[3] > top
+            fun hidden(box: FloatArray) = masks.any {
+                it[0] <= box[0] && it[1] <= box[1] && it[2] >= box[2] && it[3] >= box[3]
+            }
+            val shown = ink.filter { meets(it) && !hidden(it) }
+            if (shown.isEmpty()) return null
+            val kept = if (trim) {
+                floatArrayOf(
+                    maxOf(left, shown.minOf { it[0] }), maxOf(top, shown.minOf { it[1] }),
+                    minOf(right, shown.maxOf { it[2] }), minOf(bottom, shown.maxOf { it[3] }),
+                )
+            } else {
+                floatArrayOf(left, top, right, bottom)
+            }
+            return PageFurniture.Cropped(
+                image = ImageBlock(
+                    bytes = byteArrayOf(2, page.toByte()),
+                    mimeType = "image/png",
+                    widthPx = 10,
+                    heightPx = 10,
+                    widthPt = kept[2] - kept[0],
+                    heightPt = kept[3] - kept[1],
+                ),
+                left = kept[0], top = kept[1], right = kept[2], bottom = kept[3],
+            )
+        }
+    }
+
+    /** Where the head's own words are drawn, and the rule under them. */
+    private val headInk = floatArrayOf(72f, 32f, 300f, 42f)
+    private val headRuleInk = floatArrayOf(60f, 46f, 540f, 46.6f)
+
+    @Test
+    fun `a head the page's words account for is kept as words, with its rule`() {
+        // Every mark in the band is one the reader read: the words of the
+        // head and the line ruled under them. Photographing it would hand
+        // back a header that cannot be edited, searched, or reflowed, in
+        // place of a header that says the same thing and can.
+        val split = PageFurniture.of(
+            paper(), sheets(4), headRules(), Drawn(headInk, headRuleInk),
+        )
+        val head = split.header.single() as Paragraph
+        assertEquals("The Journal of Something", head.text)
+        assertTrue(head.style.ruleBelow, "the line the page ruled under the head was lost")
+        assertTrue(split.header.none { it is ImageBlock }, "a picture of words that were read")
+    }
+
+    @Test
+    fun `a head with more drawn in it than was read is photographed`() {
+        // The same band, and a mark in it no reading of the words accounts
+        // for: a logo beside the head, or the letters of one drawn as
+        // outlines. Only a picture says what the band says.
+        val logo = floatArrayOf(400f, 30f, 460f, 44f)
+        val split = PageFurniture.of(
+            paper(), sheets(4), headRules(), Drawn(headInk, headRuleInk, logo),
+        )
+        assertTrue(
+            split.header.any { it is ImageBlock },
+            "the head was given as words that leave the logo out: ${split.header}",
+        )
+    }
+
     @Test
     fun `a head with no text a reader can read is photographed`() {
         val crop = Asked()

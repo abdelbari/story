@@ -126,7 +126,14 @@ private class Rule(val y: Float, val left: Float, val right: Float)
  * glyphs it drew and the boxes of the rules and pictures it drew, in
  * top-down page points.
  */
-private class Furniture(val page: Int, val atTop: Boolean, val glyphs: List<TextPosition>, val boxes: List<FloatArray>)
+private class Furniture(
+    val page: Int,
+    val atTop: Boolean,
+    val glyphs: List<TextPosition>,
+    val boxes: List<FloatArray>,
+    /** Those of [boxes] that are the rules it drew. */
+    val rules: List<FloatArray> = emptyList(),
+)
 
 /** The running header and footer a document was read with, ready for a writer. */
 private class Furnishings(
@@ -283,6 +290,16 @@ internal object AndroidStructureTreeReader {
          * and whether the producer said it was pagination, and where.
          */
         val artifactBoxes = HashMap<Int, MutableList<FloatArray>>()
+
+        /**
+         * Which of those boxes are the rules the furniture drew, kept
+         * apart from the rest of it. A rule under a running head is part
+         * of what the head says and is painted out along with its words
+         * when the two are compared against the ink on the page; a logo
+         * drawn beside them is the very thing that comparison is looking
+         * for, and painting it out would hide it.
+         */
+        val artifactRules = HashMap<Int, MutableList<FloatArray>>()
         val artifactPlaces = HashMap<Int, String?>()
 
         /**
@@ -520,8 +537,12 @@ internal object AndroidStructureTreeReader {
                 if (artifact != null) {
                     val painted = (if (strokes) pendingSegments else emptyList()) + (if (fills) pendingSlivers else emptyList())
                     for (rule in painted) {
-                        artifactBoxes.getOrPut(artifact) { mutableListOf() } +=
-                            floatArrayOf(rule.left, rule.y - RULE_MAX_THICKNESS_PT, rule.right, rule.y + RULE_MAX_THICKNESS_PT)
+                        val box = floatArrayOf(
+                            rule.left, rule.y - RULE_MAX_THICKNESS_PT,
+                            rule.right, rule.y + RULE_MAX_THICKNESS_PT,
+                        )
+                        artifactBoxes.getOrPut(artifact) { mutableListOf() } += box
+                        artifactRules.getOrPut(artifact) { mutableListOf() } += box
                     }
                 }
             }
@@ -642,6 +663,7 @@ internal object AndroidStructureTreeReader {
             }
             gather(content)
             val boxes = extractor.artifactBoxes[ordinal].orEmpty()
+            val rules = extractor.artifactRules[ordinal].orEmpty()
             if (glyphs.isEmpty() && boxes.isEmpty()) return
             val height = pageHeightByIndex[pageIndex] ?: 0f
             val atTop = when (place) {
@@ -652,7 +674,8 @@ internal object AndroidStructureTreeReader {
                     height <= 0f || middle < height / 2
                 }
             }
-            furnitureByPage.getOrPut(pageIndex) { mutableListOf() } += Furniture(pageIndex, atTop, glyphs, boxes)
+            furnitureByPage.getOrPut(pageIndex) { mutableListOf() } +=
+                Furniture(pageIndex, atTop, glyphs, boxes, rules)
         }
 
         private fun collect(content: PDMarkedContent, pageIndex: Int) {
@@ -1147,12 +1170,25 @@ internal object AndroidStructureTreeReader {
                         box = it.box,
                     )
                 }
-                // What the head says, for a page that will not draw. The
-                // glyphs are already in hand; reading them costs nothing
-                // until the picture fails, and a header that vanished with
-                // no explanation is the worst answer available.
+                // What the head says beside its number — what it is when
+                // the page's words are the whole of it, and what is left to
+                // show when the page will not draw. The glyphs are already
+                // in hand; reading them costs nothing either way, and a
+                // header that vanished with no explanation is the worst
+                // answer available.
+                val glyphs = pieces.flatMap { it.glyphs }
+                val ruleBoxes = pieces.flatMap { it.rules }
+                // Which side of the words the page drew its line on: a
+                // journal rules under its running head, a report over its
+                // foot, and either is drawn again where the words are
+                // given in place of a picture of them.
+                val over = glyphs.minOfOrNull { it.yDirAdj - it.heightDir }
+                    ?.let { edge -> ruleBoxes.any { (it[1] + it[3]) / 2 < edge } } ?: false
+                val under = glyphs.maxOfOrNull { it.yDirAdj }
+                    ?.let { edge -> ruleBoxes.any { (it[1] + it[3]) / 2 > edge } } ?: false
+                val beside = numbered?.let { held -> glyphs.filterNot { inside(it, held.box) } } ?: glyphs
                 val words = PdfRuns.toTextRuns(
-                    readStyled(positioned(pieces.flatMap { it.glyphs }).map { glyph -> reference to glyph })
+                    readStyled(positioned(beside).map { glyph -> reference to glyph })
                         .logical
                         .let { styled ->
                             styled.text.mapIndexed { at, c -> PdfRun(c.toString(), styled.painters[at]) }
@@ -1172,6 +1208,18 @@ internal object AndroidStructureTreeReader {
                     number = numbered,
                     rtl = rtl,
                     words = words,
+                    // Where every mark this band was read as sits, the
+                    // number's own among them: painted out, they say
+                    // whether the words are all the page drew there.
+                    wordBoxes = glyphs.map {
+                        PageFurniture.mask(
+                            it.xDirAdj, it.yDirAdj - it.heightDir,
+                            it.xDirAdj + it.widthDirAdj, it.yDirAdj,
+                            it.fontSizeInPt,
+                        )
+                    } + ruleBoxes.map { PageFurniture.mask(it[0], it[1], it[2], it[3], 0f) },
+                    ruleAbove = over,
+                    ruleBelow = under,
                 )
                 return if (blocks.isEmpty()) emptyList<Block>() to null else blocks to distance
             }
@@ -1196,6 +1244,13 @@ internal object AndroidStructureTreeReader {
         }
 
         /** The box, in top-down page points, that a page's furniture occupies. */
+        /** Whether [glyph] is drawn within [box], by where its middle falls. */
+        private fun inside(glyph: TextPosition, box: FloatArray): Boolean {
+            val x = glyph.xDirAdj + glyph.widthDirAdj / 2
+            val y = glyph.yDirAdj - glyph.heightDir / 2
+            return x >= box[0] && x <= box[2] && y >= box[1] && y <= box[3]
+        }
+
         private fun boundsOf(pieces: List<Furniture>): FloatArray? {
             var left = Float.POSITIVE_INFINITY
             var top = Float.POSITIVE_INFINITY

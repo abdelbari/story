@@ -53,9 +53,48 @@ class FurnitureTest {
     private val headline = "Journal of Careful Conversion"
     private val headBar = Bar(60f, 50f, 500f, 50.72f)
 
+    /**
+     * A mark drawn in the band that no reading of its words accounts for:
+     * a logo beside the running head, or — as in the paper this was
+     * written for — the letters of the head drawn as outlines rather than
+     * set in type. It is what makes a picture of the band the only honest
+     * answer, and a band without one is a band the words are all of.
+     */
+    private val headBlot = Bar(400f, 34f, 460f, 44f)
+    private val footBlot = Bar(200f, 794f, 260f, 804f)
+
+    @Test
+    fun `a head the page's own words account for comes back as words`() {
+        val pdf = tagged("en") { pages(numbers = listOf(48, 49, 50), numberX = 60f) }
+        val model = PdfReader().extract(pdf)
+        val head = model.header.single() as? Paragraph
+        assertNotNull(head, "the head is not words: ${model.header}")
+        assertEquals(headline, head!!.text.trim())
+        assertTrue(head.runs.none { it.image != null }, "a picture of words that could be read")
+        // The line the page ruled under the head is ruled under it again,
+        // as a border of the paragraph rather than printed into a picture.
+        assertTrue(head.style.ruleBelow, "the rule under the head was lost")
+        val page = model.pageSetup!!
+        assertTrue(page.headerDistancePt!! in 30f..40f, "head distance ${page.headerDistancePt}")
+        assertTrue(page.marginTopPt > 80f, "top margin ${page.marginTopPt}")
+    }
+
+    @Test
+    fun `a foot the page's own words account for comes back as words`() {
+        val pdf = tagged("en") { pages(numbers = listOf(48, 49, 50), numberX = 60f) }
+        val model = PdfReader().extract(pdf)
+        val foot = model.footer.single() as? Paragraph
+        assertNotNull(foot, "the foot is not words: ${model.footer}")
+        assertTrue(foot!!.runs.none { it.image != null }, "a picture of words that could be read")
+        assertTrue(foot.text.contains("Volume 12"), "the foot's own line: ${foot.text}")
+        val field = foot.runs.single { it.field == RunField.PAGE_NUMBER }
+        assertEquals("48", field.text)
+        assertEquals(48, model.pageSetup!!.firstPageNumber)
+    }
+
     @Test
     fun `the running head becomes a picture the size it had, at its distance from the edge`() {
-        val pdf = tagged("en") { pages(numbers = listOf(48, 49, 50), numberX = 60f) }
+        val pdf = tagged("en") { pages(numbers = listOf(48, 49, 50), numberX = 60f, drawn = true) }
         val model = PdfReader().extract(pdf)
         val head = model.header.single() as? ImageBlock
         assertNotNull(head, "the head is not a picture: ${model.header}")
@@ -73,7 +112,7 @@ class FurnitureTest {
 
     @Test
     fun `a number that advances by one each page is the page number, written as a field`() {
-        val pdf = tagged("en") { pages(numbers = listOf(48, 49, 50), numberX = 60f) }
+        val pdf = tagged("en") { pages(numbers = listOf(48, 49, 50), numberX = 60f, drawn = true) }
         val model = PdfReader().extract(pdf)
         val foot = model.footer.single() as? Paragraph
         assertNotNull(foot, "the foot is not a paragraph: ${model.footer}")
@@ -93,7 +132,7 @@ class FurnitureTest {
 
     @Test
     fun `right to left, the number at the outer edge still leads the line`() {
-        val pdf = tagged("ar") { pages(numbers = listOf(48, 49, 50), numberX = 480f, arabic = true) }
+        val pdf = tagged("ar") { pages(numbers = listOf(48, 49, 50), numberX = 480f, arabic = true, drawn = true) }
         val model = PdfReader().extract(pdf)
         val foot = model.footer.single() as Paragraph
         assertEquals(RunField.PAGE_NUMBER, foot.runs.first().field)
@@ -104,7 +143,7 @@ class FurnitureTest {
 
     @Test
     fun `a number that stays put is not a page number`() {
-        val pdf = tagged("en") { pages(numbers = listOf(2024, 2024, 2024), numberX = 60f) }
+        val pdf = tagged("en") { pages(numbers = listOf(2024, 2024, 2024), numberX = 60f, drawn = true) }
         val model = PdfReader().extract(pdf)
         assertTrue(model.footer.single() is ImageBlock, "a year became a page number: ${model.footer}")
         assertEquals(1, model.pageSetup!!.firstPageNumber)
@@ -112,7 +151,7 @@ class FurnitureTest {
 
     @Test
     fun `a number in the middle is masked out of the picture and set beneath it, centred`() {
-        val pdf = tagged("en") { pages(numbers = listOf(7, 8, 9), numberX = 295f) }
+        val pdf = tagged("en") { pages(numbers = listOf(7, 8, 9), numberX = 295f, drawn = true) }
         val model = PdfReader().extract(pdf)
         assertEquals(2, model.footer.size, "foot: ${model.footer}")
         assertTrue(model.footer[0] is ImageBlock)
@@ -133,15 +172,33 @@ class FurnitureTest {
         assertEquals(1, model.pageSetup!!.firstPageNumber)
     }
 
-    /** Three pages with the same head, a foot with a volume line, and the given page numbers at [numberX]. */
-    private fun pages(numbers: List<Int>, numberX: Float, arabic: Boolean = false): List<Sheet> =
+    /**
+     * Three pages with the same head, a foot with a volume line, and the
+     * given page numbers at [numberX]. With [drawn], each band also holds
+     * a mark the words do not account for, so the band comes back as the
+     * picture of itself that such a band needs.
+     */
+    private fun pages(
+        numbers: List<Int>,
+        numberX: Float,
+        arabic: Boolean = false,
+        drawn: Boolean = false,
+    ): List<Sheet> =
         numbers.mapIndexed { index, number ->
             val volume = if (arabic) Piece("المجلد ١٢", 60f, 802f, 10f, arabic = true) else Piece("Volume 12", 400f, 802f, 10f)
             Sheet(
                 body = body(index, arabic),
                 furniture = listOf(
-                    Furniture(atTop = true, pieces = listOf(Piece(headline, 60f, 42f, 9f)), bars = listOf(headBar)),
-                    Furniture(atTop = false, pieces = listOf(Piece(number.toString(), numberX, 802f, 10f), volume)),
+                    Furniture(
+                        atTop = true,
+                        pieces = listOf(Piece(headline, 60f, 42f, 9f)),
+                        bars = listOf(headBar) + if (drawn) listOf(headBlot) else emptyList(),
+                    ),
+                    Furniture(
+                        atTop = false,
+                        pieces = listOf(Piece(number.toString(), numberX, 802f, 10f), volume),
+                        bars = if (drawn) listOf(footBlot) else emptyList(),
+                    ),
                 ),
             )
         }
@@ -206,14 +263,12 @@ class FurnitureTest {
         val model = PdfReader().extract(tagged("en") { opening() })
         assertTrue(model.header.isNotEmpty(), "the right-hand pages'")
         assertTrue(model.evenHeader.isNotEmpty(), "and the left-hand pages'")
-        // Both are pictures of the page they were read from, so what tells
-        // them apart is that they are not the same picture.
-        val right = model.header.single() as ImageBlock
-        val left = model.evenHeader.single() as ImageBlock
-        assertTrue(
-            !right.bytes.contentEquals(left.bytes),
-            "one head was read twice and the other lost",
-        )
+        // Each side keeps its own, which is to say the two do not say the
+        // same thing.
+        val right = (model.header.single() as Paragraph).text.trim()
+        val left = (model.evenHeader.single() as Paragraph).text.trim()
+        assertEquals("Chapter Three: Instruments", right)
+        assertEquals("A History of the Sciences", left)
     }
 
     @Test
