@@ -1,5 +1,6 @@
 package app.morpho.engine.ooxml
 
+import app.morpho.engine.layout.Comment
 import app.morpho.engine.layout.Alignment
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
@@ -65,13 +66,19 @@ class DocxFuzzTest {
 
         private fun run(): TextRun {
             val note = sometimes(1, 8) { listOf<Block>(Paragraph(listOf(TextRun(words())))) }
+            val raised = random.nextInt(6) == 0
             return TextRun(
                 text = if (note != null) (++marks).toString() else words(),
                 bold = random.nextBoolean(),
                 italic = random.nextBoolean(),
                 underline = random.nextBoolean(),
                 strikethrough = random.nextBoolean(),
-                superscript = note != null || random.nextInt(6) == 0,
+                // Raised, or lowered, or neither — never both. The model
+                // can hold both because they are two flags, but no format
+                // can show a character in two places at once, and asking a
+                // writer for it is asking it to fail.
+                superscript = note != null || raised,
+                subscript = note == null && !raised && random.nextInt(8) == 0,
                 language = sometimes(1, 4) { listOf("ar", "fr-FR", "en-GB")[random.nextInt(3)] },
                 fontFamily = sometimes(1, 4) { listOf("Simplified Arabic", "Georgia")[random.nextInt(2)] },
                 fontSizePt = sometimes(1, 4) { listOf(9f, 10.5f, 14f)[random.nextInt(3)] },
@@ -92,6 +99,12 @@ class DocxFuzzTest {
             startIndentPt = sometimes(1, 4) { 36f },
             spaceBeforePt = sometimes(1, 4) { 6f },
             spaceAfterPt = sometimes(1, 4) { 12f },
+            // The three a paragraph is measured by that nothing here used
+            // to write: a hanging indent, an exact line, and the stops a
+            // form's tabs land on.
+            hangingIndentPt = sometimes(1, 5) { 18f },
+            linePitchPt = sometimes(1, 6) { 15f },
+            tabStopsPt = sometimes(1, 5) { listOf(72f, 144f, 216f) },
             pageBreakBefore = random.nextInt(8) == 0,
             ruleAbove = random.nextInt(8) == 0,
             ruleBelow = random.nextInt(8) == 0,
@@ -115,12 +128,60 @@ class DocxFuzzTest {
             )
         }
 
-        fun document() = DocumentModel(
-            blocks = (1..random.nextInt(1, 8)).map {
+        fun document(): DocumentModel {
+            val blocks = (1..random.nextInt(1, 8)).map {
                 if (random.nextInt(5) == 0) table() else paragraph()
-            },
-            defaultDirection = if (random.nextBoolean()) TextDirection.RTL else TextDirection.LTR,
-        )
+            }
+            val (marked, remarks) = remarked(blocks)
+            return DocumentModel(
+                blocks = marked,
+                defaultDirection = if (random.nextBoolean()) TextDirection.RTL else TextDirection.LTR,
+                comments = remarks,
+            )
+        }
+
+        /**
+         * [blocks] with somebody's notes left on them.
+         *
+         * A note covers an unbroken stretch of a paragraph's runs, because
+         * that is what Word can anchor and what the writer therefore
+         * writes: given a subject with a hole in it, it marks the stretch
+         * from the first run to the last unbroken one and says so. Asking
+         * a fuzz for holes would be asking it to fail on purpose.
+         */
+        private fun remarked(blocks: List<Block>): Pair<List<Block>, List<Comment>> {
+            val remarks = mutableListOf<Comment>()
+            fun mark(block: Block): Block = when (block) {
+                is Paragraph -> {
+                    if (block.runs.size < 2 || random.nextInt(4) != 0) block
+                    else {
+                        val from = random.nextInt(block.runs.size)
+                        val to = (from + random.nextInt(1, 3)).coerceAtMost(block.runs.size)
+                        val id = remarks.size + 1
+                        remarks += Comment(
+                            id = id,
+                            text = words(),
+                            author = if (random.nextBoolean()) "A Reader" else null,
+                            initials = if (random.nextBoolean()) "AR" else null,
+                        )
+                        Paragraph(
+                            block.runs.mapIndexed { at, run ->
+                                if (at in from until to) run.copy(commentIds = listOf(id)) else run
+                            },
+                            block.style,
+                        )
+                    }
+                }
+                is Table -> Table(
+                    block.rows.map { row -> TableRow(row.cells.map { cell ->
+                        TableCell(cell.blocks.map(::mark), cell.columnSpan, cell.rowSpan, cell.shadingRgb)
+                    }, row.repeatsAsHeader) },
+                    block.confidence, block.columnWidthsPt, block.ruled, block.direction,
+                )
+                else -> block
+            }
+            return blocks.map(::mark) to remarks
+        }
     }
 
     /** What the document is made of, cells walked as the document is. */
@@ -169,14 +230,29 @@ class DocxFuzzTest {
      * as it was written, whose runs say which of the two measured looks —
      * the face and the size — were named rather than inherited.
      */
-    private fun look(blocks: List<Block>, said: List<TextRun>): List<String> {
+    private fun look(
+        blocks: List<Block>,
+        said: List<TextRun>,
+        remarks: List<Comment> = emptyList(),
+    ): List<String> {
         val named = said.flatMap { run -> run.text.map { run } }
+        // A note is compared by what it says and who left it, and by
+        // neither the number it is filed under nor the letters shown in
+        // the margin. The number is a handle the writer assigns as it
+        // writes the file; the letters a document leaves out are taken
+        // from the author's name, which is what Word does and what
+        // CommentTest holds this writer to. Asking for either back
+        // unchanged would be asking a writer to keep somebody else's
+        // bookkeeping rather than to keep the note.
+        val saying = remarks.associate { it.id to "${it.author} said ${it.text}" }
         return runsOf(blocks)
             .flatMap { run -> run.text.map { it to run } }
             .mapIndexed { index, (character, run) ->
                 val asWritten = named.getOrNull(index)
                 "$character bold=${run.bold} italic=${run.italic} under=${run.underline}" +
                     " struck=${run.strikethrough} raised=${run.superscript}" +
+                    " lowered=${run.subscript} tongue=${run.language}" +
+                    " noted=${run.commentIds.map { saying[it] ?: "?" }}" +
                     " colour=${run.colorRgb} marked=${run.highlightRgb} link=${run.link}" +
                     (if (asWritten?.fontFamily != null) " face=${run.fontFamily}" else "") +
                     (if (asWritten?.fontSizePt != null) " size=${run.fontSizePt}" else "")
@@ -190,7 +266,24 @@ class DocxFuzzTest {
             val back = DocxReader.read(DocxWriter.toByteArray(document))
             assertEquals(shape(document.blocks), shape(back.blocks), "seed $seed: shape")
             val said = runsOf(document.blocks)
-            assertEquals(look(document.blocks, said), look(back.blocks, said), "seed $seed: look")
+            assertEquals(
+                look(document.blocks, said, document.comments),
+                look(back.blocks, said, back.comments),
+                "seed $seed: look",
+            )
+            assertEquals(
+                document.comments.map { "${it.author} said ${it.text}" }.sorted(),
+                back.comments.map { "${it.author} said ${it.text}" }.sorted(),
+                "seed $seed: the notes themselves",
+            )
+            // A note that names who left it gets letters for the margin,
+            // its own or ones taken from that name. A note nobody signed
+            // has no name to take them from and gets none, which is what
+            // an unsigned note looks like in Word too.
+            assertTrue(
+                back.comments.filter { it.author != null }.all { !it.initials.isNullOrBlank() },
+                "seed $seed: a signed note came back with no letters for the margin",
+            )
         }
     }
 

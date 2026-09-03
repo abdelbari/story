@@ -581,6 +581,21 @@ for.
   is bounded the same way, since a page ruled cell by cell draws about one
   line for every cell and the work grows as the square of the count.
 
+  The round trip through Word is fuzzed over three hundred documents nobody
+  wrote, and what it asks of each was widened after the generator was diffed
+  against the model field by field: it made no subscript, no run language, no
+  hanging indent, no exact line, no tab stops and — a whole feature — no
+  comments at all, so none of those was covered by anything but a hand-written
+  case. All six are generated now and compared per character, a note by what it
+  says and who left it. It found no fault in the writer: what it did find was
+  three of its own, each worth writing down because each looked like one. A run
+  the generator made both raised and lowered is a character in two places at
+  once, which no format can show and the writer is right to resolve; a note's
+  number is a handle the writer assigns as it writes, so asking for the same one
+  back is asking it to keep somebody else's bookkeeping; and the letters shown
+  in a margin are taken from the author's name when a document gives none, which
+  is Word's own behaviour — and are rightly absent from a note nobody signed.
+
   All three readings of a page's ink are fuzzed together, against pages of
   words with ink drawn at random over them: forty seeded pages must give
   every word back, in one block or another, and a page carrying twenty
