@@ -569,18 +569,21 @@ internal object PdfFileExporter {
         // box; a table nothing measured shares the width equally.
         val measured = block.columnWidthsPt
             ?.takeIf { it.size == columns && it.all { width -> width > 0f } }
-        val columnWidths = if (measured != null) {
+        val logicalWidths = if (measured != null) {
             val scale = cursor.sheet.contentWidth / measured.sum()
             measured.map { it * scale }
         } else {
             List(columns) { cursor.sheet.contentWidth.toFloat() / columns }
         }
+        // A table of Arabic lays its columns out from the right, whatever
+        // the document around it does: its first cell is drawn in the last
+        // column — and is set to that column's width, not the first one's,
+        // so the widths are turned round with the columns.
+        val rightToLeft = (block.direction ?: defaultDirection) == TextDirection.RTL
+        val columnWidths = if (rightToLeft) logicalWidths.reversed() else logicalWidths
         val offsets = columnWidths.runningFold(0f) { at, width -> at + width }
-        // A right-to-left document lays its columns out from the right, so
-        // the first cell of a row is drawn in the last column — and is set
-        // to that column's width, not the first one's.
         val placed = { index: Int, span: Int ->
-            if (defaultDirection == TextDirection.RTL) columns - index - span else index
+            if (rightToLeft) columns - index - span else index
         }
         val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE

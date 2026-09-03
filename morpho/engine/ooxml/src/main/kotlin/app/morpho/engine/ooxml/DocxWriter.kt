@@ -698,6 +698,11 @@ object DocxWriter {
 
         sb.append("<w:tbl>")
         sb.append("<w:tblPr>")
+        // A table of Arabic is laid out from the right: its first column is
+        // the rightmost one. The schema puts this before the table's width.
+        if ((table.direction ?: document.defaultDirection) == TextDirection.RTL) {
+            sb.append("<w:bidiVisual/>")
+        }
         if (widths != null) {
             sb.append("""<w:tblW w:w="${widths.sum()}" w:type="dxa"/>""")
         } else {

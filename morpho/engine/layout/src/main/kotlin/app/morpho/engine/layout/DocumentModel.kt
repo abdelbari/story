@@ -158,6 +158,13 @@ data class Table(
      * and drawing them would add ink the source never had.
      */
     val ruled: Boolean = true,
+    /**
+     * Which way the table's columns run. An Arabic table is laid out from
+     * the right: its first column is the rightmost one, and a converter
+     * that lays the same cells out from the left hands back a table read
+     * backwards. Null takes the direction of the document around it.
+     */
+    val direction: TextDirection? = null,
 ) : Block
 
 data class TableRow(val cells: List<TableCell>)

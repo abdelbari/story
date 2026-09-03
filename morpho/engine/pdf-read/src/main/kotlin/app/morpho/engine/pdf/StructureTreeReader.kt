@@ -1744,11 +1744,22 @@ internal object StructureTreeReader {
                 walkChildren(table, depth)
                 return
             }
+            // A table of Arabic is laid out from the right: the producer
+            // tags its rightmost cell first, which is the order it is read
+            // in, so the cells stand as they are and the widths are
+            // measured the same way round.
+            val rightToLeft =
+                Bidi.dominantDirection(rows.joinToString(" ") { row ->
+                    row.cells.joinToString(" ") { cell ->
+                        cell.blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }
+                    }
+                }) == TextDirection.RTL
             blocks += Table(
                 rows = rows,
                 confidence = CONFIDENCE,
-                columnWidthsPt = columnWidthsOf(cellGlyphs),
+                columnWidthsPt = columnWidthsOf(cellGlyphs, rightToLeft),
                 ruled = texts.ruledLike(cellGlyphs.flatten().flatten()),
+                direction = if (rightToLeft) TextDirection.RTL else TextDirection.LTR,
             )
         }
 
@@ -1771,7 +1782,14 @@ internal object StructureTreeReader {
          * when the rows do not agree on how many columns there are, or when
          * a column drew nothing to measure.
          */
-        private fun columnWidthsOf(cellGlyphs: List<List<List<Pair<Int, Glyph>>>>): List<Float>? {
+        private fun columnWidthsOf(
+            cells: List<List<List<Pair<Int, Glyph>>>>,
+            rightToLeft: Boolean = false,
+        ): List<Float>? {
+            // The columns are cut apart across the page from the left; a
+            // table read from the right is measured left to right all the
+            // same and its widths turned round at the end.
+            val cellGlyphs = if (rightToLeft) cells.map { it.reversed() } else cells
             val columns = cellGlyphs.firstOrNull()?.size ?: return null
             if (columns < 1 || cellGlyphs.any { it.size != columns }) return null
             val starts = FloatArray(columns) { Float.POSITIVE_INFINITY }
@@ -1791,6 +1809,7 @@ internal object StructureTreeReader {
             edges += ends.last()
             val widths = edges.zipWithNext { left, right -> right - left }
             return widths.takeIf { widths.all { it > 1f } }
+                ?.let { if (rightToLeft) it.reversed() else it }
         }
 
         /** All text under an element, in tag (logical) order. */

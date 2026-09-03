@@ -363,7 +363,10 @@ object HtmlWriter {
             if (widths != null) add("width:${pt(widths.sum())}") else add("width:100%")
             if (!table.ruled) add("border:0")
         }
-        sb.append("""<table style="${styles.joinToString(";")}">""").append("\n")
+        // A table of Arabic runs from the right, whatever the page does.
+        val tableDirection = table.direction ?: defaultDirection
+        val dir = if (tableDirection == TextDirection.RTL) """ dir="rtl"""" else ""
+        sb.append("""<table$dir style="${styles.joinToString(";")}">""").append("\n")
         if (widths != null) {
             for (width in widths) sb.append("""<col style="width:${pt(width)}">""")
             sb.append("\n")

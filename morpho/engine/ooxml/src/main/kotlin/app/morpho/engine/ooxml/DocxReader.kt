@@ -1070,7 +1070,17 @@ object DocxReader {
         val drawn = styles.table(tableStyleId) + own(tblPr)
         val borders = drawn["tblBorders"]
         val ruled = (borders != null && children(borders).any(::isBorder)) || cellsAreRuled
-        return Table(rows = rows, confidence = 1f, columnWidthsPt = grid, ruled = ruled)
+        return Table(
+            rows = rows,
+            confidence = 1f,
+            columnWidthsPt = grid,
+            ruled = ruled,
+            // Word says a table is laid out from the right on the table
+            // itself, not on the paragraphs inside it, and a table that
+            // does not say so is laid out from the left however the
+            // document around it reads.
+            direction = if (isOn(drawn["bidiVisual"])) TextDirection.RTL else TextDirection.LTR,
+        )
     }
 
     // ------------------------------------------------------------------

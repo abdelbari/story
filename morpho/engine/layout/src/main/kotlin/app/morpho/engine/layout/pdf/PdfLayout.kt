@@ -323,11 +323,19 @@ object PdfLayout {
         )
     }
 
-    private fun tableOf(region: PdfTableDetector.Region, confidence: Float): Table =
-        Table(
+    private fun tableOf(region: PdfTableDetector.Region, confidence: Float): Table {
+        // A table of Arabic is laid out from the right: its first column is
+        // the rightmost. The cells were gathered across the page from the
+        // left, so they are turned round to stand in the order the table is
+        // read in, and the widths with them.
+        val rightToLeft =
+            Bidi.dominantDirection(region.rows.flatten().joinToString(" ") { it.text }) ==
+                TextDirection.RTL
+        fun <T> inReadingOrder(row: List<T>): List<T> = if (rightToLeft) row.reversed() else row
+        return Table(
             rows = region.rows.map { row ->
                 TableRow(
-                    row.map { cell ->
+                    inReadingOrder(row).map { cell ->
                         val direction = Bidi.firstStrongDirection(cell.text)
                         TableCell(
                             listOf(
@@ -342,12 +350,14 @@ object PdfLayout {
                 )
             },
             confidence = confidence,
-            columnWidthsPt = columnWidthsOf(region),
+            columnWidthsPt = columnWidthsOf(region)?.let(::inReadingOrder),
             // A table found by the alignment of its columns is one nothing
             // was drawn around: the page shows no rules, so neither does
             // the conversion.
             ruled = false,
+            direction = if (rightToLeft) TextDirection.RTL else TextDirection.LTR,
         )
+    }
 
     /**
      * The width of each column of [region], in points: the columns are cut
