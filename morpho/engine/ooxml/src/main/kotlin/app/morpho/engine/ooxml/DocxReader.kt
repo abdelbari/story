@@ -1,6 +1,7 @@
 package app.morpho.engine.ooxml
 
 import app.morpho.engine.layout.Alignment
+import app.morpho.engine.layout.Bidi
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
@@ -135,11 +136,12 @@ object DocxReader {
                 notesOf(parts[beside(at, "footnotes.xml")], "footnote", numbering, media, styles) +
                     notesOf(parts[beside(at, "endnotes.xml")], "endnote", numbering, media, styles)
             )
+            val blocks = parseBlocks(
+                body, numbering, media, depth = 0, notes = notes, styles = styles,
+                sections = sectionShapes(body),
+            )
             return DocumentModel(
-                blocks = parseBlocks(
-                    body, numbering, media, depth = 0, notes = notes, styles = styles,
-                    sections = sectionShapes(body),
-                ),
+                blocks = blocks,
                 defaultLanguage = styles.language,
                 // Which way the document runs, as its section says. Word
                 // marks a right-to-left document with one element in its
@@ -148,9 +150,15 @@ object DocxReader {
                 // tables read backwards, its running head sits at the
                 // wrong margin, and every paragraph that did not say so
                 // for itself is turned round.
-                defaultDirection = sectPr?.let { held ->
-                    if (isOn(firstChild(held, "bidi"))) TextDirection.RTL else TextDirection.LTR
-                } ?: TextDirection.LTR,
+                //
+                // Where the section says nothing — which is most files, a
+                // real Arabic paper among them, since Word writes the mark
+                // on the paragraphs and leaves the section bare — the
+                // document's own words decide, as they do for a page with
+                // no tags and for a plain text file.
+                defaultDirection = firstChild(sectPr, "bidi")?.let {
+                    if (isOn(it)) TextDirection.RTL else TextDirection.LTR
+                } ?: Bidi.dominantDirection(wordsOf(blocks)) ?: TextDirection.LTR,
                 pageSetup = sectPr?.let(::parsePageSetup),
                 header = sectPr?.let { furniture(it, "headerReference", parts, media, numbering, styles, at) }.orEmpty(),
                 footer = sectPr?.let { furniture(it, "footerReference", parts, media, numbering, styles, at) }.orEmpty(),
@@ -1406,6 +1414,26 @@ object DocxReader {
         if (namespaced.isNotEmpty()) return namespaced
         return element.getAttribute(name).ifEmpty { null }
     }
+
+    /** Every word the document holds, for deciding which way it runs. */
+    private fun wordsOf(blocks: List<Block>): String {
+        val out = StringBuilder()
+        fun walk(held: List<Block>) {
+            for (block in held) {
+                if (out.length > MOST_WORDS_TO_JUDGE) return
+                when (block) {
+                    is Paragraph -> out.append(block.text).append(' ')
+                    is Table -> block.rows.forEach { row -> row.cells.forEach { walk(it.blocks) } }
+                    is ImageBlock -> {}
+                }
+            }
+        }
+        walk(blocks)
+        return out.toString()
+    }
+
+    /** Enough of a document to say which way it runs; a long one says the same as its first pages. */
+    private const val MOST_WORDS_TO_JUDGE = 20_000
 
     /** OOXML on/off toggle: present with no w:val (or a truthy one) means on. */
     private fun isOn(element: Element?): Boolean {

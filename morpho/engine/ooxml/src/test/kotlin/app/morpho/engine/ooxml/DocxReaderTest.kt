@@ -262,6 +262,56 @@ class DocxReaderTest {
         assertEquals(ListMarker.NUMBERED, paragraphs[1].style.listMarker)
     }
 
+    @Test
+    fun `a document whose section says nothing about direction takes it from its own words`() {
+        // Word only writes the section mark when somebody set the
+        // document right-to-left outright; typed in an Arabic Word the
+        // marks land on the paragraphs and the section stays bare — which
+        // is what a real Arabic paper looks like. Read from the section
+        // alone such a file is left-to-right, and everything downstream
+        // lays it out from the wrong margin.
+        val arabic = DocxReader.read(
+            docxOf(
+                "word/document.xml" to
+                    """<w:document xmlns:w="$wNs"><w:body>""" +
+                    """<w:p><w:pPr><w:bidi/></w:pPr><w:r><w:t>الاستمارة في البحث العلمي</w:t></w:r></w:p>""" +
+                    """<w:p><w:pPr><w:bidi/></w:pPr><w:r><w:t>ربيحة نبار، جامعة الجزائر</w:t></w:r></w:p>""" +
+                    """<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>""" +
+                    "</w:body></w:document>"
+            )
+        )
+        assertEquals(TextDirection.RTL, arabic.defaultDirection)
+        // And the same silence over English words still means what it
+        // always meant: a bare section is not evidence of anything.
+        val english = DocxReader.read(
+            docxOf(
+                "word/document.xml" to
+                    """<w:document xmlns:w="$wNs"><w:body>""" +
+                    """<w:p><w:r><w:t>The form in scientific research</w:t></w:r></w:p>""" +
+                    """<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>""" +
+                    "</w:body></w:document>"
+            )
+        )
+        assertEquals(TextDirection.LTR, english.defaultDirection)
+    }
+
+    @Test
+    fun `a document whose section says it runs left to right is believed over its words`() {
+        // An Arabic document somebody deliberately set left-to-right —
+        // a glossary, a language primer. The section is what the author
+        // said; the words are only what the reader falls back on.
+        val model = DocxReader.read(
+            docxOf(
+                "word/document.xml" to
+                    """<w:document xmlns:w="$wNs"><w:body>""" +
+                    """<w:p><w:r><w:t>الاستمارة في البحث العلمي</w:t></w:r></w:p>""" +
+                    """<w:sectPr><w:bidi w:val="0"/><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>""" +
+                    "</w:body></w:document>"
+            )
+        )
+        assertEquals(TextDirection.LTR, model.defaultDirection)
+    }
+
     // ------------------------------------------------------------------
 
     private fun docxOf(vararg parts: Pair<String, String>): ByteArray {
