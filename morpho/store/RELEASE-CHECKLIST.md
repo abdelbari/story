@@ -60,7 +60,9 @@ Work through, in this order — each exercises a path nothing else covers:
       price list, or a CV whose history sits in one long cell. It must
       carry on over the page — every row present, and a cell longer than
       the page continuing at the top of the next one — rather than
-      stopping at the bottom edge with the rest of it gone.
+      stopping at the bottom edge with the rest of it gone. Use one with
+      a picture in a cell — a letterhead's logo, a CV's photo — and check
+      the picture is in the exported PDF too.
 - [ ] **A document with a table** — one with rules and one that is only
       aligned columns. The columns must keep their widths (a column of
       dates stays narrow), and the second must arrive with no lines
@@ -226,8 +228,8 @@ to judge:
   Tesseract page-segmentation mode.
 - **PDF export layout.** `PdfFileExporter` documents what it still
   simplifies (a cell covering several rows is drawn in the first of them,
-  and a picture inside a cell is not drawn at all); real documents will
-  say which matter.
+  and a table inside a cell is skipped); real documents will say which
+  matter.
 
 ## 6. Staged rollout
 

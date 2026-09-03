@@ -69,10 +69,10 @@ import kotlin.math.roundToInt
  * line-by-line. Honest
  * v1 limits, documented rather than hidden: tables take the widths their
  * columns were measured at, are ruled only where the page ruled them, and
- * spread a cell across the columns it covers, and a row longer than the
- * page left carries on over the page, cut between lines, but they render
- * only their paragraph content and draw a cell that covers several rows
- * in the first of them alone; images scale
+ * spread a cell across the columns it covers, hold pictures as well as
+ * words, and carry a row longer than the page left over the page, cut
+ * between lines, but they draw a cell that covers several rows in the
+ * first of them alone and skip a table inside a cell; images scale
  * into the content box at their measured size, else at the CSS px→pt
  * ratio; list markers are plain text prefixes, so an RTL numbered item
  * shows its number on the right but with Western digits.
@@ -502,17 +502,58 @@ internal object PdfFileExporter {
         return max(pitch, LEAST_LINE_SHARE * largest)
     }
 
+    /** What a table cell holds, drawn one under the other: words, or a picture. */
+    private sealed interface Piece {
+        val height: Float
+        fun draw(canvas: Canvas)
+
+        /** A paragraph of the cell, laid out to the cell's width. */
+        class Text(val layout: StaticLayout) : Piece {
+            override val height: Float get() = layout.height.toFloat()
+            override fun draw(canvas: Canvas) = layout.draw(canvas)
+        }
+
+        /** A picture of the cell, at the size it is drawn. */
+        class Picture(
+            private val bitmap: Bitmap,
+            private val width: Float,
+            override val height: Float,
+        ) : Piece {
+            override fun draw(canvas: Canvas) {
+                canvas.drawBitmap(bitmap, null, RectF(0f, 0f, width, height), null)
+            }
+        }
+    }
+
+    /** A cell's picture at the size it is drawn, or null when it cannot be. */
+    private fun picture(image: ImageBlock, maxWidth: Float, sheet: Sheet): Piece.Picture? {
+        val bitmap = decode(image) ?: return null
+        val (width, height) = pictureSize(image, maxWidth)
+        if (width <= 0f || height <= 0f) return null
+        // Never taller than a page can hold, or the row it sits in could
+        // never be finished on any page.
+        val shrink = minOf(1f, (sheet.contentHeight - 2 * CELL_PADDING) / height)
+        return Piece.Picture(bitmap, width * shrink, height * shrink)
+    }
+
     /**
-     * The bottom edge of every line of a cell's paragraphs, measured from
-     * the top of the cell's text and including the two points of clear
-     * space set between one paragraph and the next.
+     * The bottom edge of every line a cell holds, measured from the top of
+     * the cell's content and including the two points of clear space set
+     * between one piece and the next. A picture is one line: it is drawn
+     * whole or carried to the next page, never cut in half.
      */
-    private fun lineBottoms(layouts: List<StaticLayout>): List<Float> {
+    private fun pieceBottoms(pieces: List<Piece>): List<Float> {
         val bottoms = mutableListOf<Float>()
         var base = 0f
-        for (layout in layouts) {
-            for (line in 0 until layout.lineCount) bottoms += base + layout.getLineBottom(line)
-            base += layout.height + 2f
+        for (piece in pieces) {
+            when (piece) {
+                is Piece.Text ->
+                    for (line in 0 until piece.layout.lineCount) {
+                        bottoms += base + piece.layout.getLineBottom(line)
+                    }
+                is Piece.Picture -> bottoms += base + piece.height
+            }
+            base += piece.height + 2f
         }
         return bottoms
     }
@@ -610,7 +651,7 @@ internal object PdfFileExporter {
             // Only the places a cell begins are drawn; a covered place is
             // the cell above still going, and an empty one is nothing.
             val places = row.filterIsInstance<TableGrid.Filled>()
-            val cellLayouts = places.map { place ->
+            val cellPieces = places.map { place ->
                 val cell = place.cell
                 val start = placed(place.column, place.span)
                 val width = (start until start + place.span).sumOf { columnWidths[it].toDouble() }.toFloat()
@@ -618,29 +659,39 @@ internal object PdfFileExporter {
                 // Numbered items restart per cell, same contiguity rule as
                 // the top-level walk.
                 val counts = ListCounts()
-                cell.blocks.filterIsInstance<Paragraph>()
-                    .filter { it.text.isNotEmpty() }
-                    .map { para ->
-                        val numbered = counts.next(para.style)
-                        val direction = para.style.direction ?: defaultDirection
-                        val paint = paintFor(para.style.kind)
-                        val text = spannable(para, numbered)
-                        tabs(text, para)
-                        layout(
-                            text,
-                            paint,
-                            direction,
-                            para.style.alignment,
-                            textWidth,
-                            pitchOf(para, paint),
-                        )
+                cell.blocks.mapNotNull { held ->
+                    when (held) {
+                        is Paragraph -> held.takeIf { it.text.isNotEmpty() }?.let { para ->
+                            val numbered = counts.next(para.style)
+                            val direction = para.style.direction ?: defaultDirection
+                            val paint = paintFor(para.style.kind)
+                            val text = spannable(para, numbered)
+                            tabs(text, para)
+                            Piece.Text(
+                                layout(
+                                    text,
+                                    paint,
+                                    direction,
+                                    para.style.alignment,
+                                    textWidth,
+                                    pitchOf(para, paint),
+                                )
+                            )
+                        }
+                        // A picture in a cell is part of the table: the
+                        // logo on a letterhead, the photo on a CV, the
+                        // product beside its price.
+                        is ImageBlock -> picture(held, textWidth.toFloat(), cursor.sheet)
+                        // A table inside a table is a stated gap.
+                        is Table -> null
                     }
+                }
             }
             // The bottom edge of every line of every cell, so that a row
             // too tall for what is left of the page can be cut between
             // lines and carry on over the page instead of being drawn off
             // the edge of it and lost.
-            val lines = cellLayouts.map(::lineBottoms)
+            val lines = cellPieces.map(::pieceBottoms)
             val drawnTo = FloatArray(places.size)
             do {
                 val tallest = lines.indices.maxOfOrNull {
@@ -652,7 +703,7 @@ internal object PdfFileExporter {
                 val bandHeight = (cuts.indices.maxOfOrNull { cuts[it] - drawnTo[it] } ?: 0f) +
                     2 * CELL_PADDING
                 val canvas = cursor.canvas
-                for ((index, layouts) in cellLayouts.withIndex()) {
+                for ((index, pieces) in cellPieces.withIndex()) {
                     val place = places[index]
                     val column = placed(place.column, place.span)
                     val x = cursor.sheet.marginLeft + offsets[column]
@@ -679,13 +730,13 @@ internal object PdfFileExporter {
                         cursor.y + bandHeight - CELL_PADDING,
                     )
                     canvas.translate(x + CELL_PADDING, cursor.y + CELL_PADDING - drawnTo[index])
-                    var textY = 0f
-                    for (layout in layouts) {
+                    var pieceY = 0f
+                    for (piece in pieces) {
                         canvas.save()
-                        canvas.translate(0f, textY)
-                        layout.draw(canvas)
+                        canvas.translate(0f, pieceY)
+                        piece.draw(canvas)
                         canvas.restore()
-                        textY += layout.height + 2f
+                        pieceY += piece.height + 2f
                     }
                     canvas.restore()
                 }

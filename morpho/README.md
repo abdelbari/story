@@ -81,6 +81,7 @@ for.
 - **An equation is written out rather than kept:** nothing this converter writes can hold one, so a formula becomes the line it reads as ((a+b)/2, x^2, √(x)) in the place it stood. Losing the form is a stated cost; losing the formula is not.
 - **A document is measured by the page most of it is written on:** Word says its last section's shape on the body itself and a PDF may open on a cover page of its own size, so taking either at face value gives a whole report the shape of one page. Sections of different shapes within one document are a known gap rather than a solved problem.
 - **A link into a document is a name, not an address:** Word reaches a place in its own file by the name a bookmark gives it, and writing that as a relationship would send a reader off to a website called "#_Toc1" — which is what a contents page converted by a tool that knows only web links becomes. The names are carried through the model, so both ends of the link survive; a name Word would not accept is repaired, and the link and the place it points at are put through the same repair so they still meet.
+- **A picture in a cell is part of the table:** a letterhead's logo, a CV's photo, the product beside its price — the exporter laid out a cell's paragraphs and nothing else, so the words of such a table came through and the pictures did not. A cell holds pieces now, words or a picture, and a picture is one line of the stack: drawn whole or carried to the next page, never cut in half, and never taller than a page can hold.
 - **A row longer than the page carries on over it:** an exporter that draws a table row into a band and moves on loses everything past the bottom edge — the notes column of a contract, a syllabus, the one long cell a CV puts its history in — and loses it silently. A row is cut between lines now and continued at the top of the next page, each cell carrying on from where it stopped. Where the cut may fall is arithmetic rather than drawing, so it lives in the engine under test, including the property the drawing depends on: every cut moves each unfinished cell on by at least one line, so a row is always finished and the loop that draws it always ends.
 - **Running out of memory is raised, never swallowed:** the readers guard their optional passes so one failing costs a document its pictures rather than the reader its life, and Kotlin's `runCatching` catches that too — which handed back long documents with pages quietly missing. The app asks Android for a large heap for the same reason: holding a document whole in memory is what a converter does.
 
@@ -99,7 +100,7 @@ by its conventional path rather than the officeDocument relationship;
 `PdfFileExporter` does not repeat a table's head on the pages a long table
 runs onto, though the head is now known and Word and the preview both
 repeat it, and it draws a cell that covers several rows in the first of
-them and does not draw a picture inside a cell at all. A document whose
+them and skips a table inside a cell. A document whose
 sections are set on different pages — a report with one landscape table in
 it — is converted at the shape most of it has, so that landscape page comes
 out upright; the document as a whole is the right shape, which is the part
