@@ -2,6 +2,7 @@ package com.kinetic.editor.core.mvi
 
 import com.kinetic.editor.core.model.CanvasFit
 import com.kinetic.editor.core.model.ClipId
+import com.kinetic.editor.core.model.ClipMotion
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.MediaRef
@@ -88,6 +89,9 @@ sealed interface EditorIntent {
         val grade: ColorGradeSpec,
         val lut: LutSpec?,
     ) : EditorIntent
+
+    /** A move that runs across the whole clip, on top of its transform. */
+    data class SetMotion(val clipId: ClipId, val motion: ClipMotion) : EditorIntent
 
     /** Pan, zoom and rotate the picture inside its frame. */
     data class SetTransform(val clipId: ClipId, val transform: TransformSpec) : EditorIntent {

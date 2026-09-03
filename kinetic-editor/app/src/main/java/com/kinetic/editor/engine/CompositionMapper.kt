@@ -167,6 +167,8 @@ object CompositionMapper {
                     ClipGradeProvider(
                         grade = clip.grade,
                         transform = clip.transform,
+                        motion = clip.motion,
+                        spanUs = clip.sourceSpanMs * 1_000L,
                         lutBitmap = lutBitmap,
                         lutIntensity = clip.lut?.intensity ?: 0f,
                         transOutType = clip.transitionOut?.type ?: TransitionType.NONE,
@@ -283,6 +285,8 @@ object CompositionMapper {
                         ClipGradeProvider(
                             grade = clip.grade,
                             transform = clip.transform,
+                            motion = clip.motion,
+                            spanUs = clip.sourceSpanMs * 1_000L,
                             lutBitmap = lutBitmap,
                             lutIntensity = clip.lut?.intensity ?: 0f,
                             transOutType = TransitionType.NONE,

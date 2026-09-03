@@ -11,8 +11,10 @@ import androidx.media3.common.util.Size
 import androidx.media3.effect.BaseGlShaderProgram
 import androidx.media3.effect.GlEffect
 import androidx.media3.effect.GlShaderProgram
+import com.kinetic.editor.core.model.ClipMotion
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.TransformSpec
+import com.kinetic.editor.core.model.motionAt
 import com.kinetic.editor.core.model.TransitionType
 
 /**
@@ -58,6 +60,10 @@ class GradeUniformsBuffer {
         temperature = grade.temperature
     }
 }
+
+/** How far through a clip a frame sits, 0..1; 0 for a clip with no span. */
+internal fun progressOf(localUs: Long, spanUs: Long): Float =
+    if (spanUs <= 0L) 0f else (localUs.toFloat() / spanUs).coerceIn(0f, 1f)
 
 /** Fills [out] for the frame at [presentationTimeUs]. Called on the GL thread. */
 fun interface GradeUniformsProvider {
@@ -191,6 +197,9 @@ class GradeShaderProgram(
 class ClipGradeProvider(
     private val grade: ColorGradeSpec,
     private val transform: TransformSpec,
+    private val motion: ClipMotion,
+    /** The clip's own span, so a motion knows how far through it the frame is. */
+    private val spanUs: Long,
     private val lutBitmap: Bitmap?,
     private val lutIntensity: Float,
     private val transOutType: TransitionType,
@@ -208,7 +217,7 @@ class ClipGradeProvider(
 
         out.reset()
         out.setGrade(grade)
-        out.setTransform(transform)
+        out.setTransform(motionAt(transform, motion, progressOf(localUs, spanUs)))
         out.lutBitmap = lutBitmap
         out.lutIntensity = lutIntensity
 
@@ -250,7 +259,13 @@ class PreviewFxProvider : GradeUniformsProvider {
         out.contrast = seg.contrast
         out.saturation = seg.saturation
         out.temperature = seg.temperature
-        out.setTransform(seg.transform)
+        out.setTransform(
+            motionAt(
+                seg.transform,
+                seg.motion,
+                progressOf(presentationTimeUs - seg.startUs, seg.endUs - seg.startUs),
+            ),
+        )
         out.lutBitmap = seg.lutBitmap
         out.lutIntensity = seg.lutIntensity
 
@@ -305,6 +320,7 @@ class FxSegment(
     val startUs: Long,
     val endUs: Long,
     val transform: TransformSpec,
+    val motion: ClipMotion,
     val brightness: Float,
     val contrast: Float,
     val saturation: Float,

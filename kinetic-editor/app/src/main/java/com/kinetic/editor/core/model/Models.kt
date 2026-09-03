@@ -172,6 +172,23 @@ data class TransformSpec(
     companion object { val NONE = TransformSpec() }
 }
 
+/**
+ * A move that runs across the whole clip, on top of its [TransformSpec].
+ *
+ * The 90% of camera motion an editor actually reaches for, as one tap rather
+ * than a keyframe editor — the same trade the volume fades make over the
+ * general envelope underneath them. [motionAt] is the whole implementation.
+ */
+@Serializable
+enum class ClipMotion(val label: String) {
+    NONE("None"),
+    ZOOM_IN("Push in"),
+    ZOOM_OUT("Pull out"),
+    PAN_LEFT("Pan left"),
+    PAN_RIGHT("Pan right"),
+    DRIFT_UP("Drift up"),
+}
+
 /** Placement of a picture-in-picture video overlay. Null on a clip = full frame. */
 @Serializable
 @Immutable
@@ -223,6 +240,7 @@ data class ClipModel(
     /** Set on VIDEO_OVERLAY clips; drives both the preview surface and the compositor. */
     val pip: PipSpec? = null,
     val transform: TransformSpec = TransformSpec.NONE,
+    val motion: ClipMotion = ClipMotion.NONE,
 ) {
     /** Source-domain span (what the decoder actually reads). */
     val sourceSpanMs: Long get() = trimOutMs - trimInMs

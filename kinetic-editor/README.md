@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 52 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 54 pure-JVM logic tests
 ```
 
 The Gradle wrapper, launcher icon, theme, ProGuard rules and the film LUT asset
@@ -40,8 +40,8 @@ environment, so the app has not been assembled by Gradle there. Instead:
   undefined name and a missing import in `EditorScreen`.)
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 52 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 54-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 54 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 56-scenario executable sandbox suite.
 
 ---
 
@@ -321,6 +321,7 @@ the exporter — the model, the preview and the export path agree on all three.
 | Canvas | 9:16, 16:9, 1:1 and 4:5 presets, each fitted, filled (cropped) or stretched — applied by the same `Presentation` in preview and export |
 | Editing | trim, split, move, reorder, duplicate, delete, per-clip speed, detach audio |
 | Transform | pan, zoom and rotate the picture inside its frame, on any video clip |
+| Motion | one-tap push in, pull out, pan and drift that run across the whole clip, composed on top of a manual reframe |
 | Output | background MP4 export with live progress, published to Movies/Kinetic |
 
 Volume fades deserve a note: the model stores a general keyframe envelope, but
@@ -344,6 +345,16 @@ cannot lift the surround off black.
 
 Because it is the same shader in both pipelines, the preview and the render
 share one implementation of the geometry, exactly as they share the colour.
+
+Motion presets sit on top of it: `motionAt` is pure and takes the clip's
+transform, a move and how far through the clip the frame is, so a push or a pan
+is the transform evaluated per frame rather than a second mechanism. It is the
+same trade the volume fades make over the general envelope beneath them — the
+90% case as one tap, over a model that can express more. A pan is zoomed in far
+enough that sliding never reveals the source's edge (sampling stays inside
+while `scale >= 1 + |offset|`), and a unit test walks every preset across every
+clip to hold that, because hand-tuned constants are exactly what drifts out of
+that relationship.
 
 ## 5b. Lifecycle
 

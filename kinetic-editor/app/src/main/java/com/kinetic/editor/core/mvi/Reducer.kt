@@ -50,6 +50,7 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
     is EditorIntent.ApplyFilter -> replaceClip(state, intent.clipId) {
         it.copy(grade = intent.grade, lut = intent.lut)
     }
+    is EditorIntent.SetMotion -> replaceClip(state, intent.clipId) { it.copy(motion = intent.motion) }
     is EditorIntent.SetTransform -> replaceClip(state, intent.clipId) {
         it.copy(
             transform = intent.transform.copy(

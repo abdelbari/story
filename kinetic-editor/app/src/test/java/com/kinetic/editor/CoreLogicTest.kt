@@ -4,6 +4,7 @@ import com.kinetic.editor.core.model.CanvasFit
 import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ClipModel
 import com.kinetic.editor.core.model.ColorGradeSpec
+import com.kinetic.editor.core.model.ClipMotion
 import com.kinetic.editor.core.model.MediaRef
 import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.FadeSpec
@@ -28,6 +29,7 @@ import com.kinetic.editor.core.model.TransitionType
 import com.kinetic.editor.core.model.VolumeKeyframe
 import com.kinetic.editor.core.model.audioStructureHash
 import com.kinetic.editor.core.model.overlayStructureHash
+import com.kinetic.editor.core.model.motionAt
 import com.kinetic.editor.core.model.gainAt
 import com.kinetic.editor.core.model.layoutKey
 import com.kinetic.editor.core.model.overlayAnimAt
@@ -42,6 +44,7 @@ import com.kinetic.editor.effects.FxSegment
 import com.kinetic.editor.effects.GradeUniformsBuffer
 import com.kinetic.editor.effects.PreviewFxProvider
 import com.kinetic.editor.effects.PreviewFxTimeline
+import com.kinetic.editor.effects.progressOf
 import com.kinetic.editor.engine.PreviewSegments
 import com.kinetic.editor.engine.Segment
 import kotlinx.collections.immutable.persistentListOf
@@ -58,9 +61,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import kotlin.math.abs
 
 /**
  * Pure-JVM tests for the document/engine math. Runs without Robolectric:
@@ -535,6 +540,58 @@ class CoreLogicTest {
             assertTrue("$name is not declared in the shader", src.contains("uniform") && uses > 0)
             assertTrue("$name is declared but never read", uses > 1)
         }
+    }
+
+    @Test
+    fun noMotionEverSlidesThePictureOffItsOwnEdge() {
+        // The shader samples inside the source while scale >= 1 + |offset|.
+        // Below that a pan reveals the frame's edge as black, which is exactly
+        // the bug a hand-tuned pair of constants invites.
+        for (motion in ClipMotion.entries) {
+            for (step in 0..20) {
+                val xf = motionAt(TransformSpec.NONE, motion, step / 20f)
+                val worst = maxOf(abs(xf.offsetX), abs(xf.offsetY))
+                assertTrue(
+                    "$motion at ${step / 20f}: scale ${xf.scale} cannot cover offset $worst",
+                    xf.scale >= 1f + worst - 1e-4f,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun motionRunsAcrossTheClipAndComposesWithAManualReframe() {
+        val none = TransformSpec.NONE
+        assertEquals(1f, motionAt(none, ClipMotion.ZOOM_IN, 0f).scale, 1e-3f)
+        assertTrue(motionAt(none, ClipMotion.ZOOM_IN, 1f).scale > 1.15f)
+        // Pull out is the same move, reversed.
+        assertEquals(
+            motionAt(none, ClipMotion.ZOOM_IN, 0.25f).scale,
+            motionAt(none, ClipMotion.ZOOM_OUT, 0.75f).scale,
+            1e-4f,
+        )
+        // A pan crosses the centre halfway through, and the two pans mirror.
+        assertEquals(0f, motionAt(none, ClipMotion.PAN_LEFT, 0.5f).offsetX, 1e-4f)
+        assertEquals(
+            motionAt(none, ClipMotion.PAN_LEFT, 0f).offsetX,
+            -motionAt(none, ClipMotion.PAN_RIGHT, 0f).offsetX,
+            1e-4f,
+        )
+        // Motion composes with a hand reframe rather than discarding it.
+        val reframed = TransformSpec(scale = 2f, offsetX = 0.3f)
+        assertEquals(2f, motionAt(reframed, ClipMotion.ZOOM_IN, 0f).scale, 1e-3f)
+        assertEquals(0.3f, motionAt(reframed, ClipMotion.ZOOM_IN, 1f).offsetX, 1e-3f)
+        assertSame(reframed, motionAt(reframed, ClipMotion.NONE, 0.5f))
+        // Progress is clamped: a stray timestamp cannot fling the picture away.
+        assertEquals(
+            motionAt(none, ClipMotion.ZOOM_IN, 1f).scale,
+            motionAt(none, ClipMotion.ZOOM_IN, 9f).scale,
+            1e-4f,
+        )
+        // A clip with no span sits at the start of its move rather than dividing by it.
+        assertEquals(0f, progressOf(5_000L, 0L), 1e-4f)
+        assertEquals(1f, progressOf(9_000L, 3_000L), 1e-4f)
+        assertEquals(0.5f, progressOf(1_500L, 3_000L), 1e-4f)
     }
 
     @Test

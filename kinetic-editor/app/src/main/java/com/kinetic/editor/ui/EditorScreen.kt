@@ -63,6 +63,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.kinetic.editor.core.model.CanvasFit
 import com.kinetic.editor.core.model.ClipModel
+import com.kinetic.editor.core.model.ClipMotion
 import com.kinetic.editor.core.model.Track
 import com.kinetic.editor.core.model.fadeKeyframes
 import com.kinetic.editor.core.model.readFades
@@ -695,6 +696,23 @@ private fun ClipInspector(
                 }
                 InspectorSlider("Pan Y", xf.offsetY, -1f..1f) {
                     dispatch(EditorIntent.SetTransform(clip.id, xf.copy(offsetY = it)))
+                }
+            }
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text("Motion", color = Color(0xFF9A9AA5), fontSize = 11.sp)
+                for (move in ClipMotion.entries) {
+                    val active = clip.motion == move
+                    TextButton(onClick = { dispatch(EditorIntent.SetMotion(clip.id, move)) }) {
+                        Text(
+                            move.label,
+                            fontSize = 12.sp,
+                            color = if (active) Color(0xFF35C4B5) else Color(0xFF9A9AA5),
+                        )
+                    }
                 }
             }
             if (!xf.isIdentity) {

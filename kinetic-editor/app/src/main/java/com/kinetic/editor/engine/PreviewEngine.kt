@@ -24,6 +24,7 @@ import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.transitionWindowsUs
 import com.kinetic.editor.core.model.gainAt
+import com.kinetic.editor.core.model.motionAt
 import com.kinetic.editor.effects.ClipFx
 import com.kinetic.editor.effects.ClipSnapshotFxProvider
 import com.kinetic.editor.effects.FxSegment
@@ -433,6 +434,7 @@ class PreviewEngine(
                     startUs = previewUs,
                     endUs = previewUs + w.durationUs,
                     transform = clip.transform,
+                    motion = clip.motion,
                     brightness = clip.grade.brightness,
                     contrast = clip.grade.contrast,
                     saturation = clip.grade.saturation,
@@ -575,7 +577,9 @@ class PreviewEngine(
             val clip = placements.getOrNull(player.currentMediaItemIndex)?.clip ?: return
             provider.snapshot = ClipFx(
                 grade = clip.grade,
-                transform = clip.transform,
+                // A PiP's snapshot carries no clock, so its motion is its
+                // starting frame; the manual transform still applies.
+                transform = motionAt(clip.transform, clip.motion, 0f),
                 lutBitmap = clip.lut?.let { lutCache[it.assetPath] },
                 lutIntensity = clip.lut?.intensity ?: 0f,
             )

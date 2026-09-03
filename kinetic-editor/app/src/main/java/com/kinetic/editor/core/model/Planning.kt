@@ -274,3 +274,48 @@ private fun easeOutCubic(t: Float): Float {
     val u = 1f - t
     return 1f - u * u * u
 }
+
+/* ------------------------------- clip motion ------------------------------- */
+
+/** How far a push travels, and how far a pan slides. */
+private const val MOTION_ZOOM = 1.18f
+private const val MOTION_PAN = 0.12f
+
+/**
+ * A pan has to be zoomed in far enough that sliding never reveals the edge of
+ * the source. Sampling stays inside the frame while `scale >= 1 + |offset|`,
+ * so this is [MOTION_PAN] plus a margin.
+ */
+private const val MOTION_PAN_ZOOM = 1.15f
+
+/**
+ * The clip's transform partway through it, [progress] running 0..1 across the
+ * clip's own span.
+ *
+ * Linear, not eased: a push that accelerates and brakes over a whole shot reads
+ * as sluggish, where a constant drift reads as a camera move. Motion composes
+ * with the manual transform rather than replacing it, so a clip that has been
+ * reframed by hand can still be given a push.
+ */
+fun motionAt(base: TransformSpec, motion: ClipMotion, progress: Float): TransformSpec {
+    if (motion == ClipMotion.NONE) return base
+    val t = progress.coerceIn(0f, 1f)
+    fun lerp(from: Float, to: Float) = from + (to - from) * t
+    return when (motion) {
+        ClipMotion.NONE -> base
+        ClipMotion.ZOOM_IN -> base.copy(scale = base.scale * lerp(1f, MOTION_ZOOM))
+        ClipMotion.ZOOM_OUT -> base.copy(scale = base.scale * lerp(MOTION_ZOOM, 1f))
+        ClipMotion.PAN_LEFT -> base.copy(
+            scale = base.scale * MOTION_PAN_ZOOM,
+            offsetX = base.offsetX + lerp(MOTION_PAN, -MOTION_PAN),
+        )
+        ClipMotion.PAN_RIGHT -> base.copy(
+            scale = base.scale * MOTION_PAN_ZOOM,
+            offsetX = base.offsetX + lerp(-MOTION_PAN, MOTION_PAN),
+        )
+        ClipMotion.DRIFT_UP -> base.copy(
+            scale = base.scale * MOTION_PAN_ZOOM,
+            offsetY = base.offsetY + lerp(-MOTION_PAN, MOTION_PAN),
+        )
+    }
+}
