@@ -42,14 +42,18 @@ class MirroredHeadTest {
                         content.showText(text)
                         content.endText()
                     }
-                    val head = if (!mirrored || onTheRight) chapter else book
-                    show(9f, if (onTheRight) 300f else 72f, 800f, head, PDType1Font.HELVETICA_OBLIQUE)
+                    // Set for both sides of an opening, or for one side
+                    // used throughout: what it says and where it sits both
+                    // belong to the side, and a book alternates both.
+                    val head = if (mirrored && !onTheRight) book else chapter
+                    val headX = if (mirrored && !onTheRight) 72f else 300f
+                    show(9f, headX, 800f, head, PDType1Font.HELVETICA_OBLIQUE)
                     var y = 740f
                     for (piece in 1..5) {
                         show(11f, 72f, y, "Paragraph $piece of page ${page + 1}, set in the measure of the page.")
                         y -= 28f
                     }
-                    show(9f, if (onTheRight) 500f else 72f, 50f, (page + 1).toString())
+                    show(9f, if (mirrored && !onTheRight) 72f else 500f, 50f, (page + 1).toString())
                 }
             }
             val out = ByteArrayOutputStream()
@@ -88,5 +92,15 @@ class MirroredHeadTest {
         val model = PdfReader().extract(opening(mirrored = false))
         assertEquals(chapter, (model.header.single() as Paragraph).text.trim())
         assertTrue(model.evenHeader.isEmpty(), "there is nothing different about the left-hand pages")
+    }
+
+    @Test
+    fun `a foot that reads alike but sits at each outer edge is two feet`() {
+        // A book numbers its pages at the outer edge. The two feet read
+        // the same — a number, and every number reads as a number — and
+        // the side is the whole of the difference between them.
+        val model = PdfReader().extract(opening(mirrored = true))
+        assertTrue(model.evenFooter.isNotEmpty(), "the left-hand pages number themselves on the left")
+        assertTrue(model.footer.isNotEmpty(), "and the right-hand pages on the right")
     }
 }

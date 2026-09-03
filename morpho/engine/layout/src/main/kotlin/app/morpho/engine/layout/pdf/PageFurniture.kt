@@ -306,14 +306,41 @@ object PageFurniture {
         // keeps one page's worth keeps one of them and loses the other
         // outright, then prints the survivor on every page.
         val byPageAll = running.groupBy { it.page }
-        fun repeatedOn(page: Int): String = byPageAll[page].orEmpty()
-            .sortedBy { it.baselineY }
-            .joinToString("\n") { DIGITS.replace(it.text, "#") }
+        fun repeatedOn(page: Int, atTop: Boolean): String {
+            val half = (heightByPage[page]?.takeIf { it > 0f } ?: return "") / 2
+            val across = widthByPage[page]?.takeIf { it > 0f } ?: return ""
+            // What it says and which side of the page it says it on. A
+            // book numbers its pages at the outer edge, so its two feet
+            // read alike and sit at opposite ends — the side is the whole
+            // of the difference between them. Which third rather than
+            // which point: a foot that reaches 100 is a digit wider than
+            // one that reaches 99, and that is not a different foot.
+            return byPageAll[page].orEmpty()
+                .filter { (it.baselineY < half) == atTop }
+                .sortedBy { it.baselineY }
+                .joinToString("\n") { line ->
+                    val centre = (line.x + line.xEnd) / 2
+                    val where = when {
+                        centre < across / 3 -> "start"
+                        centre > across * 2 / 3 -> "end"
+                        else -> "middle"
+                    }
+                    DIGITS.replace(line.text, "#") + "@" + where
+                }
+        }
         val onTheRight = furnished.firstOrNull { it % 2 == 1 }
         val onTheLeft = furnished.firstOrNull { it % 2 == 0 }
-        val mirrored = onTheRight != null && onTheLeft != null &&
-            repeatedOn(onTheRight).isNotEmpty() &&
-            repeatedOn(onTheRight) != repeatedOn(onTheLeft)
+        // Each end of the page asked separately: a book whose two sides
+        // are headed alike but footed differently needs one head and two
+        // feet, and a second head identical to the first is a part of the
+        // file that says nothing.
+        fun differs(atTop: Boolean): Boolean =
+            onTheRight != null && onTheLeft != null &&
+                repeatedOn(onTheRight, atTop).isNotEmpty() &&
+                repeatedOn(onTheRight, atTop) != repeatedOn(onTheLeft, atTop)
+        val mirroredHead = differs(atTop = true)
+        val mirroredFoot = differs(atTop = false)
+        val mirrored = mirroredHead || mirroredFoot
 
         val reference = when {
             mirrored -> onTheRight!!
@@ -401,8 +428,10 @@ object PageFurniture {
         val (footer, footerDistance) = side(atTop = false)
         // The left-hand pages' own, read from a left-hand page, and only
         // where the two sides really do repeat something different.
-        val (evenHeader, evenHeaderDistance) = if (mirrored) side(true, onTheLeft!!) else emptyList<Block>() to null
-        val (evenFooter, evenFooterDistance) = if (mirrored) side(false, onTheLeft!!) else emptyList<Block>() to null
+        val (evenHeader, evenHeaderDistance) =
+            if (mirroredHead) side(true, onTheLeft!!) else emptyList<Block>() to null
+        val (evenFooter, evenFooterDistance) =
+            if (mirroredFoot) side(false, onTheLeft!!) else emptyList<Block>() to null
         return Split(
             body = body,
             bodyImages = bodyImages,
