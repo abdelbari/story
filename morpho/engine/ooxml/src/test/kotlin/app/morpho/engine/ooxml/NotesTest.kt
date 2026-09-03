@@ -122,4 +122,40 @@ class NotesTest {
         }
         return DocxReader.read(out.toByteArray())
     }
+
+    @Test
+    fun `a page break somebody typed breaks the page`() {
+        // Ctrl+Enter, which is how most page breaks in most documents are
+        // made: a paragraph of nothing but the break.
+        val doc = read(
+            body = """<w:p><w:r><w:t>End of the first page.</w:t></w:r></w:p>
+                <w:p><w:r><w:br w:type="page"/></w:r></w:p>
+                <w:p><w:r><w:t>Start of the second.</w:t></w:r></w:p>"""
+        )
+        val paragraphs = doc.blocks.filterIsInstance<Paragraph>()
+        assertEquals(listOf("End of the first page.", "Start of the second."), paragraphs.map { it.text })
+        assertTrue(!paragraphs[0].style.pageBreakBefore)
+        assertTrue(paragraphs[1].style.pageBreakBefore, "the break somebody typed was lost")
+    }
+
+    @Test
+    fun `a break after a paragraph's words leaves it where it was`() {
+        val doc = read(
+            body = """<w:p><w:r><w:t>Last words.</w:t></w:r><w:r><w:br w:type="page"/></w:r></w:p>
+                <w:p><w:r><w:t>Next page.</w:t></w:r></w:p>"""
+        )
+        val paragraphs = doc.blocks.filterIsInstance<Paragraph>()
+        assertTrue(!paragraphs[0].style.pageBreakBefore)
+        assertTrue(paragraphs[1].style.pageBreakBefore)
+    }
+
+    @Test
+    fun `a line break is not a page break`() {
+        val doc = read(
+            body = """<w:p><w:r><w:t>One line</w:t></w:r><w:r><w:br/></w:r></w:p>
+                <w:p><w:r><w:t>and the next.</w:t></w:r></w:p>"""
+        )
+        val paragraphs = doc.blocks.filterIsInstance<Paragraph>()
+        assertTrue(paragraphs.none { it.style.pageBreakBefore }, "a line break broke the page")
+    }
 }

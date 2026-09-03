@@ -271,11 +271,35 @@ object DocxReader {
             "Block nesting deeper than $MAX_NESTING_DEPTH levels; refusing to parse."
         }
         val blocks = mutableListOf<Block>()
+        // A page break somebody typed belongs to whatever comes after it.
+        var brokenTo = false
+
+        /** [block], starting a page where a break was typed before it. */
+        fun add(block: Block) {
+            val broken = brokenTo && block is Paragraph
+            brokenTo = brokenTo && !broken
+            blocks += if (broken) {
+                (block as Paragraph).copy(style = block.style.copy(pageBreakBefore = true))
+            } else {
+                block
+            }
+        }
+
         for (child in children(parent)) {
             when (child.localName) {
                 "p" -> {
+                    // Ctrl+Enter, which is how most page breaks in most
+                    // documents are made, writes a break into a run rather
+                    // than a property on a paragraph: a paragraph that is
+                    // nothing but the break was dropped for having no words
+                    // in it, and the break went with it.
+                    val beforeText = pageBreakBeforeText(child)
+                    if (beforeText == true) brokenTo = true
                     parseParagraph(child, numbering, media, inline, notes, styles, fromTable)
-                        ?.let(blocks::add)
+                        ?.let(::add)
+                    // A break after this paragraph's words leaves it on the
+                    // page it began and starts the next one on a fresh page.
+                    if (beforeText == false) brokenTo = true
                     if (!inline) blocks += parseImages(child, media)
                     // What a text box holds is text of the document, and it
                     // is written inside the run it is anchored to rather
@@ -288,7 +312,7 @@ object DocxReader {
                         )
                     }
                 }
-                "tbl" -> parseTable(child, numbering, media, depth, notes, styles)?.let(blocks::add)
+                "tbl" -> parseTable(child, numbering, media, depth, notes, styles)?.let(::add)
                 // A content control wraps what it holds rather than
                 // replacing it: a cover page, a table of contents, the
                 // fields of a template. What is inside is the document.
@@ -325,6 +349,25 @@ object DocxReader {
             widthPt = (cx.toFloat() / EMU_PER_PT).takeIf { it > 0f },
             heightPt = (cy.toFloat() / EMU_PER_PT).takeIf { it > 0f },
         )
+    }
+
+    /**
+     * Whether [p] carries a page break somebody typed, and if so whether it
+     * comes before any of the paragraph's own words: null for a paragraph
+     * with no break in it, true for a break before the text, false for one
+     * after it.
+     */
+    private fun pageBreakBeforeText(p: Element): Boolean? {
+        var sawText = false
+        for (run in children(p, "r")) {
+            for (child in children(run)) {
+                when (child.localName) {
+                    "t", "tab" -> if (child.textContent.isNotEmpty() || child.localName == "tab") sawText = true
+                    "br" -> if (attr(child, "type") == "page") return !sawText
+                }
+            }
+        }
+        return null
     }
 
     /**
