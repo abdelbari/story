@@ -346,8 +346,11 @@ with the process and a restored project could not reopen its own media.
 4. **Budget the decoders.** Thumbnails: 2-lane dispatcher, LRU = heap/6,
    sync-frame-only decode, retriever pool keyed by URI. Waveforms: 1 lane.
    Player: small forward buffer + 3 s keyframe-anchored back buffer so
-   short back-scrubs replay from memory; `SurfaceView` (not `TextureView`)
-   keeps the decoder zero-copy.
+   short back-scrubs replay from memory. The main picture goes to a
+   `SurfaceView`, which keeps the decoder path zero-copy; picture-in-picture
+   boxes are `TextureView`s, paying a composite per frame on purpose, because
+   they have to be rotated, faded and clipped by the view tree — a cost only
+   the small overlay carries.
 5. **Persistent collections everywhere in the document.** Structural sharing
    makes reducer edits O(changed clips) and undo effectively free — no
    `deepCopy()` GC storms mid-gesture.
@@ -363,40 +366,45 @@ with the process and a restored project could not reopen its own media.
 ```
 kinetic-editor/
 ├── gradlew · gradle/wrapper/ · settings.gradle.kts · build.gradle.kts
-├── gradle/libs.versions.toml · app/proguard-rules.pro
+├── gradle/libs.versions.toml · gradle.properties · app/proguard-rules.pro
 └── app/src/
-    ├── test/java/com/kinetic/editor/CoreLogicTest.kt   pure-JVM logic suite
+    ├── test/java/com/kinetic/editor/    CoreLogicTest (document, planning,
+    │                                    codec, shader contract) +
+    │                                    TimelineGeometryTest (hit-testing,
+    │                                    time<->pixel math)
     └── main/
     ├── AndroidManifest.xml
     ├── res/                     strings, colors, dark theme, adaptive icon
     ├── assets/luts/             64-cube film LUT (matches the shader layout)
+    ├── assets/stickers/         sticker art
     └── java/com/kinetic/editor/
+        ├── MainActivity.kt · KineticApp.kt   entry point, onStop -> background
         ├── core/
         │   ├── model/Models.kt          TimelineState, Track, ClipModel, hashes
-        │   ├── model/Planning.kt        shared transition/sequence/fade math
+        │   ├── model/Planning.kt        shared transition/sequence/fade/PiP math
         │   ├── model/ProjectCodec.kt    JSON persistence, atomic save, soft decode
         │   ├── model/MediaProbe.kt      import-time metadata probe
         │   └── mvi/                     EditorIntent, reduce(), EditorStore+undo
         ├── ui/
         │   ├── timeline/                ViewportState, Geometry, Gestures, Canvas
-        │   ├── preview/PreviewSurface.kt SurfaceView + Compose overlay layer
+        │   ├── preview/PreviewSurface.kt SurfaceView, PiP layer, overlay layer
         │   ├── EditorViewModel.kt       commit router (the decoupling contract)
         │   └── EditorScreen.kt          sync loops, transport, inspector, tools
         ├── engine/
         │   ├── PreviewEngine.kt         ExoPlayer, segments, conflated seeks, slaves
+        │   ├── PreviewRenderers.kt      window-time video renderer for effects
         │   ├── ThumbnailEngine.kt · WaveformEngine.kt
         │   ├── CompositionMapper.kt     TimelineState -> Composition
-        │   └── ExportEngine.kt          Transformer flow + ExportWorker
+        │   ├── ExportEngine.kt          Transformer flow + ExportWorker
+        │   └── MediaStorePublisher.kt   render -> shared Movies collection
         ├── effects/
         │   ├── Shaders.kt               shared GLSL (grade/LUT/transitions)
         │   ├── GradeEffects.kt          BaseGlShaderProgram + providers
+        │   ├── PipCompositor.kt         per-frame PiP placement (export)
         │   └── Overlays.kt              timed text/sticker overlays (export)
         └── audio/
             ├── VolumeEnvelopeAudioProcessor.kt
             └── VoiceRecorder.kt         WAV voiceover capture + level meter
-
-app/src/test/  CoreLogicTest (document, planning, codec) +
-               TimelineGeometryTest (hit-testing, time<->pixel math)
 ```
 
 ## API drift notes
@@ -431,4 +439,9 @@ Pinned to `media3 = 1.8.0`. If you move:
   shipped transitions are single-stream by design and export-identical.
 - Trim commits currently snap to whole milliseconds on the source frame grid
   (`snapToFrame`); at 29.97/59.94 fps switch the model to µs if you need
-  sub-frame-exact conform.
+  sub-frame-exact conform. The same millisecond model is what `planSequence`
+  computes its gaps from, while media3 derives item durations by flooring in
+  microseconds — so a *retimed* clip on an overlay or audio track can place the
+  clips after it under a millisecond early, accumulating per retimed item. At
+  speed 1 both agree exactly, and the error stays far below a frame for any
+  realistic clip count; moving the model to µs removes it entirely.
