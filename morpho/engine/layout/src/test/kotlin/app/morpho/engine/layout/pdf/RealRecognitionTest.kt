@@ -114,4 +114,100 @@ class RealRecognitionTest {
         assertTrue(words.count { it.startsLine } in 10..40, "lines: ${words.count { it.startsLine }}")
         assertTrue(words.all { it.sizePt != null }, "recognition measured every line, and one was dropped")
     }
+
+    /** The reading with recognition's own rules handed to it. */
+    private fun ruledReadingOf(name: String) = PdfLayout.reconstruct(
+        lines = RecognizedText.linesOf(Hocr.wordsOf(page(name), page = 1, dpi = dpi)),
+        confidence = 0.5f,
+        sheets = listOf(PdfPageSheet(1, 595.3f, 841.9f)),
+        drawings = Hocr.rulesOf(page(name), page = 1, dpi = dpi),
+    )
+
+    @Test
+    fun `a ruled table on a page of prose comes back a table`() {
+        // The page an institution actually sends: a heading, some prose, a
+        // ruled table, more prose. Recognition finds the rules and reports
+        // them, and nothing read them, so the table arrived at the ruled
+        // reader with no rules at all and came back as loose paragraphs.
+        val model = ruledReadingOf("prose-and-a-table")
+        val table = model.blocks.filterIsInstance<Table>().singleOrNull()
+        assertTrue(table != null, "no table: " + model.blocks.map { it::class.simpleName })
+        assertEquals(4, table!!.rows.size, "the table did not come back with its four rows")
+        val said = table.rows.map { row ->
+            row.cells.joinToString(" ") { cell ->
+                cell.blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }
+            }.trim()
+        }
+        assertEquals("Section Applications Outstanding", said[0])
+        assertTrue(said[1].startsWith("Design"), "second row: \"${said[1]}\"")
+        assertTrue(said.any { it.startsWith("Records") }, "rows: $said")
+        // And the prose either side is still prose, not swallowed by it.
+        val paragraphs = model.blocks.filterIsInstance<Paragraph>()
+        assertTrue(
+            paragraphs.any { it.text.startsWith("Report of the Standing Committee") },
+            "the heading was lost: " + paragraphs.map { it.text.take(24) },
+        )
+        assertTrue(
+            paragraphs.any { it.text.contains("agreed that the figures") },
+            "the prose after the table was lost",
+        )
+    }
+
+    @Test
+    fun `a page with no rules on it gains no table from this`() {
+        // The cost side of the trade, and the reason it is safe: on a page
+        // recognition found no rules on, it reports no separators, so a
+        // reading handed them is the reading it always was. Held over both
+        // column pages, since a false table on a page of prose would be
+        // far worse than a missed one.
+        for (name in listOf("two-columns", "three-columns")) {
+            assertEquals(
+                emptyList<PdfDrawing>(), Hocr.rulesOf(page(name), page = 1, dpi = dpi),
+                "$name: recognition reported rules on a page that has none",
+            )
+            assertEquals(
+                readingOf(name).blocks.filterIsInstance<Table>().size,
+                ruledReadingOf(name).blocks.filterIsInstance<Table>().size,
+                "$name gained or lost a table",
+            )
+        }
+    }
+
+    @Test
+    fun `a page set in three columns is read one column at a time`() {
+        // The second column page, and the one that says the flow ordering
+        // still does its job: a change made for tables must not cost this.
+        val paragraphs = readingOf("three-columns").blocks.filterIsInstance<Paragraph>()
+        val whole = paragraphs.joinToString(" ") { it.text }
+        val first = whole.indexOf("The first column opens")
+        val second = whole.indexOf("The second column")
+        val third = whole.indexOf("The third column ends")
+        assertTrue(first >= 0 && second >= 0 && third >= 0, "a column went missing: $whole")
+        assertTrue(first < second && second < third, "the columns came back interleaved: $whole")
+        assertTrue(
+            whole.contains("down the left of the page"),
+            "the first column's own sentence was broken across the others: $whole",
+        )
+    }
+
+    @Test
+    fun `the rules recognition reports across a page are given the only reach they could have`() {
+        // Recognition reports the ones down the page whole and the ones
+        // across it as a position and nothing else — bbox 0 y 0 y'. That
+        // is the signature they are read by, so a rule that arrives with a
+        // width of its own is left exactly as it is.
+        val rules = Hocr.rulesOf(page("prose-and-a-table"), page = 1, dpi = dpi)
+        assertEquals(9, rules.size, "recognition reported nine separators on this page")
+        val down = rules.filter { it.heightPt > it.widthPt * 2 }
+        val across = rules - down.toSet()
+        assertEquals(4, down.size, "the four rules down the page")
+        assertEquals(5, across.size, "the five across it")
+        val from = down.minOf { it.left }
+        val to = down.maxOf { it.right }
+        for (rule in across) {
+            assertEquals(from, rule.left, "a rule across the page did not start where the table does")
+            assertEquals(to, rule.right, "a rule across the page did not end where the table does")
+        }
+        assertTrue(to - from > 400f, "the table is most of the measure: ${to - from}pt")
+    }
 }

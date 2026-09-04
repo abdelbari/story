@@ -12,6 +12,7 @@ import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.layout.Table
 import app.morpho.engine.layout.pdf.Hocr
 import app.morpho.engine.layout.pdf.ImagePage
+import app.morpho.engine.layout.pdf.PdfDrawing
 import app.morpho.engine.layout.pdf.PdfLayout
 import app.morpho.engine.layout.pdf.PdfPageSheet
 import app.morpho.engine.layout.pdf.RecognizedText
@@ -80,6 +81,7 @@ class AndroidOcrReader(private val context: Context) {
     ): DocumentModel {
         val dataParent = ensureTrainedData(languages)
         val words = mutableListOf<RecognizedWord>()
+        val rules = mutableListOf<PdfDrawing>()
         val sheets = mutableListOf<PdfPageSheet>()
         val pageTexts = mutableListOf<String>()
         var sheet: PageSetup? = null
@@ -108,7 +110,9 @@ class AndroidOcrReader(private val context: Context) {
                     val dpi = dpiFor(doc, index)
                     val bitmap = renderer.renderImageWithDPI(index, dpi)
                     try {
-                        words += read(tess, bitmap, ordinal + 1, dpi)
+                        val found = read(tess, bitmap, ordinal + 1, dpi)
+                        words += found.words
+                        rules += found.rules
                         // Recognition's plain text, kept only while its
                         // hOCR has yielded nothing at all: a build whose
                         // hOCR this cannot read must still convert the
@@ -127,7 +131,7 @@ class AndroidOcrReader(private val context: Context) {
                 tess.recycle()
             }
         }
-        return modelOf(words, pageTexts, sheets, sheet)
+        return modelOf(words, rules, pageTexts, sheets, sheet)
     }
 
     /**
@@ -163,6 +167,7 @@ class AndroidOcrReader(private val context: Context) {
         require(pictures.isNotEmpty()) { "no pictures to read" }
         val dataParent = ensureTrainedData(languages)
         val words = mutableListOf<RecognizedWord>()
+        val rules = mutableListOf<PdfDrawing>()
         val sheets = mutableListOf<PdfPageSheet>()
         val pageTexts = mutableListOf<String>()
         var sheet: PageSetup? = null
@@ -204,7 +209,9 @@ class AndroidOcrReader(private val context: Context) {
                         marginLeftPt = 0f,
                         marginRightPt = 0f,
                     )
-                    words += read(tess, bitmap, page, stood.dpi)
+                    val found = read(tess, bitmap, page, stood.dpi)
+                    words += found.words
+                    rules += found.rules
                     if (words.isEmpty()) pageTexts += tess.getUTF8Text().orEmpty()
                 } finally {
                     bitmap.recycle()
@@ -214,7 +221,7 @@ class AndroidOcrReader(private val context: Context) {
         } finally {
             tess.recycle()
         }
-        return modelOf(words, pageTexts, sheets, sheet)
+        return modelOf(words, rules, pageTexts, sheets, sheet)
     }
 
     /** Raised where a picked picture is one nothing on the device decodes. */
@@ -299,11 +306,22 @@ class AndroidOcrReader(private val context: Context) {
      * is passed is the same value the bitmap was made with and not a
      * second opinion about it.
      */
-    private fun read(tess: TessBaseAPI, bitmap: Bitmap, page: Int, dpi: Float): List<RecognizedWord> {
+    private fun read(tess: TessBaseAPI, bitmap: Bitmap, page: Int, dpi: Float): Recognized {
         tess.setImage(bitmap)
         tess.setVariable(SOURCE_DPI, dpi.roundToInt().coerceAtLeast(1).toString())
-        return Hocr.wordsOf(tess.getHOCRText(page).orEmpty(), page, dpi)
+        val hocr = tess.getHOCRText(page).orEmpty()
+        return Recognized(Hocr.wordsOf(hocr, page, dpi), Hocr.rulesOf(hocr, page, dpi))
     }
+
+    /**
+     * One page as recognition read it: its words, and the rules it drew.
+     *
+     * The rules are asked for now because recognition finds them and
+     * reports them and nothing read them, so a scanned table reached the
+     * ruled reader with no rules at all and came back as loose
+     * paragraphs. See [Hocr.rulesOf].
+     */
+    private class Recognized(val words: List<RecognizedWord>, val rules: List<PdfDrawing>)
 
     /**
      * What recognition found, as the document it stands for.
@@ -315,6 +333,7 @@ class AndroidOcrReader(private val context: Context) {
      */
     private fun modelOf(
         words: List<RecognizedWord>,
+        rules: List<PdfDrawing>,
         pageTexts: List<String>,
         sheets: List<PdfPageSheet>,
         sheet: PageSetup?,
@@ -341,6 +360,7 @@ class AndroidOcrReader(private val context: Context) {
             lines = RecognizedText.linesOf(words),
             confidence = OCR_CONFIDENCE,
             sheets = sheets,
+            drawings = rules,
         )
         // The body is left as the reading scored it: it knows more about
         // each block than this does, and moved every score up or down from

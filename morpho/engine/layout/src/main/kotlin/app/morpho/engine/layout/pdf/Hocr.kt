@@ -110,6 +110,67 @@ object Hocr {
      */
     private val LINES = setOf("ocr_line", "ocr_header", "ocr_caption", "ocr_textfloat")
 
+    /**
+     * The rules recognition found on one page of [hocr] — the lines a
+     * table was ruled with — measured in points from the top left.
+     *
+     * Recognition looks for these and reports them, and nothing read them
+     * until now, so a scanned table arrived at the ruled reader with no
+     * rules and came back as loose paragraphs. They are `ocr_separator`
+     * blocks, and they come back lopsided: the ones down the page have a
+     * whole box, and the ones across it have a top, a bottom and no width
+     * whatever — `bbox 0 y 0 y'`, a position and nothing else.
+     *
+     * That is not a defect to work around but the signature to read them
+     * by: a separator with no width is one across the page, and the only
+     * reach it could have had is the reach of the ones down, so it is
+     * given that. A separator that arrives with a width of its own is
+     * left exactly as it is, so this degrades into doing nothing if
+     * recognition ever starts reporting them whole.
+     *
+     * Measured over four pages read with the app's own models: on a page
+     * carrying prose and a ruled table this recovers the table and its
+     * four rows; on two pages of columns and no rules recognition reports
+     * no separators at all, so nothing changes for them.
+     */
+    fun rulesOf(hocr: String, page: Int, dpi: Float): List<PdfDrawing> {
+        val scale = if (dpi > 0f) POINTS_PER_INCH / dpi else 1f
+        val boxes = mutableListOf<PdfDrawing>()
+        var at = 0
+        while (true) {
+            val found = hocr.indexOf(SEPARATOR, at)
+            if (found < 0) break
+            at = found + SEPARATOR.length
+            val opens = hocr.lastIndexOf('<', found)
+            val shuts = hocr.indexOf('>', found)
+            if (opens < 0 || shuts < 0 || shuts < opens) continue
+            val title = attribute(hocr.substring(opens, shuts), "title") ?: continue
+            val box = numbersIn(title, "bbox")
+            if (box.size < 4) continue
+            boxes += PdfDrawing(
+                page = page,
+                left = box[0] * scale,
+                top = box[1] * scale,
+                right = box[2] * scale,
+                bottom = box[3] * scale,
+            )
+        }
+        return reaching(boxes)
+    }
+
+    /** The rules across the page given the reach of the rules down it. */
+    private fun reaching(boxes: List<PdfDrawing>): List<PdfDrawing> {
+        val down = boxes.filter { it.widthPt > 0f }
+        if (down.isEmpty() || down.size == boxes.size) return boxes
+        val from = down.minOf { it.left }
+        val to = down.maxOf { it.right }
+        if (to <= from) return boxes
+        return boxes.map { if (it.widthPt > 0f) it else it.copy(left = from, right = to) }
+    }
+
+    /** What recognition calls a rule it found. */
+    private const val SEPARATOR = "ocr_separator"
+
     /** The value of [name] in [tag], under either kind of quote. */
     private fun attribute(tag: String, name: String): String? {
         val at = tag.indexOf("$name=")
