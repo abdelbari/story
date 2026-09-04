@@ -331,7 +331,7 @@ the exporter — the model, the preview and the export path agree on all three.
 | Text | editable content (multi-line), four type faces, bold, italic, eight colours, size, position, and five entrance animations (cut, fade, pop, rise, type-on) |
 | Stickers | seven shapes, swappable from the inspector, with size, position, rotation and the same animations text uses |
 | Overlays | picture-in-picture (size, position, rotation, opacity) — every control is the number the export consumes |
-| Looks | eight one-tap filters that set the same grade/LUT fields the sliders edit, so a preset is a starting point rather than a mode |
+| Looks | ten one-tap filters, plus brightness, contrast, saturation, warmth, **film grain** and **vignette** — a preset is a starting point rather than a mode, because it sets the same fields the sliders edit |
 | Canvas | 9:16, 16:9, 1:1 and 4:5 presets, each fitted, filled (cropped) or stretched — applied by the same `Presentation` in preview and export |
 | Editing | trim, split, move, reorder, duplicate, delete, per-clip speed, detach audio |
 | Transform | pan, zoom and rotate the picture inside its frame, on any video clip |
@@ -342,6 +342,18 @@ Volume fades deserve a note: the model stores a general keyframe envelope, but
 the UI exposes fade-in/fade-out durations, because that is what nearly every
 volume edit actually is. `fadeKeyframes`/`readFades` convert between the two, so
 the sliders reflect whatever envelope a clip really has.
+
+### Grain and vignette are on the print, not the scene
+
+Both are computed from the *screen* coordinate rather than the sampling
+coordinate, so they do not zoom, pan or rotate with the clip transform — grain
+that scaled with a push-in would read as texture painted onto the subject
+instead of on the film. The vignette is applied before the grain, so grain sits
+on top of the darkened corners as it would on a print.
+
+The grain seed is quantised to roughly a frame of time. Re-randomising per
+pixel read would shimmer; never changing it would read as dirt on the lens.
+Changing once per frame is what film does.
 
 ### Transform rides the shader it already had
 

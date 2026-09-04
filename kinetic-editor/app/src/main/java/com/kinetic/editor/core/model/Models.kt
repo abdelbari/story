@@ -49,9 +49,14 @@ data class ColorGradeSpec(
     val contrast: Float = 1f,     // [0.25, 2.0]
     val saturation: Float = 1f,   // [0.0, 2.0]
     val temperature: Float = 0f,  // [-1.0, 1.0] warm(+)/cool(-)
+    /** Film grain on the print: [0, 1]. Screen space, so it never zooms. */
+    val grain: Float = 0f,
+    /** Corner falloff: [0, 1]. */
+    val vignette: Float = 0f,
 ) {
     val isNeutral: Boolean
-        get() = brightness == 0f && contrast == 1f && saturation == 1f && temperature == 0f
+        get() = brightness == 0f && contrast == 1f && saturation == 1f &&
+            temperature == 0f && grain == 0f && vignette == 0f
 
     companion object { val NEUTRAL = ColorGradeSpec() }
 }

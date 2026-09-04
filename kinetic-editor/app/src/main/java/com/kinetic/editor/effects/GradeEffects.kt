@@ -35,11 +35,15 @@ class GradeUniformsBuffer {
     var xfOffsetX = 0f
     var xfOffsetY = 0f
     var xfRotRad = 0f
+    var grain = 0f
+    var grainSeed = 0f
+    var vignette = 0f
 
     fun reset() {
         brightness = 0f; contrast = 1f; saturation = 1f; temperature = 0f
         lutBitmap = null; lutIntensity = 0f; transType = 0f; transProgress = 0f
         xfScale = 1f; xfOffsetX = 0f; xfOffsetY = 0f; xfRotRad = 0f
+        grain = 0f; grainSeed = 0f; vignette = 0f
     }
 
     fun setTransform(xf: TransformSpec) {
@@ -58,6 +62,18 @@ class GradeUniformsBuffer {
         contrast = grade.contrast
         saturation = grade.saturation
         temperature = grade.temperature
+        grain = grade.grain
+        vignette = grade.vignette
+    }
+
+    /**
+     * Re-seeds the grain for one frame. Quantised to about a frame's worth of
+     * time so the pattern holds still within a frame and changes between them:
+     * grain that is re-randomised per *pixel read* would shimmer, and grain
+     * that never changes reads as dirt on the lens rather than film.
+     */
+    fun seedGrainAt(presentationTimeUs: Long) {
+        grainSeed = ((presentationTimeUs / 33_000L) % 977L).toFloat()
     }
 }
 
@@ -141,6 +157,9 @@ class GradeShaderProgram(
             program.setFloatsUniform("uXfOffset", floatArrayOf(uniforms.xfOffsetX, uniforms.xfOffsetY))
             program.setFloatUniform("uXfRot", uniforms.xfRotRad)
             program.setFloatUniform("uAspect", aspect)
+            program.setFloatUniform("uGrain", uniforms.grain)
+            program.setFloatUniform("uGrainSeed", uniforms.grainSeed)
+            program.setFloatUniform("uVignette", uniforms.vignette)
             program.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, /* first= */ 0, /* count= */ 4)
             GlUtil.checkGlError()
@@ -217,6 +236,7 @@ class ClipGradeProvider(
 
         out.reset()
         out.setGrade(grade)
+        out.seedGrainAt(presentationTimeUs)
         out.setTransform(motionAt(transform, motion, progressOf(localUs, spanUs)))
         out.lutBitmap = lutBitmap
         out.lutIntensity = lutIntensity
@@ -259,6 +279,9 @@ class PreviewFxProvider : GradeUniformsProvider {
         out.contrast = seg.contrast
         out.saturation = seg.saturation
         out.temperature = seg.temperature
+        out.grain = seg.grain
+        out.vignette = seg.vignette
+        out.seedGrainAt(presentationTimeUs)
         out.setTransform(
             motionAt(
                 seg.transform,
@@ -309,6 +332,7 @@ class ClipSnapshotFxProvider : GradeUniformsProvider {
         out.reset()
         val s = snapshot ?: return
         out.setGrade(s.grade)
+        out.seedGrainAt(presentationTimeUs)
         out.setTransform(s.transform)
         out.lutBitmap = s.lutBitmap
         out.lutIntensity = s.lutIntensity
@@ -321,6 +345,8 @@ class FxSegment(
     val endUs: Long,
     val transform: TransformSpec,
     val motion: ClipMotion,
+    val grain: Float,
+    val vignette: Float,
     val brightness: Float,
     val contrast: Float,
     val saturation: Float,

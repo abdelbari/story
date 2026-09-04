@@ -969,4 +969,5 @@ private val SHADER_UNIFORMS = listOf(
     "uBrightness", "uContrast", "uSaturation", "uTemperature",
     "uTransType", "uTransProgress",
     "uXfScale", "uXfOffset", "uXfRot", "uAspect",
+    "uGrain", "uGrainSeed", "uVignette",
 )

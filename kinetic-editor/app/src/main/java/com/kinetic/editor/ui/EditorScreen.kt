@@ -766,6 +766,14 @@ private fun LookSection(clip: ClipModel, dispatch: (EditorIntent) -> Unit) {
             dispatch(EditorIntent.SetGrade(clip.id, clip.grade.copy(temperature = it)))
         }
     }
+    Row(horizontalArrangement = Arrangement.spacedBy(Dim.sm)) {
+        ValueSlider("Grain", clip.grade.grain, 0f..1f, Modifier.weight(1f)) {
+            dispatch(EditorIntent.SetGrade(clip.id, clip.grade.copy(grain = it)))
+        }
+        ValueSlider("Vignette", clip.grade.vignette, 0f..1f, Modifier.weight(1f)) {
+            dispatch(EditorIntent.SetGrade(clip.id, clip.grade.copy(vignette = it)))
+        }
+    }
 }
 
 /** Geometry: where the picture sits in the frame, and how it moves. */
@@ -883,10 +891,26 @@ private val FILTERS = listOf(
     Filter("Vivid", ColorGradeSpec(contrast = 1.20f, saturation = 1.45f)),
     Filter("Warm", ColorGradeSpec(temperature = 0.35f, saturation = 1.10f)),
     Filter("Cool", ColorGradeSpec(temperature = -0.35f, saturation = 1.05f)),
-    Filter("Fade", ColorGradeSpec(brightness = 0.08f, contrast = 0.78f, saturation = 0.82f)),
+    Filter(
+        "Fade",
+        ColorGradeSpec(brightness = 0.08f, contrast = 0.78f, saturation = 0.82f, vignette = 0.18f),
+    ),
     Filter("Mono", ColorGradeSpec(saturation = 0f)),
-    Filter("Noir", ColorGradeSpec(contrast = 1.35f, saturation = 0f)),
-    Filter("Film", ColorGradeSpec(contrast = 1.08f, saturation = 0.95f), LutSpec(FILM_LUT_ASSET, 0.85f)),
+    Filter("Noir", ColorGradeSpec(contrast = 1.35f, saturation = 0f, vignette = 0.42f, grain = 0.22f)),
+    // The two the app is really for: grain and falloff are what make footage
+    // read as film rather than as a phone recording.
+    Filter(
+        "Super 8",
+        ColorGradeSpec(
+            brightness = 0.04f, contrast = 1.12f, saturation = 0.92f,
+            temperature = 0.28f, grain = 0.45f, vignette = 0.38f,
+        ),
+    ),
+    Filter(
+        "Film",
+        ColorGradeSpec(contrast = 1.08f, saturation = 0.95f, grain = 0.18f, vignette = 0.22f),
+        LutSpec(FILM_LUT_ASSET, 0.85f),
+    ),
 )
 
 /** Swatches for text: white and black first, then the app's own accents. */

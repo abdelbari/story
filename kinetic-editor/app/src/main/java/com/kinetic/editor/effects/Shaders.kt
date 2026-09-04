@@ -48,6 +48,17 @@ uniform float uXfScale;
 uniform vec2 uXfOffset;
 uniform float uXfRot;
 uniform float uAspect;
+// The print, rather than the scene: grain and vignette live on the frame, so
+// they do not zoom or pan with the clip transform above.
+uniform float uGrain;
+uniform float uGrainSeed;
+uniform float uVignette;
+
+// Cheap hash noise. Deterministic per pixel per frame, which is what makes
+// grain sit still within a frame and dance between them, the way film does.
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
 
 // 64^3 LUT packed as an 8x8 grid of 64x64 blue-slices in a 512x512 texture.
 vec3 applyLut(vec3 c) {
@@ -112,6 +123,19 @@ void main() {
   } else if (uTransType > 2.5) {
     // Zoom-punch adds a subtle exposure dip so the warp reads as intentional.
     c *= 1.0 - 0.25 * (1.0 - abs(1.0 - 2.0 * p));
+  }
+
+  // Vignette before grain: the grain sits on top of the darkened corners, as
+  // it would on a print, rather than being darkened along with them.
+  if (uVignette > 0.0) {
+    float r = length(vTexCoords - 0.5);
+    c *= mix(1.0, 1.0 - smoothstep(0.32, 0.78, r), uVignette);
+  }
+
+  if (uGrain > 0.0) {
+    // Screen space, not sampling space, so grain does not zoom with the clip.
+    float n = hash(vTexCoords * 1024.0 + uGrainSeed) - 0.5;
+    c += n * uGrain * 0.22;
   }
 
   // Anything the transform moved off the source is black, not a smeared edge

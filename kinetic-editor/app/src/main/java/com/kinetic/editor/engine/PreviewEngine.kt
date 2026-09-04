@@ -435,6 +435,8 @@ class PreviewEngine(
                     endUs = previewUs + w.durationUs,
                     transform = clip.transform,
                     motion = clip.motion,
+                    grain = clip.grade.grain,
+                    vignette = clip.grade.vignette,
                     brightness = clip.grade.brightness,
                     contrast = clip.grade.contrast,
                     saturation = clip.grade.saturation,
