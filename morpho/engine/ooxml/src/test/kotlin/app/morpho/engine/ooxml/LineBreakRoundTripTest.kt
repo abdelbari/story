@@ -28,6 +28,7 @@ import java.util.zip.ZipOutputStream
 class LineBreakRoundTripTest {
 
     private val wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    private val rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
     @Test
     fun `an address keeps the lines it was set on`() {
@@ -129,22 +130,54 @@ class LineBreakRoundTripTest {
         )
     }
 
-    private fun read(body: String): DocumentModel {
+    @Test
+    fun `a running head set on two lines is set on one`() {
+        // Both ways this app draws a page set a running head on a single
+        // baseline: the drawn PDF measures its pieces along one and the
+        // preview positions the strip against the top of the sheet. A
+        // break left in would draw over the text underneath in one and as
+        // a missing glyph in the other.
+        //
+        // And a space is better than what was there before breaks were
+        // read at all, which was the two halves run together with nothing
+        // between them.
+        val document = read(
+            body = """<w:p><w:r><w:t>The body of the paper.</w:t></w:r></w:p>
+                <w:sectPr><w:headerReference xmlns:r="$rNs" w:type="default" r:id="rId9"/></w:sectPr>""",
+            header = """<w:p><w:r><w:t>University of Algiers</w:t><w:br/>""" +
+                """<w:t>Faculty of Letters</w:t></w:r></w:p>""",
+        )
+        val head = document.header.filterIsInstance<Paragraph>().single()
+        assertEquals("University of Algiers Faculty of Letters", head.text)
+        assertFalse(head.text.contains('\n'))
+    }
+
+    private fun read(body: String, header: String = ""): DocumentModel {
         val declaration = """<?xml version="1.0" encoding="UTF-8"?>"""
         val out = ByteArrayOutputStream()
+        val parts = mutableListOf(
+            "[Content_Types].xml" to declaration +
+                """<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">""" +
+                """<Default Extension="xml" ContentType="application/xml"/></Types>""",
+            "_rels/.rels" to declaration +
+                """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""" +
+                """<Relationship Id="rId1" Target="word/document.xml" """ +
+                """Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"/>""" +
+                """</Relationships>""",
+            "word/document.xml" to declaration +
+                """<w:document xmlns:w="$wNs"><w:body>""" + body + "</w:body></w:document>",
+        )
+        if (header.isNotEmpty()) {
+            parts += "word/_rels/document.xml.rels" to declaration +
+                """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""" +
+                """<Relationship Id="rId9" Target="header1.xml" """ +
+                """Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header"/>""" +
+                """</Relationships>"""
+            parts += "word/header1.xml" to declaration +
+                """<w:hdr xmlns:w="$wNs">""" + header + "</w:hdr>"
+        }
         ZipOutputStream(out).use { zip ->
-            for ((name, text) in listOf(
-                "[Content_Types].xml" to declaration +
-                    """<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">""" +
-                    """<Default Extension="xml" ContentType="application/xml"/></Types>""",
-                "_rels/.rels" to declaration +
-                    """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""" +
-                    """<Relationship Id="rId1" Target="word/document.xml" """ +
-                    """Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"/>""" +
-                    """</Relationships>""",
-                "word/document.xml" to declaration +
-                    """<w:document xmlns:w="$wNs"><w:body>""" + body + "</w:body></w:document>",
-            )) {
+            for ((name, text) in parts) {
                 zip.putNextEntry(ZipEntry(name))
                 zip.write(text.toByteArray(Charsets.UTF_8))
                 zip.closeEntry()

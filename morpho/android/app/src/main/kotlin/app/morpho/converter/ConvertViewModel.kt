@@ -243,6 +243,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     private var redrawing: Job? = null
     private var redrawEpoch = 0
 
+    /** Whether the preview's pages are older than the reader's corrections. */
+    private var previewIsStale = false
+
     /**
      * Set by [cancelConversion]; the reading and the recognizer both read
      * it between pages. An AtomicBoolean rather than job cancellation
@@ -293,8 +296,20 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         _review.value = ReviewState(report, editedBlocks.toSet(), droppedBlocks.toSet())
     }
 
-    fun hideReview() {
+    fun hideReview() = leaveReview()
+
+    /**
+     * Closes Review Mode and draws the preview again if the reader
+     * changed anything while they were in it.
+     *
+     * Here rather than after every correction, and here rather than in
+     * one of the two ways out of the screen: whichever way they leave, a
+     * reader who dismisses the save dialog lands back on the preview, and
+     * it has to be showing the document they corrected.
+     */
+    private fun leaveReview() {
         _review.value = null
+        if (previewIsStale) redrawPreview()
     }
 
     /**
@@ -437,23 +452,29 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         // was corrected as well would count one edit twice.
         if (marked) editedBlocks += index
         correctedSinceWrite = true
+        previewIsStale = true
         _review.value = ReviewState(report, editedBlocks.toSet(), droppedBlocks.toSet())
-        redrawPreview()
     }
 
     /**
      * The corrected document drawn again for the preview to show.
      *
-     * Off the main thread, which is the whole reason this is not done in
-     * [republish]: laying a document out as pages is the work of making a
-     * PDF of it, and a correction to page three of two hundred would
-     * otherwise freeze the screen the reader is typing on for as long as
-     * that takes. The report and the review list are recomputed at once,
-     * because those are cheap and are what the reader is looking at; the
-     * pages arrive a moment later.
+     * Off the main thread, and not after every correction. Laying a
+     * document out as pages is the whole work of making a PDF of it, so a
+     * reader putting twenty words right in a two-hundred-page scan was
+     * asking for two hundred pages to be drawn twenty times — and only
+     * the last of those drawings is ever looked at, because Review Mode
+     * is in front of the preview the entire time. It is drawn once, when
+     * the reader closes Review and the preview is what they are going
+     * back to.
+     *
+     * The report and the review list are recomputed on the spot instead,
+     * because those are cheap and are what the reader is actually looking
+     * at while they work.
      */
     private fun redrawPreview() {
         val model = readersModel() ?: return
+        previewIsStale = false
         val epoch = ++redrawEpoch
         redrawing?.cancel()
         redrawing = viewModelScope.launch(Dispatchers.IO) {
@@ -486,7 +507,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         // "Try again" after a failed save must retry the save. Re-running the
         // conversion would rebuild the model and drop every correction.
         lastOperation = ::saveCorrected
-        _review.value = null
+        leaveReview()
         _state.value = ConvertUiState.Converting()
         viewModelScope.launch(Dispatchers.IO) {
             // runCatching catches Throwable, so an OutOfMemoryError here is
@@ -532,6 +553,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         editedBlocks.clear()
         droppedBlocks.clear()
         correctedSinceWrite = false
+        previewIsStale = false
         redrawEpoch++
         redrawing?.cancel()
         _review.value = null
@@ -732,6 +754,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         editedBlocks.clear()
         droppedBlocks.clear()
         correctedSinceWrite = false
+        previewIsStale = false
 
         val output = try {
             write(model)

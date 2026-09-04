@@ -328,8 +328,30 @@ object DocxReader {
         return parseBlocks(root, numbering, MediaStore(parts, rels, at), depth = 0, inline = true, styles = styles).map { block ->
             val only = (block as? Paragraph)?.runs?.singleOrNull()
             val picture = only?.image
-            if (only != null && only.text.isEmpty() && picture != null) picture else block
+            if (only != null && only.text.isEmpty() && picture != null) picture else onOneLine(block)
         }
+    }
+
+    /**
+     * [block] with any line break inside it made a space.
+     *
+     * A running head is a line. Both of the app's page-drawing paths set
+     * one on a single baseline — the drawn PDF measures its pieces along
+     * one, and the preview positions the strip against the top of the
+     * sheet — and a two-line head from a Word document would draw over the
+     * text underneath it in one and as a missing glyph in the other.
+     *
+     * A space is what it was already, near enough: before line breaks were
+     * read at all, an institution over its department came back as the two
+     * words run together with nothing between them. This is that fixed,
+     * not that lost.
+     */
+    private fun onOneLine(block: Block): Block {
+        val paragraph = block as? Paragraph ?: return block
+        if (paragraph.runs.none { LineBreaks.breaks(it.text) }) return block
+        return paragraph.copy(
+            runs = paragraph.runs.map { it.copy(text = LineBreaks.flattened(it.text)) },
+        )
     }
 
     private fun readBounded(zip: ZipInputStream, name: String, maxBytes: Int): ByteArray {
