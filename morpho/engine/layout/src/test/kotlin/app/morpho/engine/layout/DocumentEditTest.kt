@@ -413,4 +413,52 @@ class DocumentEditTest {
             assertTrue(now.fixes <= size, "more blocks counted as fixed than there are blocks")
         }
     }
+
+    @Test
+    fun `a break that falls between two runs is still a break`() {
+        // Whether a block can be separated is asked of its runs rather than
+        // of its text, which is built afresh every time it is read. A
+        // carriage return ending one run and a newline opening the next is
+        // one break of two characters lying across the join, and it has to
+        // be found by both the asking and the separating.
+        val was = DocumentEdit(
+            DocumentModel(
+                listOf(Paragraph(listOf(TextRun("above\r"), TextRun("\nbelow"))))
+            )
+        )
+        assertEquals(setOf(0), was.splittable, "a break across two runs was not seen")
+        assertEquals(
+            listOf("above", "below"),
+            was.splitLines(0).asWritten.blocks.filterIsInstance<Paragraph>().map { it.text },
+            "the break across two runs was cut as two",
+        )
+    }
+
+    @Test
+    fun `what can be put back agrees with what putting back does, however tangled`() {
+        // The two used to be the same code — the list was built by trying
+        // the operation on every block taken out, which copied the whole
+        // document once per block every time the screen asked. They are one
+        // predicate now, and this holds them together.
+        val rng = kotlin.random.Random(20260909)
+        repeat(1000) {
+            val size = rng.nextInt(2, 7)
+            var now = DocumentEdit(DocumentModel(List(size) { body("block $it") }))
+            repeat(rng.nextInt(1, 8)) {
+                val at = rng.nextInt(0, size)
+                now = when (rng.nextInt(3)) {
+                    0 -> now.joinUp(at)
+                    1 -> now.remove(at)
+                    else -> now.restore(at)
+                }
+            }
+            val offered = now.restorable
+            for (at in 0 until size) {
+                assertEquals(
+                    at in offered, now.restore(at) !== now,
+                    "block $at: offered=${at in offered} removed=${now.removed} joins=${now.joins.keys}",
+                )
+            }
+        }
+    }
 }

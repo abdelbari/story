@@ -97,7 +97,7 @@ data class DocumentEdit(
      * actually does — and a button that does nothing when pressed is
      * worse than no button.
      */
-    val restorable: Set<Int> get() = removed.filterTo(mutableSetOf()) { restore(it) !== this }
+    val restorable: Set<Int> get() = removed.filterTo(mutableSetOf(), ::canRestore)
 
     /**
      * The blocks that could be made a paragraph per line: the ones whose
@@ -109,8 +109,22 @@ data class DocumentEdit(
      */
     val splittable: Set<Int>
         get() = document.blocks.indices.filterTo(mutableSetOf()) {
-            it !in splitBlocks && LineBreaks.breaks(paragraphAt(it)?.text.orEmpty())
+            it !in splitBlocks && holdsALineBreak(it)
         }
+
+    /**
+     * Whether the block at [index] holds a line break anywhere.
+     *
+     * Asked of the runs rather than of the block's text, because a
+     * paragraph's text is built afresh from its runs every time it is
+     * read — so asking this of a two-hundred-page scan the way it reads
+     * built a megabyte of strings every time the screen wanted the list,
+     * and threw all of it away. A break that spans two runs, a carriage
+     * return ending one and a newline opening the next, is still found:
+     * each half is a break on its own.
+     */
+    private fun holdsALineBreak(index: Int): Boolean =
+        paragraphAt(index)?.runs?.any { LineBreaks.breaks(it.text) } == true
 
     /**
      * The block at [index] made a paragraph for each line it holds; see
@@ -182,27 +196,8 @@ data class DocumentEdit(
      * the paragraph above as it stood before it took them.
      */
     fun restore(index: Int): DocumentEdit {
-        if (index !in removed) return this
+        if (!canRestore(index)) return this
         val join = joins[index] ?: return copy(removed = removed - index)
-        // A join can only be given back while it is still the last thing
-        // that happened to the block it gave its words to. Both ways that
-        // stops being true lose text, and the fuzz found both:
-        //
-        //  - the block it gave to has since been joined away itself, so
-        //    the words are a level further up and putting this one back
-        //    would say them twice, once there and once alone;
-        //  - the block it gave to has since taken a second join, so the
-        //    paragraph remembered from before this one would be put back
-        //    over the later join's words and lose them outright.
-        //
-        // Undoing from the outside in is the order anybody undoes anything
-        // in, and it is the only order that gives everything back. A later
-        // join into the same block always comes from a higher block than
-        // an earlier one, because everything between them has to be gone
-        // for the join to have reached it — so "later" is "higher up the
-        // document" and needs nothing counted.
-        if (join.into in removed) return this
-        if (joins.any { (at, other) -> other.into == join.into && at > index }) return this
         val blocks = document.blocks.toMutableList()
         blocks[join.into] = join.before
         return copy(
@@ -253,6 +248,40 @@ data class DocumentEdit(
             removed = removed + index,
             joins = joins + (index to Join(at, first, wasCorrected = at in corrected)),
         )
+    }
+
+    /**
+     * Whether putting the block at [index] back would give anything back.
+     *
+     * A block taken out by hand always can be. A block a join took can
+     * only be given back while that join is still the last thing that
+     * happened to the block it gave its words to. Both ways that stops
+     * being true lose text, and the fuzz found both:
+     *
+     *  - the block it gave to has since been joined away itself, so the
+     *    words are a level further up and putting this one back would say
+     *    them twice, once there and once alone;
+     *  - the block it gave to has since taken a second join, so the
+     *    paragraph remembered from before this one would be put back over
+     *    the later join's words and lose them outright.
+     *
+     * Undoing from the outside in is the order anybody undoes anything in,
+     * and it is the only order that gives everything back. Which join is
+     * the later one needs nothing counted: a later join into the same
+     * block always comes from further down the document, because
+     * everything between them has to be gone already for it to have
+     * reached that far.
+     *
+     * Asked here rather than by trying the operation and seeing whether it
+     * did anything, which is what this used to do — that copied the whole
+     * document once for every block the reader had taken out, every time
+     * the screen wanted the list.
+     */
+    private fun canRestore(index: Int): Boolean {
+        if (index !in removed) return false
+        val join = joins[index] ?: return true
+        if (join.into in removed) return false
+        return joins.none { (at, other) -> other.into == join.into && at > index }
     }
 
     /** The index of the paragraph the block at [index] would join to. */
