@@ -132,7 +132,11 @@ class AndroidOcrReader(private val context: Context) {
 
     /**
      * Recognizes a document that was photographed or scanned as pictures
-     * rather than made into a PDF: [images] in the order they are pages.
+     * rather than made into a PDF: [pictures] in the order they are pages.
+     *
+     * Each is asked for as it is reached rather than handed over in
+     * advance, so a reader who shares forty photographs of a register has
+     * one of them in memory at a time instead of forty.
      *
      * A photograph of a page is the commonest document there is and the
      * one this converter had no way in for. A reader who took one had to
@@ -151,12 +155,12 @@ class AndroidOcrReader(private val context: Context) {
      * watch and can stop.
      */
     fun recognizeImages(
-        images: List<ByteArray>,
+        pictures: List<() -> ByteArray>,
         languages: String = DEFAULT_LANGUAGES,
         onPage: (page: Int, pageCount: Int) -> Unit = { _, _ -> },
         shouldContinue: () -> Boolean = { true },
     ): DocumentModel {
-        require(images.isNotEmpty()) { "no pictures to read" }
+        require(pictures.isNotEmpty()) { "no pictures to read" }
         val dataParent = ensureTrainedData(languages)
         val words = mutableListOf<RecognizedWord>()
         val sheets = mutableListOf<PdfPageSheet>()
@@ -164,11 +168,18 @@ class AndroidOcrReader(private val context: Context) {
         var sheet: PageSetup? = null
         val tess = started(dataParent, languages)
         try {
-            for ((at, bytes) in images.withIndex()) {
+            for ((at, picture) in pictures.withIndex()) {
                 val page = at + 1
                 if (!shouldContinue()) throw Cancelled()
-                onPage(page, images.size)
-                val bitmap = decoded(bytes)
+                onPage(page, pictures.size)
+                // Each is fetched as it is reached and let go before the
+                // next, which is the difference between reading forty
+                // photographs and holding forty of them: a page off a
+                // modern phone is several megabytes compressed and several
+                // hundred laid out, and the whole point of taking them one
+                // at a time is undone by a list that has already read them
+                // all.
+                val bitmap = decoded(picture())
                     ?: throw UnreadablePicture(page)
                 try {
                     // Nothing is asked of the file about its own

@@ -265,6 +265,11 @@ private fun StateContent(state: ConvertUiState) {
         }
 
         is ConvertUiState.Converting -> {
+            // The one thing there is to look at while a document is read,
+            // and the one sentence the app has to say about itself: the
+            // page is being set again, here, on this phone.
+            ReadingPage()
+            Spacer(Modifier.height(4.dp))
             if (state.pageCount > 0) {
                 // page is the one being read, so pages *finished* is one
                 // less: the bar should not sit at 100% during the last page.

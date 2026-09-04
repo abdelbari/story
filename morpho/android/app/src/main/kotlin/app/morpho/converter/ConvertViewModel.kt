@@ -608,18 +608,15 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
      * recognition once they are pixels.
      */
     private fun recognizedPictures(epoch: Int, first: ByteArray, rest: List<Uri>): DocumentModel {
-        // The first is already in hand; the others are read as they are
-        // reached rather than all at once, so forty photographs are forty
-        // pages of work and not forty pictures held in memory together.
-        val pages = buildList {
-            add(first)
-            for (uri in rest) {
-                add(bytesOf(uri) ?: throw UnconvertibleContent(FailReason.READ_ERROR))
-            }
+        // The first is already in hand; the rest are opened as the reader
+        // reaches them and let go before the next, so forty photographs
+        // are forty pages of work and never forty pictures held together.
+        val pages = listOf<() -> ByteArray>({ first }) + rest.map { uri ->
+            { bytesOf(uri) ?: throw UnconvertibleContent(FailReason.READ_ERROR) }
         }
         val model = try {
             AndroidOcrReader(getApplication()).recognizeImages(
-                images = pages,
+                pictures = pages,
                 languages = ocrLanguages(),
                 onPage = { page, pageCount ->
                     publish(epoch, ConvertUiState.Converting(page, pageCount))
