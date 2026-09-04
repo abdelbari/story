@@ -281,6 +281,54 @@ class EditorState private constructor(
     }
 
     /**
+     * The way the words [selection] covers are set, for a toolbar: a
+     * property is on where every run of the selection has it and off
+     * where any has it not — Word's rule, and what makes pressing Bold
+     * over a half-bold selection make all of it bold rather than none —
+     * and a family, a size, a colour, a link is the one they all share,
+     * or nothing. A picture in the selection says nothing about how the
+     * words are set. With nothing selected, the look at the caret.
+     */
+    fun lookOf(selection: Selection): TextRun {
+        if (selection.collapsed) return lookAt(selection.start)
+        val runs = runsIn(selection).filter { it.text.isNotEmpty() }
+        if (runs.isEmpty()) return lookAt(selection.start)
+        fun <T> shared(of: (TextRun) -> T?): T? = runs.map(of).distinct().singleOrNull()
+        return TextRun(
+            text = "",
+            bold = runs.all { it.bold },
+            italic = runs.all { it.italic },
+            underline = runs.all { it.underline },
+            strikethrough = runs.all { it.strikethrough },
+            superscript = runs.all { it.superscript },
+            subscript = runs.all { it.subscript },
+            fontFamily = shared { it.fontFamily },
+            fontSizePt = shared { it.fontSizePt },
+            colorRgb = shared { it.colorRgb },
+            highlightRgb = shared { it.highlightRgb },
+            link = shared { it.link },
+            language = shared { it.language },
+        )
+    }
+
+    /** The runs, cut to the selection, that [selection] covers, across paragraphs and cells. */
+    private fun runsIn(selection: Selection): List<TextRun> {
+        selectedCellsOf(selection)?.let { selected ->
+            return selected.cells.flatMap { cell ->
+                selected.table.rows[cell.row].cells[cell.column].blocks.flatMap { (it as? Paragraph)?.runs.orEmpty() }
+            }
+        }
+        val start = normalised(selection.start)
+        val end = normalised(selection.end)
+        return document.paragraphsBetween(start, end).flatMap { at ->
+            val paragraph = document.paragraphAt(at)
+            val from = if (at.sameParagraphAs(start)) start.offset else 0
+            val to = if (at.sameParagraphAs(end)) end.offset else paragraph.text.length
+            ParagraphEdit.slice(paragraph.runs, from, to)
+        }
+    }
+
+    /**
      * The reader moved the caret or made a selection. No edit, so no
      * history; but anything chosen and not yet typed is let go, since it
      * was chosen for where the caret was.
@@ -324,6 +372,23 @@ class EditorState private constructor(
         )
         val joins = if (cleared == null && pending == null) Continuing(Continuing.Kind.TYPING, at) else null
         return committed(change, next = Continuing(Continuing.Kind.TYPING, after), joins = joins)
+    }
+
+    /**
+     * [text] pasted at the caret, in place of whatever was selected: a
+     * paragraph for each line of it, which is what a paste from anywhere
+     * else is — as if it were typed with Return between the lines — and
+     * one step to undo, however many lines. One line is typing.
+     */
+    fun paste(text: String): EditorState {
+        val lines = text.split("\r\n", "\r", "\n")
+        if (lines.size == 1) return type(text)
+        var worked: EditorState = this
+        for ((index, line) in lines.withIndex()) {
+            if (line.isNotEmpty()) worked = worked.type(line)
+            if (index < lines.lastIndex) worked = worked.splitParagraph()
+        }
+        return asOneStep(worked)
     }
 
     /**
@@ -1195,6 +1260,18 @@ class EditorState private constructor(
     }
 
     private fun snapshot() = Snapshot(document, origins, selection)
+
+    /** [worked], reached from this state by several edits, as one step back from it. */
+    private fun asOneStep(worked: EditorState): EditorState = EditorState(
+        document = worked.document,
+        selection = worked.selection,
+        pending = null,
+        opened = opened,
+        origins = worked.origins,
+        undos = (undos + snapshot()).takeLast(MOST_STEPS),
+        redos = emptyList(),
+        continuing = null,
+    )
 
     private fun with(
         selection: Selection = this.selection,

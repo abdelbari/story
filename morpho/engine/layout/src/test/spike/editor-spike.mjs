@@ -99,6 +99,32 @@ await p.keyboard.press('Enter'); await p.keyboard.type('item two'); await check(
   assert.equal(s2.texts[tabbed], 'Name:\tx\tvalue');
   await select([tabbed, 1]); await p.keyboard.type('a'); await check('typed before the tabs');
 }
+// Bold over a half-bold selection makes all of it bold, and over an all-bold one none; a paste is a paragraph a line; a cut cuts.
+{
+  const t0 = await truth();
+  const first = t0.texts.findIndex(t => typeof t === 'string' && t.startsWith('The form'));
+  // "The " is plain and what follows is bold, so the first six characters are half bold.
+  await select([first, 0], [first, 6]); await settled();
+  assert.equal(await p.evaluate(() => window.morphoEditor.look().bold), false, 'half bold is not bold');
+  await p.keyboard.press('Control+b'); const b1 = await check('bold over a half-bold selection');
+  const inside = (runs, from, to) => { let at = 0; return runs.filter(r => { const s = at; at += r[0].length; return at > from && s < to; }); };
+  assert.ok(inside(b1.runs[first], 0, 6).every(r => r[1]), 'all of it bold now');
+  assert.equal(await p.evaluate(() => window.morphoEditor.look().bold), true);
+  await p.keyboard.press('Control+b'); const b2 = await check('and again over an all-bold one');
+  assert.ok(inside(b2.runs[first], 0, 6).every(r => !r[1]), 'none of it bold now');
+  await select([first, 4]);
+  await p.evaluate(() => {
+    const dt = new DataTransfer(); dt.setData('text/plain', 'line one\nline two');
+    document.getElementById('doc').dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertFromPaste', dataTransfer: dt, bubbles: true, cancelable: true }));
+  });
+  const pasted = await check('pasted two lines');
+  assert.equal(pasted.texts[first], 'The line one', 'the first line joins the paragraph');
+  assert.equal(pasted.texts[first + 1].startsWith('line two'), true, 'the second is a paragraph of its own');
+  await p.keyboard.press('Control+z'); const undone = await check('a paste undone is one step');
+  assert.equal(undone.texts[first], t0.texts[first]);
+  await select([first, 0], [first, 4]); await p.keyboard.press('Control+x'); const cut = await check('cut');
+  assert.equal(cut.texts[first], t0.texts[first].slice(4), 'what was cut is gone');
+}
 // Tab at the head of an item of a list moves it a level in, and Shift+Tab out.
 {
   const one = (await truth()).texts.findIndex(t => t === ' one');

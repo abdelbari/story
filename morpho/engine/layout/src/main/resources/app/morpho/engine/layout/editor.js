@@ -259,8 +259,11 @@
         op({ op: 'erase' }); break;
       case 'deleteContentForward': case 'deleteWordForward': case 'deleteSoftLineForward': case 'deleteHardLineForward':
         op({ op: 'eraseForward' }); break;
+      // A cut is a copy the browser has already made and a deletion it
+      // has not; a drag out of the page the same.
+      case 'deleteByCut': case 'deleteByDrag': op({ op: 'erase' }); break;
       case 'insertFromPaste': case 'insertFromDrop': case 'insertReplacementText':
-        if (pasted) op({ op: 'type', text: pasted }); break;
+        if (pasted) op({ op: 'paste', text: pasted }); break;
       case 'historyUndo': op({ op: 'undo' }); break;
       case 'historyRedo': op({ op: 'redo' }); break;
       case 'formatBold': op({ op: 'format', bold: !look.bold }); break;

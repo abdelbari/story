@@ -298,6 +298,36 @@ class EditorStateTest {
     // ---- finding and replacing ----
 
     @Test
+    fun `how a selection is set is what every run of it shares`() {
+        val state = EditorState.open(doc(p(r("plain "), r("bold", bold = true), r("", link = "https://x").copy(image = picture())), p(r("also bold", bold = true, link = "https://x"))))
+        assertTrue(state.lookOf(Selection(Caret(0, 6), Caret(0, 10))).bold, "bold alone")
+        assertFalse(state.lookOf(Selection(Caret(0, 2), Caret(0, 10))).bold, "half bold is not bold, so Bold makes all of it bold")
+        val across = state.lookOf(Selection(Caret(0, 6), Caret(1, 4)))
+        assertTrue(across.bold, "bold across two paragraphs, the picture between saying nothing")
+        assertNull(across.link, "one of them linked is not a link")
+        assertEquals("https://x", state.lookOf(Selection(Caret(1, 0), Caret(1, 9))).link)
+        assertEquals(state.lookAt(Caret(0, 3)), state.lookOf(Selection(Caret(0, 3))), "nothing selected is the look at the caret")
+        val table = EditorState.open(doc(grid(listOf("a", "b"))))
+        val bolded = table.select(Selection(Caret(0, 0, Cell(0, 0, 0)), Caret(0, 0, Cell(0, 1, 0)))).format(RunChange(bold = true))
+        assertTrue(bolded.lookOf(bolded.selection).bold, "cells selected together, every run of them")
+    }
+
+    @Test
+    fun `a paste is a paragraph for each line, as one step`() {
+        val state = EditorState.open(doc(p("one two"), p("after"))).at(0, 4)
+        val pasted = state.paste("A\nB\r\n\nC")
+        assertEquals(listOf("one A", "B", "", "Ctwo", "after"), texts(pasted))
+        assertEquals(Selection.at(3, 1), pasted.selection)
+        assertEquals(1, pasted.undoDepth, "however many lines, one step")
+        assertEquals(state.document, pasted.undo().document)
+        assertEquals(listOf("one Xtwo", "after"), texts(state.paste("X")), "one line is typing")
+        val over = state.over(0, 0, 1, 2).paste("p\nq")
+        assertEquals(listOf("p", "qter"), texts(over), "in place of what was selected")
+        val styled = EditorState.open(doc(p(r("ab", bold = true)))).at(0, 1).paste("x\ny")
+        assertTrue(runs(styled, 1).all { it.second }, "each line set as the character it was typed after")
+    }
+
+    @Test
     fun `every place a word is written is found, in the order a reader meets them`() {
         val state = EditorState.open(doc(
             p("the form and the Form"),

@@ -300,7 +300,11 @@ Most of this is model → HTML → model plumbing once Stage 1 stands, because
   app's.
 - A real formatting surface rather than a toolbar of everything: a bottom
   sheet on a phone, a toolbar on a tablet.
-- Hardware keyboard shortcuts.
+- Hardware keyboard shortcuts: Ctrl+B/I/U/Z/Y and Tab in the page now;
+  Ctrl+X cuts and Ctrl+V pastes a paragraph a line, since the page's
+  script sends `deleteByCut` as an erasure and a paste as `paste`. The
+  toolbar's toggles read how the whole selection is set (`lookOf`, Word's
+  all-or-nothing rule), not the character left of the caret.
 - **Autosave and restore across process death — the engine half done 4
   September.** Already a known limitation — a conversion in memory is
   lost if the process dies with the save dialog open — and an editor

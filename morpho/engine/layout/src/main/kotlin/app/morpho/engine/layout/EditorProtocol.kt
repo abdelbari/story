@@ -45,6 +45,7 @@ object EditorProtocol {
     sealed interface Operation {
         data class Select(val selection: Selection) : Operation
         data class Type(val text: String) : Operation
+        data class Paste(val text: String) : Operation
         data object Erase : Operation
         data object EraseForward : Operation
         data object Split : Operation
@@ -80,6 +81,7 @@ object EditorProtocol {
                     if (text.length > MOST_TYPED) return null
                     Operation.Type(text)
                 }
+                "paste" -> Operation.Paste(typed(map, "text") ?: return null)
                 "erase" -> Operation.Erase
                 "eraseForward" -> Operation.EraseForward
                 "split" -> Operation.Split
@@ -147,6 +149,7 @@ object EditorProtocol {
     fun apply(state: EditorState, operation: Operation): EditorState = when (operation) {
         is Operation.Select -> state.select(operation.selection)
         is Operation.Type -> state.type(operation.text)
+        is Operation.Paste -> state.paste(operation.text)
         Operation.Erase -> state.erase()
         Operation.EraseForward -> state.eraseForward()
         Operation.Split -> state.splitParagraph()
@@ -235,7 +238,7 @@ object EditorProtocol {
 
     /** Where the caret is and what is at it, which every reply carries. */
     private fun status(state: EditorState): Map<String, Any?> {
-        val look = state.lookAt(state.selection.start)
+        val look = state.lookOf(state.selection)
         val style = state.paragraphAt(state.selection.start).style
         return mapOf(
             "selection" to mapOf(

@@ -33,6 +33,7 @@ class EditorProtocolTest {
         val cases: List<Pair<String, (EditorState) -> EditorState>> = listOf(
             """{"op":"select","anchor":[0,1],"focus":[2,2]}""" to { it.select(Selection(Caret(0, 1), Caret(2, 2))) },
             """{"op":"type","text":"whole "}""" to { it.type("whole ") },
+            """{"op":"paste","text":"two\nlines"}""" to { it.paste("two\nlines") },
             """{"op":"erase"}""" to { it.erase() },
             """{"op":"eraseForward"}""" to { it.eraseForward() },
             """{"op":"split"}""" to { it.splitParagraph() },
@@ -205,6 +206,10 @@ class EditorProtocolTest {
         assertEquals("HEADING_1", (heading["paragraph"] as Map<*, *>)["kind"])
         val chosen = EditorProtocol.step(state, """{"op":"format","italic":true}""")
         assertEquals(true, (reply(chosen.reply)["look"] as Map<*, *>)["italic"], "a look chosen with nothing selected shows on the toolbar")
+        val half = reply(EditorProtocol.reply(state, state.select(Selection(Caret(1, 2), Caret(1, 8)))))
+        assertEquals(false, (half["look"] as Map<*, *>)["bold"], "a selection half bold is not bold, so the button is up and pressing it makes all of it bold")
+        val whole = reply(EditorProtocol.reply(state, state.select(Selection(Caret(1, 0), Caret(1, 4)))))
+        assertEquals(true, (whole["look"] as Map<*, *>)["bold"])
     }
 
     // ---- the fuzz ----
@@ -240,7 +245,8 @@ class EditorProtocolTest {
             18 -> """{"op":"find","query":${Json.write(words[random.nextInt(words.size)])},"ignoreCase":${random.nextBoolean()}}"""
             19 -> """{"op":"replaceAll","query":${Json.write(words[random.nextInt(words.size)])},"replacement":${Json.write(words[random.nextInt(words.size)])}}"""
             0 -> """{"op":"select","anchor":[${random.nextInt(-1, n + 1)},${random.nextInt(-1, 9)}],"focus":[${random.nextInt(n)},${random.nextInt(9)}]}"""
-            1, 2 -> """{"op":"type","text":${Json.write(words[random.nextInt(words.size)])}}"""
+            1 -> """{"op":"type","text":${Json.write(words[random.nextInt(words.size)])}}"""
+            2 -> """{"op":"paste","text":${Json.write(words[random.nextInt(words.size)] + "\n" + words[random.nextInt(words.size)])}}"""
             3 -> """{"op":"erase"}"""
             4 -> """{"op":"eraseForward"}"""
             5 -> """{"op":"split"}"""
