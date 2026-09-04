@@ -122,11 +122,6 @@ fun ReviewScreen(
             }
         }
 
-        // Asked of the document rather than of the list: the list is
-        // usually filtered to the doubtful blocks, and what sits above one
-        // on the screen is then not what sits above it on the page.
-        val joinable = joinableTo(report, state.dropped)
-
         LazyColumn(
             // weight, not fillMaxSize: the list takes the height left over
             // after the header, instead of the parent's full height.
@@ -140,7 +135,7 @@ fun ReviewScreen(
                     entry = entry,
                     edited = entry.index in state.edited,
                     dropped = entry.index in state.dropped,
-                    canJoinUp = entry.index in joinable,
+                    canJoinUp = entry.index in state.joinable,
                     textOf = { textOf(entry.index) },
                     onRetext = { text -> onRetext(entry.index, text) },
                     onReclassify = { kind -> onReclassify(entry.index, kind) },
@@ -415,27 +410,6 @@ private fun bandColor(band: FidelityReport.Band): Color {
         FidelityReport.Band.LOW ->
             if (dark) Color(0xFFF08A7C) else Color(0xFFC0392B)
     }
-}
-
-/**
- * Which blocks have a paragraph directly above them to be joined to.
- *
- * Directly: a block the reader has taken out is passed over, since it is
- * no longer there, but a table or a picture is not — carrying a sentence
- * over something standing between its halves is not what joining a
- * paragraph to the one above it means.
- */
-private fun joinableTo(report: FidelityReport.Report, dropped: Set<Int>): Set<Int> {
-    val out = mutableSetOf<Int>()
-    var paragraphAbove = false
-    for (entry in report.entries.sortedBy { it.index }) {
-        if (entry.index in dropped) continue
-        val words = entry.kind == FidelityReport.Kind.PARAGRAPH ||
-            entry.kind == FidelityReport.Kind.HEADING
-        if (words && paragraphAbove) out += entry.index
-        paragraphAbove = words
-    }
-    return out
 }
 
 private fun kindLabel(kind: FidelityReport.Kind): Int = when (kind) {
