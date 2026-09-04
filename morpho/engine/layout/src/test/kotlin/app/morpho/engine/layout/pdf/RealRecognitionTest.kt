@@ -316,4 +316,26 @@ class RealRecognitionTest {
             "a page already read a row at a time was gathered again",
         )
     }
+
+    @Test
+    fun `the merged cell of a scanned table survives being written out`() {
+        // The cell under Design is Design's, ruled once and written in
+        // once, so the row below carries nothing of its own. An empty
+        // continuation is exactly what a writer is most likely to get
+        // wrong — by dropping the cell and shifting the row left, which
+        // would put Vague under Section and 20% under Item.
+        val written = app.morpho.engine.layout.MarkdownWriter.write(ruledReadingOf("a-ruled-table"))
+        val rows = written.lines().filter { it.startsWith("|") }
+        assertTrue(rows.size >= 6, "no table in the Markdown:\n$written")
+        // Every row has the same number of cells, empty ones included: a
+        // row that lost its blank cell would be a column short.
+        val widths = rows.map { it.split("|").size }.distinct()
+        assertEquals(1, widths.size, "the rows are not all the same width: $rows")
+        val underDesign = rows.first { it.contains("Vague") }
+        assertTrue(
+            underDesign.split("|")[1].isBlank(),
+            "the merged cell was filled in or dropped: $underDesign",
+        )
+        assertTrue(underDesign.contains("20%"), "the row lost its last cell: $underDesign")
+    }
 }
