@@ -270,12 +270,20 @@ Most of this is model → HTML → model plumbing once Stage 1 stands, because
 - A real formatting surface rather than a toolbar of everything: a bottom
   sheet on a phone, a toolbar on a tablet.
 - Hardware keyboard shortcuts.
-- **Autosave and restore across process death.** Already a known
-  limitation — a conversion in memory is lost if the process dies with the
-  save dialog open — and an editor makes it unacceptable rather than
-  merely annoying. `DocumentEdit` is a value, so this is serialisation
-  plus a place to put it, and it should be done in this stage at the
-  latest.
+- **Autosave and restore across process death — the engine half done 4
+  September.** Already a known limitation — a conversion in memory is
+  lost if the process dies with the save dialog open — and an editor
+  makes it unacceptable rather than merely annoying. `DocumentJson`
+  writes a document as text exactly, every field of every block,
+  pictures' bytes included, and reads it back as the same value — held
+  over a thousand random documents — refusing anything that is not a
+  document with one exception and never another. `EditorState.saved()`
+  and `restored()` carry a session over it: the document as opened and
+  as it stands, where each block came from so `modified` still means
+  what it meant, and the caret; not the history, which a reader would
+  least miss. What the app still owes: calling `saved()` on every edit
+  or at least on `onStop`, writing it to its own files directory, and
+  offering `restored()` on the next launch — a few lines, on a device.
 - Review Mode's confidence marks return as a layer over the editor — a
   band in the margin, a filter that jumps between doubtful blocks —
   rather than a separate screen. The Fidelity Report was the reason to

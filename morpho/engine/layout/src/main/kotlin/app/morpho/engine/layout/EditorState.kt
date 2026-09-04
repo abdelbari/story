@@ -669,6 +669,26 @@ class EditorState private constructor(
         return committed(removal(index, null))
     }
 
+    /**
+     * This session as text, to be kept somewhere the process's death does
+     * not reach, and given back to [restored].
+     *
+     * The document as opened and as it now stands, where each block came
+     * from, and where the caret is — everything a reader would miss, and
+     * not the history, which is what they would least miss and most of
+     * what there is. Written the way [DocumentJson] writes a document,
+     * and read back as carefully.
+     */
+    fun saved(): String = Json.write(
+        mapOf(
+            "morpho" to DocumentJson.FORMAT,
+            "opened" to DocumentJson.toMap(opened),
+            "document" to DocumentJson.toMap(document),
+            "origins" to origins,
+            "selection" to listOf(EditorProtocol.caretJson(selection.anchor), EditorProtocol.caretJson(selection.focus)),
+        ),
+    )
+
     /** The last step taken back, and the caret put where it was before it. */
     fun undo(): EditorState {
         val last = undos.lastOrNull() ?: return this
@@ -861,6 +881,40 @@ class EditorState private constructor(
     companion object {
         /** The most steps kept to go back over; the oldest is let go past this. */
         const val MOST_STEPS = 500
+
+        /**
+         * A session [saved] earlier, as it was — with nothing to undo,
+         * since the history was not kept, and refused with [Json.Malformed]
+         * where the text is not a session.
+         */
+        fun restored(json: String): EditorState {
+            val map = Json.parse(json) as? Map<*, *> ?: throw Json.Malformed("not a session")
+            if (map["morpho"] != DocumentJson.FORMAT.toDouble()) throw Json.Malformed("a session in another shape")
+            val opened = DocumentJson.fromMap(map["opened"] as? Map<*, *> ?: throw Json.Malformed("no opened document"))
+            val document = DocumentJson.fromMap(map["document"] as? Map<*, *> ?: throw Json.Malformed("no document"))
+            val origins = (map["origins"] as? List<*> ?: throw Json.Malformed("no origins")).map { origin ->
+                when (origin) {
+                    null -> null
+                    is Double -> origin.toInt().also { if (it.toDouble() != origin || it !in opened.blocks.indices) throw Json.Malformed("an origin outside the document opened") }
+                    else -> throw Json.Malformed("an origin that is not one")
+                }
+            }
+            if (origins.size != document.blocks.size) throw Json.Malformed("origins for a different document")
+            val carets = (map["selection"] as? List<*>)?.map { EditorProtocol.caret(it) ?: throw Json.Malformed("a caret that is not one") }
+                ?: throw Json.Malformed("no selection")
+            if (carets.size != 2) throw Json.Malformed("a selection that is not two carets")
+            val blank = EditorState(
+                document = document,
+                selection = Selection(Caret(0, 0)),
+                pending = null,
+                opened = opened,
+                origins = origins,
+                undos = emptyList(),
+                redos = emptyList(),
+                continuing = null,
+            )
+            return blank.select(Selection(carets[0], carets[1]))
+        }
 
         /**
          * [document] opened for editing, with the caret at the head of its

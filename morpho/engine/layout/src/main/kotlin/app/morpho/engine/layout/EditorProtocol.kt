@@ -248,7 +248,7 @@ object EditorProtocol {
      * put in range by the editor; anything that is not a whole number is
      * not a caret.
      */
-    private fun caret(value: Any?): Caret? {
+    internal fun caret(value: Any?): Caret? {
         val parts = value as? List<*> ?: return null
         if (parts.size != 2 && parts.size != 5) return null
         val numbers = parts.map { (it as? Double ?: return null).let { d -> whole(d, -1, Int.MAX_VALUE) } }
@@ -257,7 +257,7 @@ object EditorProtocol {
     }
 
     /** A caret as the page reads it; see [caret]. */
-    private fun caretJson(caret: Caret): List<Int> {
+    internal fun caretJson(caret: Caret): List<Int> {
         val cell = caret.cell ?: return listOf(caret.block, caret.offset)
         return listOf(caret.block, caret.offset, cell.row, cell.column, cell.paragraph)
     }
