@@ -117,6 +117,41 @@ class StringResourcesTest {
     }
 
     @Test
+    fun `every backslash begins an escape the platform knows`() {
+        // What the resource compiler actually said, on the build this test
+        // exists because of: "Invalid unicode escape sequence in string",
+        // naming the string but not the character. A backslash before a
+        // letter it does not know is not passed through — it fails the
+        // file, and the file is the whole of a language.
+        //
+        // \u is the one with more to it: four hexadecimal digits, no
+        // fewer, or it is the error above by name.
+        val known = "nt'\"\\u@?#".toSet()
+        for (folder in folders()) {
+            val raw = File(folder, "strings.xml").readText()
+            var at = raw.indexOf('\\')
+            while (at >= 0) {
+                val next = raw.getOrNull(at + 1)
+                assertTrue(
+                    next != null && next in known,
+                    "${folder.name} has \\$next, which is not an escape: " +
+                        "\"${raw.substring(maxOf(0, at - 20), minOf(raw.length, at + 20))}\"",
+                )
+                if (next == 'u') {
+                    val digits = raw.substring(at + 2, minOf(raw.length, at + 6))
+                    assertTrue(
+                        digits.length == 4 && digits.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' },
+                        "${folder.name} has \\u$digits, which is not four hexadecimal digits",
+                    )
+                }
+                // Past the escape, so a doubled backslash is one escape and
+                // not the start of another.
+                at = raw.indexOf('\\', at + 2)
+            }
+        }
+    }
+
+    @Test
     fun `a translation never formats more than the sentence supplies`() {
         // The mistake that survives the build: a translation that formats
         // something the app never passes throws where it is shown, in that
