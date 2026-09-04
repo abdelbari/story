@@ -266,7 +266,15 @@ Most of this is model → HTML → model plumbing once Stage 1 stands, because
 
 ## Stage 4 — what makes it feel finished
 
-- Find and replace, including across a document of hundreds of blocks.
+- **Find and replace — done 4 September.** `EditorState.find` lists
+  every place a word is written, in the document's paragraphs and in
+  every cell of every table, as selections; `replaceAll` writes them all
+  as something else in one step to undo, each replacement set the way
+  the first character it replaces was set. Over the bridge `find`
+  answers with its matches and paints nothing; `replaceAll` comes back
+  as the blocks it changed. The page's `morphoEditor.find` and
+  `replaceAll` are what a search sheet calls; the sheet itself is the
+  app's.
 - A real formatting surface rather than a toolbar of everything: a bottom
   sheet on a phone, a toolbar on a tablet.
 - Hardware keyboard shortcuts.

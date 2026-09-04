@@ -55,6 +55,13 @@ await p.keyboard.press('Control+z'); await check('undo in a table');
 await select([4, 0, 0, 0, 0], [5, 2]); await p.keyboard.type('Z'); await check('a selection out of a cell stands where it began');
 await p.evaluate(() => window.morphoEditor.restyle({ listMarker: 'BULLET' })); await check('made a list item (whole body)');
 await p.keyboard.press('Enter'); await p.keyboard.type('item two'); await check('Return in a list continues it');
+// A search answers with the places; a replacement everywhere repaints them.
+{
+  const found = await p.evaluate(() => window.morphoEditor.find('Now'));
+  assert.equal(found.length, 1, 'one Now to find'); await check('searched');
+  await p.evaluate(() => window.morphoEditor.replaceAll('Now', 'Then')); const t2 = await check('replaced everywhere');
+  assert.ok(t2.texts[0].endsWith('Then'), 'replaced in the first paragraph');
+}
 // Timing: two hundred keystrokes, one round trip each.
 const started = Date.now();
 await p.keyboard.type('abcdefghij'.repeat(20)); await settled();

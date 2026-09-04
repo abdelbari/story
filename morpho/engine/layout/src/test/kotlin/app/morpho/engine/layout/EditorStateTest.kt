@@ -294,6 +294,44 @@ class EditorStateTest {
         assertEquals(emptySet<Int>(), split.undo().undo().modified)
     }
 
+    // ---- finding and replacing ----
+
+    @Test
+    fun `every place a word is written is found, in the order a reader meets them`() {
+        val state = EditorState.open(doc(
+            p("the form and the Form"),
+            grid(listOf("form", "no"), listOf("x", "FORM form")),
+            p("aaa"),
+        ))
+        assertEquals(
+            listOf(Selection(Caret(0, 4), Caret(0, 8)), Selection(Caret(1, 0, Cell(0, 0, 0)), Caret(1, 4, Cell(0, 0, 0))), Selection(Caret(1, 5, Cell(1, 1, 0)), Caret(1, 9, Cell(1, 1, 0)))),
+            state.find("form"),
+        )
+        assertEquals(5, state.find("form", ignoreCase = true).size)
+        assertEquals(listOf(Selection(Caret(2, 0), Caret(2, 2))), state.find("aa"), "matches do not overlap")
+        assertEquals(emptyList<Selection>(), state.find(""))
+    }
+
+    @Test
+    fun `replacing everywhere is one step, and each replacement is set as what it replaced was`() {
+        val state = EditorState.open(doc(
+            p(r("see "), r("the form", link = "https://x"), r(" and the form", bold = true)),
+            grid(listOf("form here")),
+        ))
+        val replaced = state.replaceAll("form", "questionnaire")
+        val runs = (replaced.document.blocks[0] as Paragraph).runs
+        assertEquals(listOf("see ", "the questionnaire", " and the questionnaire"), runs.map { it.text })
+        assertEquals(listOf(null, "https://x", null), runs.map { it.link }, "a word replaced inside a link is inside the link")
+        assertEquals(listOf(false, false, true), runs.map { it.bold })
+        assertEquals(listOf(listOf(listOf("questionnaire here"))), cells(replaced, 1))
+        assertEquals(1, replaced.undoDepth)
+        assertEquals(state.document, replaced.undo().document)
+        // Replacing with nothing takes the words out; a paragraph of nothing else stands.
+        val emptied = EditorState.open(doc(p("form"))).replaceAll("form", "")
+        assertEquals(listOf(""), texts(emptied))
+        assertSame(state, state.replaceAll("absent", "x"))
+    }
+
     // ---- cells ----
 
     private fun grid(vararg rows: List<String>, spans: Boolean = false) = Table(

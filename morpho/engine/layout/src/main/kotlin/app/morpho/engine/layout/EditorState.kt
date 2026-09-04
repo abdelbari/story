@@ -584,6 +584,73 @@ class EditorState private constructor(
         return committed(Change(document, outOrigins, Selection(Caret(landing, 0))))
     }
 
+    // ---- finding and replacing ----
+
+    /**
+     * Every place [query] is written, in the order a reader meets them:
+     * the document's paragraphs and the paragraphs of every cell, each as
+     * a selection that [select] can be handed. Nothing where the query is
+     * nothing. Matches do not overlap: `aa` is found once in `aaa`.
+     */
+    fun find(query: String, ignoreCase: Boolean = false): List<Selection> {
+        if (query.isEmpty()) return emptyList()
+        val out = mutableListOf<Selection>()
+        fun scan(text: String, caret: (Int) -> Caret) {
+            var from = 0
+            while (from <= text.length) {
+                val at = text.indexOf(query, from, ignoreCase)
+                if (at < 0) break
+                out += Selection(caret(at), caret(at + query.length))
+                from = at + query.length
+            }
+        }
+        for ((block, held) in document.blocks.withIndex()) {
+            when (held) {
+                is Paragraph -> scan(held.text) { Caret(block, it) }
+                is Table -> for ((row, cells) in held.rows.withIndex()) {
+                    for ((column, cell) in cells.cells.withIndex()) {
+                        for ((paragraph, inner) in cell.blocks.withIndex()) {
+                            if (inner is Paragraph) scan(inner.text) { Caret(block, it, Cell(row, column, paragraph)) }
+                        }
+                    }
+                }
+                is ImageBlock -> {}
+            }
+        }
+        return out
+    }
+
+    /**
+     * Every place [query] is written, written as [replacement] instead,
+     * as one step to undo. Each replacement is set the way the first
+     * character it replaces was set, which is what a word processor's
+     * replace does and what keeps a word replaced inside a link inside
+     * the link. Replacing with nothing takes the words out. The caret
+     * stays where it was, put in range where what it stood in shrank.
+     */
+    fun replaceAll(query: String, replacement: String, ignoreCase: Boolean = false): EditorState {
+        val matches = find(query, ignoreCase)
+        if (matches.isEmpty()) return this
+        var doc = document
+        for ((address, hits) in matches.groupBy { it.start.copy(offset = 0) }) {
+            var paragraph = doc.paragraphAt(address)
+            // From the end of the paragraph backwards, so that a replacement
+            // of another length moves nothing still to be replaced.
+            for (hit in hits.sortedByDescending { it.start.offset }) {
+                val from = hit.start.offset
+                val to = hit.end.offset
+                val look = ParagraphEdit.plain(lookIn(paragraph.runs, from + 1))
+                val runs = ParagraphEdit.merged(
+                    ParagraphEdit.slice(paragraph.runs, 0, from) + look.copy(text = replacement) +
+                        ParagraphEdit.slice(paragraph.runs, to, paragraph.text.length),
+                )
+                paragraph = paragraph.copy(runs = runs.ifEmpty { emptied(look) })
+            }
+            doc = doc.replacingAt(address, paragraph)
+        }
+        return committed(Change(doc, origins, selection))
+    }
+
     // ---- rows and columns ----
 
     /**

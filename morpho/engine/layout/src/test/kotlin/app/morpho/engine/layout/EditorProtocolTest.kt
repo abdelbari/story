@@ -80,6 +80,23 @@ class EditorProtocolTest {
     }
 
     @Test
+    fun `a search over the bridge is answered with the places, and a replacement with the document`() {
+        val state = open(p("one form"), Table(listOf(TableRow(listOf(TableCell(listOf(p("Form two"))))))))
+        val found = EditorProtocol.step(state, """{"op":"find","query":"form","ignoreCase":true}""")
+        assertSame(state, found.state, "a search changes nothing")
+        assertEquals(
+            listOf(listOf(listOf(0.0, 4.0), listOf(0.0, 8.0)), listOf(listOf(1.0, 0.0, 0.0, 0.0, 0.0), listOf(1.0, 4.0, 0.0, 0.0, 0.0))),
+            reply(found.reply)["matches"],
+        )
+        assertEquals(0, ((reply(found.reply)["splice"] as Map<*, *>)["blocks"] as List<*>).size, "nothing to paint")
+        val replaced = EditorProtocol.step(state, """{"op":"replaceAll","query":"form","replacement":"x","ignoreCase":true}""")
+        assertEquals(listOf("one x", "<Table>"), texts(replaced.state))
+        assertEquals("x two", ((replaced.state.document.blocks[1] as Table).rows[0].cells[0].blocks[0] as Paragraph).text)
+        assertNull(EditorProtocol.operation("""{"op":"find","query":7}"""))
+        assertNull(EditorProtocol.operation("""{"op":"replaceAll","query":"a"}"""))
+    }
+
+    @Test
     fun `a property set to nothing and a property left out are told apart`() {
         val state = open(Paragraph(listOf(TextRun("the site", link = "https://x", bold = false))))
             .select(Selection(Caret(0, 0), Caret(0, 8)))
@@ -185,11 +202,13 @@ class EditorProtocolTest {
 
     private fun operation(random: Random, state: EditorState): String {
         val n = state.document.blocks.size
-        return when (random.nextInt(18)) {
+        return when (random.nextInt(20)) {
             14 -> """{"op":"select","anchor":[${random.nextInt(n)},${random.nextInt(4)},${random.nextInt(-1, 3)},${random.nextInt(-1, 3)},${random.nextInt(-1, 2)}],"focus":[${random.nextInt(n)},${random.nextInt(4)},${random.nextInt(3)},${random.nextInt(3)},0]}"""
             15 -> """{"op":"insertRow","below":${random.nextBoolean()}}"""
             16 -> """{"op":"insertColumn","after":${random.nextBoolean()}}"""
             17 -> if (random.nextBoolean()) """{"op":"deleteRow"}""" else """{"op":"deleteColumn"}"""
+            18 -> """{"op":"find","query":${Json.write(words[random.nextInt(words.size)])},"ignoreCase":${random.nextBoolean()}}"""
+            19 -> """{"op":"replaceAll","query":${Json.write(words[random.nextInt(words.size)])},"replacement":${Json.write(words[random.nextInt(words.size)])}}"""
             0 -> """{"op":"select","anchor":[${random.nextInt(-1, n + 1)},${random.nextInt(-1, 9)}],"focus":[${random.nextInt(n)},${random.nextInt(9)}]}"""
             1, 2 -> """{"op":"type","text":${Json.write(words[random.nextInt(words.size)])}}"""
             3 -> """{"op":"erase"}"""

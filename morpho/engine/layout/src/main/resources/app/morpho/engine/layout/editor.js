@@ -213,12 +213,15 @@
     }
   }
 
+  // An operation sent, its reply painted, and the reply handed back to
+  // whoever asked — for a search, the places found.
   function op(o) {
     var json = JSON.stringify(o);
     queue = queue.then(function () { return send(json); }).then(function (r) {
       var reply;
-      try { reply = JSON.parse(r); } catch (e) { return; }
-      paint(reply, o.op === 'select');
+      try { reply = JSON.parse(r); } catch (e) { return null; }
+      paint(reply, o.op === 'select' || o.op === 'find');
+      return reply;
     });
     return queue;
   }
@@ -300,6 +303,12 @@
     insertColumn: function (after) { return op({ op: 'insertColumn', after: after !== false }); },
     deleteColumn: function () { return op({ op: 'deleteColumn' }); },
     removeBlock: function (block) { return op({ op: 'removeBlock', block: block }); },
+    find: function (query, ignoreCase) {
+      return op({ op: 'find', query: query, ignoreCase: !!ignoreCase }).then(function (r) { return r && r.matches ? r.matches : []; });
+    },
+    replaceAll: function (query, replacement, ignoreCase) {
+      return op({ op: 'replaceAll', query: query, replacement: replacement, ignoreCase: !!ignoreCase });
+    },
     select: function (anchor, focus) { return op({ op: 'select', anchor: anchor, focus: focus || anchor }); },
     settled: function () { return queue; },
     caret: function () { var s = currentSelection(); return s ? [s.anchor, s.focus] : null; },

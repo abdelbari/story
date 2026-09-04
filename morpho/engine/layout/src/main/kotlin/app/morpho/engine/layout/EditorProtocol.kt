@@ -56,6 +56,8 @@ object EditorProtocol {
         data class InsertColumn(val after: Boolean) : Operation
         data object DeleteColumn : Operation
         data class RemoveBlock(val block: Int) : Operation
+        data class Find(val query: String, val ignoreCase: Boolean) : Operation
+        data class ReplaceAll(val query: String, val replacement: String, val ignoreCase: Boolean) : Operation
         data object Undo : Operation
         data object Redo : Operation
     }
@@ -120,6 +122,12 @@ object EditorProtocol {
                 "insertColumn" -> Operation.InsertColumn(flag(map, "after") ?: true)
                 "deleteColumn" -> Operation.DeleteColumn
                 "removeBlock" -> Operation.RemoveBlock(whole(map["block"] as? Double ?: return null, 0, Int.MAX_VALUE))
+                "find" -> Operation.Find(typed(map, "query") ?: return null, flag(map, "ignoreCase") ?: false)
+                "replaceAll" -> Operation.ReplaceAll(
+                    typed(map, "query") ?: return null,
+                    typed(map, "replacement") ?: return null,
+                    flag(map, "ignoreCase") ?: false,
+                )
                 "undo" -> Operation.Undo
                 "redo" -> Operation.Redo
                 else -> null
@@ -144,6 +152,8 @@ object EditorProtocol {
         is Operation.InsertColumn -> state.insertColumn(operation.after)
         Operation.DeleteColumn -> state.deleteColumn()
         is Operation.RemoveBlock -> state.removeBlock(operation.block)
+        is Operation.Find -> state
+        is Operation.ReplaceAll -> state.replaceAll(operation.query, operation.replacement, operation.ignoreCase)
         Operation.Undo -> state.undo()
         Operation.Redo -> state.redo()
     }
@@ -157,8 +167,24 @@ object EditorProtocol {
      */
     fun step(state: EditorState, json: String): Step {
         val operation = operation(json) ?: return Step(state, Json.write(mapOf("error" to "refused")))
+        if (operation is Operation.Find) {
+            // A question, not an edit: nothing to paint, and the places
+            // asked for, each as a selection the screen can hand back.
+            val matches = state.find(operation.query, operation.ignoreCase).take(MOST_MATCHES)
+            val painting = mapOf("all" to false, "splice" to mapOf("from" to state.document.blocks.size, "to" to state.document.blocks.size, "blocks" to emptyList<String>()))
+            return Step(state, Json.write(status(state) + painting + mapOf("matches" to matches.map { listOf(caretJson(it.start), caretJson(it.end)) })))
+        }
         val after = apply(state, operation)
         return Step(after, reply(state, after))
+    }
+
+    /** The most places one search reports; a document that says a word more often says it enough. */
+    const val MOST_MATCHES = 10_000
+
+    /** A string of the length typing may be, or null where it is not one. */
+    private fun typed(map: Map<*, *>, key: String): String? {
+        val text = map[key] as? String ?: return null
+        return if (text.length > MOST_TYPED) null else text
     }
 
     /** What the screen needs to paint [state] from nothing: the whole body. */
