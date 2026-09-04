@@ -166,6 +166,7 @@ object CompositionMapper {
                 GradeGlEffect(
                     ClipGradeProvider(
                         grade = clip.grade,
+                        chroma = clip.chroma,
                         transform = clip.transform,
                         motion = clip.motion,
                         spanUs = clip.sourceSpanMs * 1_000L,
@@ -284,6 +285,7 @@ object CompositionMapper {
                     GradeGlEffect(
                         ClipGradeProvider(
                             grade = clip.grade,
+                            chroma = clip.chroma,
                             transform = clip.transform,
                             motion = clip.motion,
                             spanUs = clip.sourceSpanMs * 1_000L,

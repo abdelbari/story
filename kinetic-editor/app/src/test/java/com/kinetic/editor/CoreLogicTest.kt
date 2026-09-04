@@ -1,6 +1,7 @@
 package com.kinetic.editor
 
 import com.kinetic.editor.core.model.CanvasFit
+import com.kinetic.editor.core.model.ChromaKeySpec
 import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ClipModel
 import com.kinetic.editor.core.model.ColorGradeSpec
@@ -622,6 +623,27 @@ class CoreLogicTest {
     }
 
     @Test
+    fun chromaKeyClampsAndClearsCleanly() {
+        val c = clip("a", 4_000)
+        val s0 = stateWith(listOf(c))
+        assertNull(s0.mainTrack.clips[0].chroma)
+
+        val keyed = reduce(
+            s0,
+            EditorIntent.SetChroma(c.id, ChromaKeySpec(tolerance = 0f, softness = 9f)),
+        ).mainTrack.clips[0].chroma!!
+        // A zero tolerance keys nothing, and a softness wider than the
+        // tolerance would key the whole frame.
+        assertEquals(0.01f, keyed.tolerance, 1e-4f)
+        assertEquals(0.5f, keyed.softness, 1e-4f)
+
+        val cleared = reduce(s0, EditorIntent.SetChroma(c.id, null))
+        assertNull(cleared.mainTrack.clips[0].chroma)
+        // An unkeyed clip stays byte-identical on disk.
+        assertFalse(ProjectCodec.encode(s0).contains("chroma"))
+    }
+
+    @Test
     fun transformClampsToWhatTheShaderCanActuallySample() {
         val c = clip("a", 4_000)
         val s0 = stateWith(listOf(c))
@@ -970,4 +992,5 @@ private val SHADER_UNIFORMS = listOf(
     "uTransType", "uTransProgress",
     "uXfScale", "uXfOffset", "uXfRot", "uAspect",
     "uGrain", "uGrainSeed", "uVignette",
+    "uKeyColor", "uKeyTolerance", "uKeySoftness",
 )

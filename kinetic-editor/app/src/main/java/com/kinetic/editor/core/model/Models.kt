@@ -194,6 +194,25 @@ enum class ClipMotion(val label: String) {
     DRIFT_UP("Drift up"),
 }
 
+/**
+ * Chroma key: makes one colour transparent so what is behind shows through.
+ *
+ * Null on a clip means no key, which is why it is nullable rather than a
+ * disabled default — an untouched clip costs nothing on disk and nothing in the
+ * shader. Meant for picture-in-picture, where there is something behind to
+ * reveal; on the main track a keyed pixel simply reads as black.
+ */
+@Serializable
+@Immutable
+data class ChromaKeySpec(
+    /** The colour to remove. Green by default, because that is what people shoot. */
+    val argb: Long = 0xFF00D000,
+    /** How far from the key a colour may be and still be removed: [0, 1]. */
+    val tolerance: Float = 0.32f,
+    /** Feather either side of that threshold, so the edge is not a staircase. */
+    val softness: Float = 0.10f,
+)
+
 /** Placement of a picture-in-picture video overlay. Null on a clip = full frame. */
 @Serializable
 @Immutable
@@ -246,6 +265,7 @@ data class ClipModel(
     val pip: PipSpec? = null,
     val transform: TransformSpec = TransformSpec.NONE,
     val motion: ClipMotion = ClipMotion.NONE,
+    val chroma: ChromaKeySpec? = null,
 ) {
     /** Source-domain span (what the decoder actually reads). */
     val sourceSpanMs: Long get() = trimOutMs - trimInMs

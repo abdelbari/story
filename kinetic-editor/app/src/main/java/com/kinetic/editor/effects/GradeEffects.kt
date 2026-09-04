@@ -11,6 +11,7 @@ import androidx.media3.common.util.Size
 import androidx.media3.effect.BaseGlShaderProgram
 import androidx.media3.effect.GlEffect
 import androidx.media3.effect.GlShaderProgram
+import com.kinetic.editor.core.model.ChromaKeySpec
 import com.kinetic.editor.core.model.ClipMotion
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.TransformSpec
@@ -38,12 +39,32 @@ class GradeUniformsBuffer {
     var grain = 0f
     var grainSeed = 0f
     var vignette = 0f
+    var keyR = 0f
+    var keyG = 0f
+    var keyB = 0f
+
+    /** Zero means no key at all, which is what an absent [ChromaKeySpec] sets. */
+    var keyTolerance = 0f
+    var keySoftness = 0f
 
     fun reset() {
         brightness = 0f; contrast = 1f; saturation = 1f; temperature = 0f
         lutBitmap = null; lutIntensity = 0f; transType = 0f; transProgress = 0f
         xfScale = 1f; xfOffsetX = 0f; xfOffsetY = 0f; xfRotRad = 0f
         grain = 0f; grainSeed = 0f; vignette = 0f
+        keyR = 0f; keyG = 0f; keyB = 0f; keyTolerance = 0f; keySoftness = 0f
+    }
+
+    fun setChroma(spec: ChromaKeySpec?) {
+        if (spec == null) {
+            keyTolerance = 0f
+            return
+        }
+        keyR = ((spec.argb shr 16) and 0xFF).toFloat() / 255f
+        keyG = ((spec.argb shr 8) and 0xFF).toFloat() / 255f
+        keyB = (spec.argb and 0xFF).toFloat() / 255f
+        keyTolerance = spec.tolerance
+        keySoftness = spec.softness
     }
 
     fun setTransform(xf: TransformSpec) {
@@ -160,6 +181,12 @@ class GradeShaderProgram(
             program.setFloatUniform("uGrain", uniforms.grain)
             program.setFloatUniform("uGrainSeed", uniforms.grainSeed)
             program.setFloatUniform("uVignette", uniforms.vignette)
+            program.setFloatsUniform(
+                "uKeyColor",
+                floatArrayOf(uniforms.keyR, uniforms.keyG, uniforms.keyB),
+            )
+            program.setFloatUniform("uKeyTolerance", uniforms.keyTolerance)
+            program.setFloatUniform("uKeySoftness", uniforms.keySoftness)
             program.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, /* first= */ 0, /* count= */ 4)
             GlUtil.checkGlError()
@@ -215,6 +242,7 @@ class GradeShaderProgram(
  */
 class ClipGradeProvider(
     private val grade: ColorGradeSpec,
+    private val chroma: ChromaKeySpec?,
     private val transform: TransformSpec,
     private val motion: ClipMotion,
     /** The clip's own span, so a motion knows how far through it the frame is. */
@@ -236,6 +264,7 @@ class ClipGradeProvider(
 
         out.reset()
         out.setGrade(grade)
+        out.setChroma(chroma)
         out.seedGrainAt(presentationTimeUs)
         out.setTransform(motionAt(transform, motion, progressOf(localUs, spanUs)))
         out.lutBitmap = lutBitmap
@@ -281,6 +310,7 @@ class PreviewFxProvider : GradeUniformsProvider {
         out.temperature = seg.temperature
         out.grain = seg.grain
         out.vignette = seg.vignette
+        out.setChroma(seg.chroma)
         out.seedGrainAt(presentationTimeUs)
         out.setTransform(
             motionAt(
@@ -309,6 +339,7 @@ class PreviewFxProvider : GradeUniformsProvider {
 /** Immutable uniform snapshot for one clip. */
 class ClipFx(
     val grade: ColorGradeSpec,
+    val chroma: ChromaKeySpec?,
     val transform: TransformSpec,
     val lutBitmap: Bitmap?,
     val lutIntensity: Float,
@@ -332,6 +363,7 @@ class ClipSnapshotFxProvider : GradeUniformsProvider {
         out.reset()
         val s = snapshot ?: return
         out.setGrade(s.grade)
+        out.setChroma(s.chroma)
         out.seedGrainAt(presentationTimeUs)
         out.setTransform(s.transform)
         out.lutBitmap = s.lutBitmap
@@ -345,6 +377,7 @@ class FxSegment(
     val endUs: Long,
     val transform: TransformSpec,
     val motion: ClipMotion,
+    val chroma: ChromaKeySpec?,
     val grain: Float,
     val vignette: Float,
     val brightness: Float,

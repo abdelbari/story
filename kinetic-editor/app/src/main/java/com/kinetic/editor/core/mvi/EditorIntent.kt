@@ -2,6 +2,7 @@ package com.kinetic.editor.core.mvi
 
 import com.kinetic.editor.core.model.CanvasFit
 import com.kinetic.editor.core.model.ClipId
+import com.kinetic.editor.core.model.ChromaKeySpec
 import com.kinetic.editor.core.model.ClipMotion
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.LutSpec
@@ -89,6 +90,11 @@ sealed interface EditorIntent {
         val grade: ColorGradeSpec,
         val lut: LutSpec?,
     ) : EditorIntent
+
+    /** Keys a colour out of a clip, or clears the key when null. */
+    data class SetChroma(val clipId: ClipId, val chroma: ChromaKeySpec?) : EditorIntent {
+        override val coalesceKey get() = "chroma:${clipId.value}"
+    }
 
     /** A move that runs across the whole clip, on top of its transform. */
     data class SetMotion(val clipId: ClipId, val motion: ClipMotion) : EditorIntent

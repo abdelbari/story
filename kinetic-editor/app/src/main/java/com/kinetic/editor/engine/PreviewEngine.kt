@@ -148,6 +148,10 @@ class PreviewEngine(
      * rotate it, fade it out between clips and clip it like any other box.
      */
     fun attachOverlayTexture(trackId: String, view: TextureView) {
+        // Not opaque: a keyed or zoomed-out picture-in-picture has transparent
+        // pixels, and an opaque TextureView would paint them black over the
+        // main picture instead of letting it through.
+        view.isOpaque = false
         slaves[trackId]?.player?.setVideoTextureView(view)
     }
 
@@ -435,6 +439,7 @@ class PreviewEngine(
                     endUs = previewUs + w.durationUs,
                     transform = clip.transform,
                     motion = clip.motion,
+                    chroma = clip.chroma,
                     grain = clip.grade.grain,
                     vignette = clip.grade.vignette,
                     brightness = clip.grade.brightness,
@@ -579,6 +584,7 @@ class PreviewEngine(
             val clip = placements.getOrNull(player.currentMediaItemIndex)?.clip ?: return
             provider.snapshot = ClipFx(
                 grade = clip.grade,
+                chroma = clip.chroma,
                 // A PiP's snapshot carries no clock, so its motion is its
                 // starting frame; the manual transform still applies.
                 transform = motionAt(clip.transform, clip.motion, 0f),

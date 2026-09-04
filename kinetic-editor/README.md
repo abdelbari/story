@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 55 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 56 pure-JVM logic tests
 python3 tools/check-shaders.py   # compiles the GLSL (needs glslang-tools)
 ```
 
@@ -50,8 +50,8 @@ environment, so the app has not been assembled by Gradle there. Instead:
   the shader on purpose: it catches both a renamed uniform and a syntax error.
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 55 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 57-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 56 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 58-scenario executable sandbox suite.
 
 ---
 
@@ -335,6 +335,7 @@ the exporter — the model, the preview and the export path agree on all three.
 | Canvas | 9:16, 16:9, 1:1 and 4:5 presets, each fitted, filled (cropped) or stretched — applied by the same `Presentation` in preview and export |
 | Editing | trim, split, move, reorder, duplicate, delete, per-clip speed, detach audio |
 | Transform | pan, zoom and rotate the picture inside its frame, on any video clip |
+| Chroma key | green or blue screen with tolerance and edge feather, on any video clip — meant for picture-in-picture, where there is something behind to reveal |
 | Motion | one-tap push in, pull out, pan and drift that run across the whole clip, composed on top of a manual reframe |
 | Output | background MP4 export with live progress, published to Movies/Kinetic |
 
@@ -342,6 +343,24 @@ Volume fades deserve a note: the model stores a general keyframe envelope, but
 the UI exposes fade-in/fade-out durations, because that is what nearly every
 volume edit actually is. `fadeKeyframes`/`readFades` convert between the two, so
 the sliders reflect whatever envelope a clip really has.
+
+### Chroma key, and why transparency reaches the screen
+
+The key is applied *before* the grade, so it judges the colour that was shot
+rather than one the user has since pushed around.
+
+Getting the transparency to survive took reading media3 rather than guessing:
+the compositor enables `GL_BLEND` with `SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA` and its
+fragment shader is `vec4(src.rgb, src.a * uAlphaScale)`, so it honours whatever
+alpha an input carries, and `Presentation` copies alpha through explicitly. The
+shader therefore emits *straight* (unmultiplied) alpha, which is what that blend
+expects. The same change makes a zoomed-out overlay reveal the main picture
+instead of painting black over it, since out-of-frame pixels are now transparent
+rather than black.
+
+In the preview the picture-in-picture surface is a `TextureView` with
+`isOpaque = false`, without which the platform would composite those
+transparent pixels as black and the preview would disagree with the render.
 
 ### Grain and vignette are on the print, not the scene
 

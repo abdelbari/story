@@ -50,6 +50,16 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
     is EditorIntent.ApplyFilter -> replaceClip(state, intent.clipId) {
         it.copy(grade = intent.grade, lut = intent.lut)
     }
+    is EditorIntent.SetChroma -> replaceClip(state, intent.clipId) { clip ->
+        clip.copy(
+            chroma = intent.chroma?.copy(
+                // A zero tolerance keys nothing, which is the same as no key at
+                // all; a softness wider than the tolerance would key the frame.
+                tolerance = intent.chroma.tolerance.coerceIn(0.01f, 1f),
+                softness = intent.chroma.softness.coerceIn(0f, 0.5f),
+            ),
+        )
+    }
     is EditorIntent.SetMotion -> replaceClip(state, intent.clipId) { it.copy(motion = intent.motion) }
     is EditorIntent.SetTransform -> replaceClip(state, intent.clipId) {
         it.copy(

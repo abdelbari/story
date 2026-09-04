@@ -53,6 +53,10 @@ uniform float uAspect;
 uniform float uGrain;
 uniform float uGrainSeed;
 uniform float uVignette;
+// Chroma key. Tolerance 0 disables it, so an unkeyed clip costs one compare.
+uniform vec3 uKeyColor;
+uniform float uKeyTolerance;
+uniform float uKeySoftness;
 
 // Cheap hash noise. Deterministic per pixel per frame, which is what makes
 // grain sit still within a frame and dance between them, the way film does.
@@ -95,7 +99,16 @@ void main() {
     uv = 0.5 + (uv - 0.5) / s;
   }
 
-  vec3 c = texture2D(uTexSampler, uv).rgb;
+  vec4 texel = texture2D(uTexSampler, uv);
+  vec3 c = texel.rgb;
+
+  // Keyed BEFORE the grade, so the key is judged on the colour that was shot
+  // rather than on one the user has since pushed around.
+  float alpha = texel.a;
+  if (uKeyTolerance > 0.0) {
+    float d = distance(c, uKeyColor);
+    alpha *= smoothstep(uKeyTolerance, uKeyTolerance + uKeySoftness + 0.001, d);
+  }
 
   // Grade: brightness -> contrast -> saturation -> temperature.
   c += uBrightness;
@@ -141,8 +154,11 @@ void main() {
   // Anything the transform moved off the source is black, not a smeared edge
   // texel: zooming out or panning past the border letterboxes cleanly. Applied
   // last so a brightened grade cannot lift the surround off black.
+  // Transparent rather than black, so a zoomed-out or keyed overlay reveals
+  // what is behind it. The compositor blends on straight alpha, so the colour
+  // is left unmultiplied.
   float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
-  gl_FragColor = vec4(clamp(c, 0.0, 1.0) * inside, 1.0);
+  gl_FragColor = vec4(clamp(c, 0.0, 1.0), alpha * inside);
 }
 """
 }

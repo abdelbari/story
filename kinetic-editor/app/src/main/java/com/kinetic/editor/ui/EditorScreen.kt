@@ -103,6 +103,7 @@ import com.kinetic.editor.ui.theme.Type
 import com.kinetic.editor.ui.theme.ValueSlider
 import com.kinetic.editor.core.model.StickerSpec
 import com.kinetic.editor.core.model.PipSpec
+import com.kinetic.editor.core.model.ChromaKeySpec
 
 /**
  * Screen-level wiring. The two LaunchedEffects below are the ENTIRE
@@ -595,6 +596,7 @@ private fun ClipInspector(
         val hasAudio = clip.media.hasAudio
         if (hasVideo) LookSection(clip, dispatch)
         if (hasVideo) FrameSection(clip, dispatch)
+        if (hasVideo) KeySection(clip, dispatch)
         if (hasAudio) SoundSection(clip, dispatch)
         if (hasVideo || hasAudio) ClipSection(clip, track, dispatch)
     }
@@ -807,6 +809,36 @@ private fun FrameSection(clip: ClipModel, dispatch: (EditorIntent) -> Unit) {
 }
 
 /**
+ * Chroma key. Only useful where something sits behind the clip, so the copy
+ * says so rather than leaving the user to wonder why keying the main track
+ * turns it black.
+ */
+@Composable
+private fun KeySection(clip: ClipModel, dispatch: (EditorIntent) -> Unit) {
+    val key = clip.chroma
+    ChipRow("Key") {
+        Chip("Off", key == null) { dispatch(EditorIntent.SetChroma(clip.id, null)) }
+        for ((label, argb) in KEY_COLOURS) {
+            Chip(label, key?.argb == argb) {
+                dispatch(
+                    EditorIntent.SetChroma(clip.id, (key ?: ChromaKeySpec()).copy(argb = argb)),
+                )
+            }
+        }
+    }
+    if (key != null) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Dim.sm)) {
+            ValueSlider("Amount", key.tolerance, 0.01f..1f, Modifier.weight(1f)) {
+                dispatch(EditorIntent.SetChroma(clip.id, key.copy(tolerance = it)))
+            }
+            ValueSlider("Edge", key.softness, 0f..0.5f, Modifier.weight(1f)) {
+                dispatch(EditorIntent.SetChroma(clip.id, key.copy(softness = it)))
+            }
+        }
+    }
+}
+
+/**
  * Sound. Fades are the 90% case for volume envelopes; the model underneath is a
  * general keyframe list and these two sliders author and read the common shape.
  */
@@ -911,6 +943,12 @@ private val FILTERS = listOf(
         ColorGradeSpec(contrast = 1.08f, saturation = 0.95f, grain = 0.18f, vignette = 0.22f),
         LutSpec(FILM_LUT_ASSET, 0.85f),
     ),
+)
+
+/** What people actually shoot against. */
+private val KEY_COLOURS = listOf(
+    "Green" to 0xFF00D000,
+    "Blue" to 0xFF0040D0,
 )
 
 /** Swatches for text: white and black first, then the app's own accents. */
