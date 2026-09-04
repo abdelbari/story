@@ -126,15 +126,24 @@ object RecognizedText {
     }
 
     private fun rowedOnPage(lines: List<PdfLine>, page: Int, rules: List<PdfDrawing>): List<PdfLine> {
-        val down = rules.filter { it.widthPt > 0f && it.heightPt >= LEAST_GRID_SIDE_PT }
-        if (down.size < LEAST_GRID_SIDES) return lines
-        val left = down.minOf { it.left }
-        val right = down.maxOf { it.right }
-        val top = rules.minOf { it.top }
-        val bottom = rules.maxOf { it.bottom }
+        var out = lines
+        for (grid in PdfRuledTables.rectanglesOf(rules)) out = rowedInGrid(out, page, grid)
+        return out
+    }
+
+    /**
+     * The lines standing in the one [grid], gathered into its rows.
+     *
+     * Grid by grid rather than page by page, because a page may rule two
+     * tables and a rectangle drawn round both reaches everything between
+     * them. What stands there is not a row of anything, and two lines of
+     * a passage set in two columns share a baseline — which is exactly
+     * the gathering this is confined to avoid.
+     */
+    private fun rowedInGrid(lines: List<PdfLine>, page: Int, grid: PdfRuledTables.Rect): List<PdfLine> {
         fun inside(line: PdfLine) = line.page == page &&
-            line.x >= left - GRID_SLACK_PT && line.xEnd <= right + GRID_SLACK_PT &&
-            line.baselineY >= top - GRID_SLACK_PT && line.baselineY <= bottom + GRID_SLACK_PT
+            line.x >= grid.left - GRID_SLACK_PT && line.xEnd <= grid.right + GRID_SLACK_PT &&
+            line.baselineY >= grid.top - GRID_SLACK_PT && line.baselineY <= grid.bottom + GRID_SLACK_PT
         val within = lines.filter(::inside)
         if (within.size < LEAST_GRID_CELLS) return lines
         val rows = mutableListOf<MutableList<PdfLine>>()
@@ -163,10 +172,6 @@ object RecognizedText {
         return (lines.filterNot(::inside) + gathered)
             .sortedWith(compareBy({ it.page }, { it.baselineY }, { it.x }))
     }
-
-    /** Two sides down the page at least, or there is no grid to speak of. */
-    private const val LEAST_GRID_SIDES = 2
-    private const val LEAST_GRID_SIDE_PT = 20f
 
     /** Fewer cells than this inside the rules and there is no table to gather. */
     private const val LEAST_GRID_CELLS = 4

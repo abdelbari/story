@@ -353,4 +353,58 @@ class RecognizedTextTest {
         )
         assertEquals(listOf("one two"), lines.map { it.text })
     }
+
+    /** A cell of a table, as recognition hands one over: its own line. */
+    private fun cell(text: String, x: Float, y: Float) = PdfLine(
+        text = text, x = x, baselineY = y, maxFontSize = 11f, page = 1,
+        xEnd = x + text.length * 6f,
+        segments = listOf(PdfSegment(text, x, x + text.length * 6f)),
+    )
+
+    /** A two-column grid of [rows] rows between x 60 and 240, its top at [top]. */
+    private fun grid(top: Float, rows: Int): List<PdfDrawing> {
+        val out = mutableListOf<PdfDrawing>()
+        for (r in 0..rows) {
+            val y = top + r * 30f
+            out += PdfDrawing(1, 60f, y - 0.4f, 240f, y + 0.4f)
+        }
+        for (x in listOf(60f, 150f, 240f)) out += PdfDrawing(1, x - 0.4f, top, x + 0.4f, top + rows * 30f)
+        return out
+    }
+
+    @Test
+    fun `gathering a table's cells into rows does not reach what stands between two tables`() {
+        // The gathering is confined to a grid because gathering by
+        // baseline across a page is ruinous: two columns share a baseline,
+        // so a passage set in two comes back as lines read across the
+        // gutter. Confined to one rectangle *per page*, a page ruling two
+        // tables gave it the whole run between them to gather in, and the
+        // passage between the two tables is exactly what stands there.
+        val passage = listOf(
+            cell("the left column opens", 60f, 180f), cell("and the next", 160f, 180f),
+            cell("and runs down below", 60f, 200f), cell("says other", 160f, 200f),
+            cell("without reference to", 60f, 220f), cell("things again", 160f, 220f),
+        )
+        val lines = listOf(
+            cell("Term", 66f, 108f), cell("Got", 156f, 108f),
+            cell("Autumn", 66f, 138f), cell("148", 156f, 138f),
+        ) + passage + listOf(
+            cell("Term", 66f, 318f), cell("Lost", 156f, 318f),
+            cell("Autumn", 66f, 348f), cell("12", 156f, 348f),
+        )
+        val rowed = RecognizedText.rowed(lines, grid(top = 90f, rows = 2) + grid(top = 300f, rows = 2))
+        // Both tables gathered — two rows apiece from four cells — and the
+        // passage came through untouched.
+        assertEquals(10, rowed.size, "lines: " + rowed.map { it.text })
+        assertEquals(
+            listOf("Term Got", "Autumn 148", "Term Lost", "Autumn 12"),
+            rowed.filter { it.baselineY < 150f || it.baselineY > 300f }.map { it.text },
+            "the tables did not gather into rows",
+        )
+        assertEquals(
+            passage.map { it.text },
+            rowed.filter { it.baselineY in 150f..300f }.map { it.text },
+            "the passage between the tables was read across its gutter",
+        )
+    }
 }

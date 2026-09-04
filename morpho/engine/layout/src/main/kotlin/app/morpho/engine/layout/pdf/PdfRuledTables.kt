@@ -93,6 +93,37 @@ object PdfRuledTables {
         return out.sortedBy { it.start }
     }
 
+    /** Where a grid stands, in points from the top left of its page. */
+    data class Rect(val left: Float, val top: Float, val right: Float, val bottom: Float)
+
+    /**
+     * Where each grid the [drawings] of one page rule stands.
+     *
+     * The geometry on its own, with no words in it, because recognition
+     * has to know where a grid is before there is anything to put in one:
+     * a page that is nothing but a table is handed over column by column,
+     * and the cells are gathered back into rows inside the grid they
+     * belong to. Held to the same count of lines each way as a table read
+     * from a grid, so what is not a grid here is not a grid there.
+     */
+    fun rectanglesOf(drawings: List<PdfDrawing>): List<Rect> {
+        val uprights = drawings.filter { it.widthPt <= THIN_PT && it.heightPt >= LEAST_SIDE_PT }
+        val levels = drawings.filter { it.heightPt <= THIN_PT && it.widthPt >= LEAST_SIDE_PT }
+        return gridsOf(uprights, levels)
+            .filter { grid ->
+                merged(grid.levels) { (it.top + it.bottom) / 2 }.size > LEAST_BANDS &&
+                    merged(grid.uprights) { (it.left + it.right) / 2 }.size > LEAST_BANDS
+            }
+            .map { grid ->
+                Rect(
+                    left = grid.uprights.minOf { it.left },
+                    top = grid.uprights.minOf { it.top },
+                    right = grid.uprights.maxOf { it.right },
+                    bottom = grid.uprights.maxOf { it.bottom },
+                )
+            }
+    }
+
     /** The sides and levels of one grid, apart from every other grid's. */
     private class Grid(val uprights: List<PdfDrawing>, val levels: List<PdfDrawing>)
 
