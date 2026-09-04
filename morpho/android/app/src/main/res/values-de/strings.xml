@@ -19,8 +19,8 @@
     <string name="read_error">Diese Datei ließ sich nicht lesen. Sie ist womöglich beschädigt oder nicht von der Art, die ihr Name nennt.</string>
     <string name="write_error">Die umgewandelte Datei konnte nicht gespeichert werden.</string>
     <string name="privacy_line">Nur auf dem Gerät — Umwandlungen auf diesem Bildschirm berühren nie das Netzwerk.</string>
-    <string name="review_open">Ansehen, wie gelesen wurde</string>
-    <string name="review_title">Genauigkeitsbericht</string>
+    <string name="review_open">Dokument prüfen und bearbeiten</string>
+    <string name="review_title">Prüfen und bearbeiten</string>
     <string name="review_close">Schließen</string>
     <string name="review_overall">%1$d%% Gesamtsicherheit</string>
     <string name="review_all_exact">Alle Teile wurden exakt aus der Quelldatei gelesen.</string>

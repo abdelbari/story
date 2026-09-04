@@ -19,8 +19,8 @@
     <string name="read_error">No se pudo leer ese archivo. Puede estar dañado, o no ser del tipo que dice su nombre.</string>
     <string name="write_error">No se pudo guardar el archivo convertido.</string>
     <string name="privacy_line">Solo en el dispositivo: las conversiones de esta pantalla nunca tocan la red.</string>
-    <string name="review_open">Ver cómo se leyó</string>
-    <string name="review_title">Informe de fidelidad</string>
+    <string name="review_open">Revisar y editar el documento</string>
+    <string name="review_title">Revisar y editar</string>
     <string name="review_close">Cerrar</string>
     <string name="review_overall">%1$d%% de confianza general</string>
     <string name="review_all_exact">Todas las partes se leyeron exactamente del archivo original.</string>

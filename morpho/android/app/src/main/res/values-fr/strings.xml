@@ -19,8 +19,8 @@
     <string name="read_error">Impossible de lire ce fichier. Il est peut-être endommagé, ou n’est pas du type que son nom annonce.</string>
     <string name="write_error">Impossible d’enregistrer le fichier converti.</string>
     <string name="privacy_line">Sur l’appareil uniquement — les conversions de cet écran ne passent jamais par le réseau.</string>
-    <string name="review_open">Voir comment ce fichier a été lu</string>
-    <string name="review_title">Rapport de fidélité</string>
+    <string name="review_open">Vérifier et modifier le document</string>
+    <string name="review_title">Vérifier et modifier</string>
     <string name="review_close">Fermer</string>
     <string name="review_overall">%1$d%% de confiance globale</string>
     <string name="review_all_exact">Toutes les parties ont été lues exactement depuis le fichier source.</string>

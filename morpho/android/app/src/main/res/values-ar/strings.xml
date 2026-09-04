@@ -19,8 +19,8 @@
     <string name="read_error">تعذّرت قراءة الملف. قد يكون تالفا أو ليس من النوع الذي يشير إليه اسمه.</string>
     <string name="write_error">تعذّر حفظ الملف المحوَّل.</string>
     <string name="privacy_line">على الجهاز فقط — التحويلات في هذه الشاشة لا تمر عبر الشبكة أبدًا.</string>
-    <string name="review_open">اطّلع على طريقة القراءة</string>
-    <string name="review_title">تقرير الدقة</string>
+    <string name="review_open">راجع المستند وحرّره</string>
+    <string name="review_title">المراجعة والتحرير</string>
     <string name="review_close">إغلاق</string>
     <string name="review_overall">الثقة الإجمالية: %1$d%%</string>
     <string name="review_all_exact">قُرئت كل الأجزاء حرفيًا من الملف المصدر.</string>
