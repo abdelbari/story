@@ -210,4 +210,28 @@ class RealRecognitionTest {
         }
         assertTrue(to - from > 400f, "the table is most of the measure: ${to - from}pt")
     }
+
+    @Test
+    fun `the rules handed to the reading are read as rules and nothing else`() {
+        // A page's drawn shapes are read for more than tables: a small one
+        // beside a line is the bullet the page drew instead of writing.
+        // Handing recognition's rules to that as well is the side of this
+        // change nobody asked for, so it is measured rather than assumed —
+        // a rule taken for a bullet would turn a paragraph into a list.
+        val plain = readingOf("prose-and-a-table").blocks.filterIsInstance<Paragraph>()
+        val ruled = ruledReadingOf("prose-and-a-table").blocks.filterIsInstance<Paragraph>()
+        assertEquals(
+            emptyList<String>(),
+            ruled.filter { it.style.listMarker != null }.map { it.text.take(30) },
+            "a rule was read as the mark of a list",
+        )
+        // And the prose itself is word for word what it was: the only
+        // thing that changed on this page is that the table is a table.
+        assertEquals(
+            plain.map { it.text }.filterNot { it.startsWith("Section") || it.startsWith("Design") ||
+                it.startsWith("Delivery") || it.startsWith("Records") },
+            ruled.map { it.text },
+            "the prose either side of the table came back different",
+        )
+    }
 }
