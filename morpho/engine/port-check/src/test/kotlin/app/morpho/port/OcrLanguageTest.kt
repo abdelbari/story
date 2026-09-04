@@ -33,7 +33,7 @@ class OcrLanguageTest {
     /** Every set the app can end up asking for, whatever the phone is set to. */
     private fun askable(): List<String> =
         AndroidOcrReader.LANGUAGES_BY_LOCALE.values + AndroidOcrReader.OTHERWISE +
-            AndroidOcrReader.DEFAULT_LANGUAGES
+            AndroidOcrReader.DEFAULT_LANGUAGES + AndroidOcrReader.CHOOSABLE_LANGUAGES
 
     @Test
     fun `the packs this compares against are where they are expected to be`() {
@@ -97,5 +97,51 @@ class OcrLanguageTest {
 
     private companion object {
         const val SUFFIX = ".traineddata"
+    }
+
+    @Test
+    fun `every set a reader can pick is two packs that ship, in an order`() {
+        val have = shipped()
+        for (set in AndroidOcrReader.CHOOSABLE_LANGUAGES) {
+            val packs = set.split('+')
+            assertEquals(2, packs.size, "\"$set\" is not a pair")
+            assertEquals(packs.distinct(), packs, "\"$set\" names the same pack twice")
+            for (pack in packs) {
+                assertTrue(pack in have, "\"$set\" asks for $pack, which does not ship")
+            }
+        }
+        assertEquals(
+            AndroidOcrReader.CHOOSABLE_LANGUAGES.distinct(),
+            AndroidOcrReader.CHOOSABLE_LANGUAGES,
+            "the same set is offered twice",
+        )
+        assertEquals(
+            AndroidOcrReader.DEFAULT_LANGUAGES,
+            AndroidOcrReader.CHOOSABLE_LANGUAGES.first(),
+            "the language this app exists for is not the first thing offered",
+        )
+    }
+
+    @Test
+    fun `every set the app can use is one a reader could have picked`() {
+        // Otherwise the chooser opens showing a set that is not in its own
+        // list, and the reader cannot get back to what they started on.
+        val offered = AndroidOcrReader.CHOOSABLE_LANGUAGES.toSet()
+        for (locale in AndroidOcrReader.LANGUAGES_BY_LOCALE.keys + listOf("en", "zh", "")) {
+            val said = AndroidOcrReader.languagesFor(locale)
+            assertTrue(said in offered, "a phone set to \"$locale\" starts on \"$said\", which is not offered")
+        }
+    }
+
+    @Test
+    fun `every pack can be named to a reader in their own language`() {
+        // The names come off the platform rather than out of thirty
+        // translated strings, which is only possible while every pack has
+        // a code the platform knows.
+        for (pack in shipped()) {
+            val code = AndroidOcrReader.ISO1_BY_PACK[pack]
+            assertTrue(code != null, "$pack ships and has no two-letter code, so nothing can name it")
+            assertEquals(2, code!!.length, "\"$code\" is not a two-letter code")
+        }
     }
 }

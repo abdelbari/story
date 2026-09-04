@@ -15,6 +15,7 @@
     <string name="retry">Erneut versuchen</string>
     <string name="scanned_pdf">Dieses PDF scheint gescannt zu sein, ohne Textebene. Sie können es mit OCR vollständig auf dem Gerät lesen.</string>
     <string name="convert_with_ocr">Mit OCR lesen und konvertieren</string>
+    <string name="ocr_language">Erkennen in: %1$s</string>
     <string name="unsupported_type">Morpho wandelt PDF-, Word- (.docx), Text- und Markdown-Dateien sowie Fotos von Seiten um. Diese ist etwas anderes.</string>
     <string name="read_error">Diese Datei ließ sich nicht lesen. Sie ist womöglich beschädigt oder nicht von der Art, die ihr Name nennt.</string>
     <string name="write_error">Die umgewandelte Datei konnte nicht gespeichert werden.</string>

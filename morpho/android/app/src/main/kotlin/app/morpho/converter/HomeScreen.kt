@@ -17,6 +17,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +45,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import app.morpho.engine.layout.DocumentFormats
 import app.morpho.engine.ooxml.DocxWriter
+import app.morpho.pdf.AndroidOcrReader
+import java.util.Locale
 
 // The types the picker offers, off the same list the converter decides by:
 // a type offered here and refused there wastes the reader's pick, and one
@@ -53,6 +57,7 @@ private val inputMimeTypes = DocumentFormats.PICKABLE_MIME_TYPES.toTypedArray()
 fun HomeScreen(viewModel: ConvertViewModel) {
     val state by viewModel.state.collectAsState()
     val review by viewModel.review.collectAsState()
+    val languages by viewModel.languages.collectAsState()
 
     // Local state: which screen is showing is not worth surviving process
     // death, unlike a conversion.
@@ -216,6 +221,8 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                         onSave = viewModel::requestSave,
                         onPreview = { showPreview = true },
                         onChoosePages = { askingPages = true },
+                        languages = languages,
+                        onChooseLanguages = viewModel::chooseLanguages,
                     )
                 }
             }
@@ -369,6 +376,8 @@ private fun StateActions(
     onSave: () -> Unit,
     onPreview: () -> Unit,
     onChoosePages: () -> Unit,
+    languages: String,
+    onChooseLanguages: (String) -> Unit,
 ) {
     when (state) {
         is ConvertUiState.Idle ->
@@ -386,6 +395,13 @@ private fun StateActions(
             }
 
         is ConvertUiState.Picked -> {
+            // Offered where a scan is certain. A picture of a page is
+            // always read by recognition; a PDF usually is not, and asking
+            // about every one of them would be noise on the screen of
+            // every reader converting an ordinary file.
+            if (state.isImage) {
+                LanguageChoice(languages, onChooseLanguages)
+            }
             Button(onClick = onConvert, modifier = Modifier.fillMaxWidth()) {
                 Text(
                     stringResource(
@@ -443,6 +459,12 @@ private fun StateActions(
 
         is ConvertUiState.Failed -> {
             if (state.reason == FailReason.SCANNED_PDF) {
+                // The other place recognition is certain: the reader has
+                // just been told this file is a scan and is being offered
+                // it. Asked before the run rather than after, since a run
+                // is minutes and reading it in the wrong language is all
+                // of them wasted.
+                LanguageChoice(languages, onChooseLanguages)
                 Button(onClick = onOcr, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.convert_with_ocr))
                 }
@@ -586,6 +608,55 @@ private fun PagesDialog(
         },
     )
 }
+/**
+ * What recognition should read a scan as.
+ *
+ * The phone's own language is the only signal there is before a page has
+ * been read, and it is wrong often enough to matter: the documents this
+ * app exists for are Arabic, and the other language in them is more often
+ * French than English — a faculty's form, a thesis with a French résumé —
+ * while an Arabic phone elsewhere wants English. No locale tells those
+ * apart, so the reader is asked, starting on the guess.
+ *
+ * The languages are named by the platform in the reader's own language
+ * rather than by two names per set per language, which would be thirty
+ * strings to keep in step and would drift.
+ */
+@Composable
+private fun LanguageChoice(languages: String, onChoose: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box(modifier = Modifier.fillMaxWidth()) {
+        TextButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.ocr_language, namesOf(languages)))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            for (set in AndroidOcrReader.CHOOSABLE_LANGUAGES) {
+                DropdownMenuItem(
+                    text = { Text(namesOf(set)) },
+                    onClick = {
+                        onChoose(set)
+                        open = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * "ara+fra" as the reader's own words for those two languages.
+ *
+ * A pack whose code is not known is left as it is rather than dropped: a
+ * set named oddly is a great deal better than a set named for one of the
+ * two languages it reads.
+ */
+private fun namesOf(languages: String): String =
+    languages.split('+').joinToString(" + ") { pack ->
+        val code = AndroidOcrReader.ISO1_BY_PACK[pack] ?: return@joinToString pack
+        Locale.forLanguageTag(code).getDisplayLanguage(Locale.getDefault())
+            .ifEmpty { pack }
+    }
+
 
 private fun FailReason.messageRes(): Int = when (this) {
     FailReason.UNSUPPORTED_TYPE -> R.string.unsupported_type

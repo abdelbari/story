@@ -15,6 +15,7 @@
     <string name="retry">أعد المحاولة</string>
     <string name="scanned_pdf">يبدو هذا ملف PDF ممسوحًا ضوئيًا دون طبقة نصية. يمكنك قراءته بالتعرف الضوئي على الجهاز بالكامل.</string>
     <string name="convert_with_ocr">اقرأ بالتعرف الضوئي وحوِّل</string>
+    <string name="ocr_language">اقرأ بلغة: %1$s</string>
     <string name="unsupported_type">يحوّل مورفو ملفات PDF ووورد (.docx) والنصوص وماركداون وصور الصفحات. هذا الملف من نوع آخر.</string>
     <string name="read_error">تعذّرت قراءة الملف. قد يكون تالفا أو ليس من النوع الذي يشير إليه اسمه.</string>
     <string name="write_error">تعذّر حفظ الملف المحوَّل.</string>

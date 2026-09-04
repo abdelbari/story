@@ -16,6 +16,7 @@
     <string name="retry">Try again</string>
     <string name="scanned_pdf">This looks like a scanned PDF with no text layer. You can read it with fully on-device OCR.</string>
     <string name="convert_with_ocr">Read with OCR and convert</string>
+    <string name="ocr_language">Recognise in: %1$s</string>
     <string name="unsupported_type">Morpho converts PDF, Word (.docx), text, Markdown and pictures of pages. That one is something else.</string>
     <plurals name="pictures_as_pages">
         <item quantity="one">%1$d picture, converted as one document</item>

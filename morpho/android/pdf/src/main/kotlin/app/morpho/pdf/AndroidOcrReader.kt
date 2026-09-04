@@ -479,6 +479,50 @@ class AndroidOcrReader(private val context: Context) {
         /** What a phone set to none of the four reads with. */
         const val OTHERWISE = "eng+ara"
 
+        /**
+         * The sets a reader can pick between for a scan, in the order they
+         * are offered.
+         *
+         * The phone's own language is a guess and it is the only one
+         * available before a page is read, but it is wrong often enough to
+         * matter: the documents this app exists for are Arabic, and the
+         * other language in them is far more often French than English —
+         * an Algerian faculty's form, a thesis with a French résumé — while
+         * an Arabic phone in Cairo or the Gulf wants English. Nothing in a
+         * locale tells the two apart, so the reader is asked instead. The
+         * guess by locale is still what the choice starts on.
+         *
+         * Pairs rather than longer sets on purpose. Tesseract slows down
+         * with every model it carries, and this runs on a phone, page by
+         * page; a third language costs every page of every scan to serve
+         * the documents that hold three.
+         *
+         * Ordered, because Tesseract leans on the first name given: the
+         * difference between an Arabic page read as Arabic and the same
+         * page read as badly spelled English.
+         */
+        val CHOOSABLE_LANGUAGES: List<String> = listOf(
+            DEFAULT_LANGUAGES,
+            "ara+fra",
+            "fra+eng",
+            OTHERWISE,
+            "spa+eng",
+            "deu+eng",
+        )
+
+        /**
+         * The two-letter code for each pack, so a set can be named to a
+         * reader in their own language by the platform rather than by
+         * thirty translated strings that would drift.
+         */
+        val ISO1_BY_PACK: Map<String, String> = mapOf(
+            "ara" to "ar",
+            "eng" to "en",
+            "fra" to "fr",
+            "spa" to "es",
+            "deu" to "de",
+        )
+
         /** OCR output is a guess by construction; the heatmap should show it. */
         const val OCR_CONFIDENCE = 0.5f
 

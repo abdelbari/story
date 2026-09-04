@@ -790,8 +790,27 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
      * each other: a set naming a pack the app does not ship fails nowhere
      * but on the phone, and takes recognition down with it.
      */
-    private fun ocrLanguages(): String =
-        AndroidOcrReader.languagesFor(Locale.getDefault().language)
+    private fun ocrLanguages(): String = _languages.value
+
+    private val _languages =
+        MutableStateFlow(AndroidOcrReader.languagesFor(Locale.getDefault().language))
+
+    /**
+     * What recognition will read a scan with, and what the reader can
+     * change it to.
+     *
+     * The phone's own language is the only signal there is before a page
+     * has been read, and it is wrong often enough to matter: the documents
+     * this app exists for are Arabic, and the other language in them is
+     * more often French than English, which no locale distinguishes. So it
+     * is a starting point rather than an answer.
+     */
+    val languages: StateFlow<String> = _languages.asStateFlow()
+
+    /** The reader chose what a scan should be read as. */
+    fun chooseLanguages(set: String) {
+        if (set in AndroidOcrReader.CHOOSABLE_LANGUAGES) _languages.value = set
+    }
 
     /** Text, Markdown or Word input → a real .pdf file via the save dialog. */
     fun exportPdf() {

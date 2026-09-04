@@ -15,6 +15,7 @@
     <string name="retry">Réessayer</string>
     <string name="scanned_pdf">Ce PDF semble numérisé, sans couche de texte. Vous pouvez le lire par OCR entièrement sur l’appareil.</string>
     <string name="convert_with_ocr">Lire par OCR et convertir</string>
+    <string name="ocr_language">Reconnaître en : %1$s</string>
     <string name="unsupported_type">Morpho convertit les fichiers PDF, Word (.docx), texte, Markdown et les photos de pages. Celui-ci est autre chose.</string>
     <string name="read_error">Impossible de lire ce fichier. Il est peut-être endommagé, ou n’est pas du type que son nom annonce.</string>
     <string name="write_error">Impossible d’enregistrer le fichier converti.</string>
