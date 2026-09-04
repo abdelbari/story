@@ -41,6 +41,15 @@ data class DocumentEdit(
      * too.
      */
     val joins: Map<Int, Join> = emptyMap(),
+    /**
+     * Blocks the reader asked to be a paragraph per line.
+     *
+     * Applied where a removal is applied and nowhere else — when the
+     * document is written — so that separating a block no more moves the
+     * blocks below it than taking one out does, and every mark stays on
+     * the block the reader made it on.
+     */
+    val splitBlocks: Set<Int> = emptySet(),
 ) {
 
     /** What a join took from the block above it, so it can be given back. */
@@ -53,11 +62,12 @@ data class DocumentEdit(
         val wasCorrected: Boolean,
     )
 
-    /** How many blocks the reader has changed, of either kind. */
-    val fixes: Int get() = (corrected + removed).size
+    /** How many blocks the reader has changed, of any kind. */
+    val fixes: Int get() = (corrected + removed + splitBlocks).size
 
     /** Whether the reader has changed anything at all. */
-    val touched: Boolean get() = corrected.isNotEmpty() || removed.isNotEmpty()
+    val touched: Boolean
+        get() = corrected.isNotEmpty() || removed.isNotEmpty() || splitBlocks.isNotEmpty()
 
     /**
      * The document as the reader will save it: their corrections, less
@@ -67,9 +77,16 @@ data class DocumentEdit(
      * preview and the saved file the same document.
      */
     val asWritten: DocumentModel
-        get() =
-            if (removed.isEmpty()) document
-            else document.copy(blocks = document.blocks.filterIndexed { at, _ -> at !in removed })
+        get() {
+            if (removed.isEmpty() && splitBlocks.isEmpty()) return document
+            val blocks = document.blocks.withIndex()
+                .filterNot { it.index in removed }
+                .flatMap { (at, block) ->
+                    if (at in splitBlocks && block is Paragraph) ParagraphEdit.split(block)
+                    else listOf(block)
+                }
+            return document.copy(blocks = blocks)
+        }
 
     /**
      * The blocks that can be put back, which is not quite every block
@@ -81,6 +98,37 @@ data class DocumentEdit(
      * worse than no button.
      */
     val restorable: Set<Int> get() = removed.filterTo(mutableSetOf()) { restore(it) !== this }
+
+    /**
+     * The blocks that could be made a paragraph per line: the ones whose
+     * words hold a line break and that the reader can still see.
+     *
+     * A block already separated is not among them — its row offers to put
+     * it back together instead, and a screen that offered both at once
+     * would be asking the same question twice.
+     */
+    val splittable: Set<Int>
+        get() = document.blocks.indices.filterTo(mutableSetOf()) {
+            it !in splitBlocks && LineBreaks.breaks(paragraphAt(it)?.text.orEmpty())
+        }
+
+    /**
+     * The block at [index] made a paragraph for each line it holds; see
+     * [ParagraphEdit.split].
+     *
+     * The lines themselves are the reader's — they typed the breaks, or a
+     * Word document arrived with them — so this asks nothing about where
+     * to break and only says that the breaks are between paragraphs
+     * rather than inside one.
+     */
+    fun splitLines(index: Int): DocumentEdit {
+        if (index !in splittable) return this
+        return copy(splitBlocks = splitBlocks + index)
+    }
+
+    /** The block at [index] left as the one paragraph it is. */
+    fun unsplitLines(index: Int): DocumentEdit =
+        if (index in splitBlocks) copy(splitBlocks = splitBlocks - index) else this
 
     /** The whole of what the block at [index] says, or "" where it says nothing. */
     fun textOf(index: Int): String = paragraphAt(index)?.text.orEmpty()

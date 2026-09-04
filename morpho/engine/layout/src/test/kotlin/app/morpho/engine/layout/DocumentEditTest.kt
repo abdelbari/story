@@ -278,4 +278,139 @@ class DocumentEditTest {
             )
         }
     }
+
+    @Test
+    fun `a paragraph run together is separated at the lines the reader put in`() {
+        // Recognition breaks one paragraph at every column and page, which
+        // joining mends, and runs two together wherever the space between
+        // them was ambiguous. This is the way back.
+        val was = edit("Report of the Committee The form was received.", "A separate finding.")
+        val now = was
+            .retext(0, "Report of the Committee\nThe form was received.")
+            .splitLines(0)
+        assertEquals(
+            listOf("Report of the Committee", "The form was received.", "A separate finding."),
+            texts(now),
+        )
+        assertEquals(2, now.document.blocks.size, "separating moved the blocks")
+        assertEquals(setOf(0), now.splitBlocks)
+    }
+
+    @Test
+    fun `each separated line keeps the formatting that was on it`() {
+        val was = DocumentEdit(
+            DocumentModel(
+                listOf(
+                    Paragraph(
+                        listOf(
+                            TextRun("The committee", bold = true),
+                            TextRun("\nwrote to "),
+                            TextRun("the faculty", link = "https://example.org/faculty"),
+                        )
+                    )
+                )
+            )
+        )
+        val blocks = was.splitLines(0).asWritten.blocks.filterIsInstance<Paragraph>()
+        assertEquals(listOf("The committee", "wrote to the faculty"), blocks.map { it.text })
+        assertTrue(blocks[0].runs.single().bold, "the first line lost its weight")
+        assertEquals(
+            "https://example.org/faculty",
+            blocks[1].runs.first { it.link != null }.link,
+            "the second line lost its link",
+        )
+    }
+
+    @Test
+    fun `a separated paragraph is still the paragraph it was`() {
+        val was = DocumentEdit(
+            DocumentModel(
+                listOf(
+                    Paragraph(
+                        listOf(TextRun("One\nTwo")),
+                        style = ParagraphStyle(kind = ParagraphKind.HEADING_2, listMarker = ListMarker.BULLET),
+                        confidence = 0.5f,
+                    )
+                )
+            )
+        )
+        for (block in was.splitLines(0).asWritten.blocks.filterIsInstance<Paragraph>()) {
+            assertEquals(ParagraphKind.HEADING_2, block.style.kind)
+            assertEquals(ListMarker.BULLET, block.style.listMarker)
+            assertEquals(0.5f, block.confidence, "breaking a block apart said something about the reading")
+        }
+    }
+
+    @Test
+    fun `only a block with a line break in it can be separated`() {
+        val was = edit("one line only", "two\nlines")
+        assertEquals(setOf(1), was.splittable)
+        assertSame(was, was.splitLines(0), "a block with nothing to separate was separated")
+        // Once separated it is not offered again; it is offered back instead.
+        val now = was.splitLines(1)
+        assertEquals(emptySet<Int>(), now.splittable)
+        assertEquals(setOf(1), now.splitBlocks)
+        assertSame(now, now.splitLines(1))
+        assertEquals(was.splitBlocks, now.unsplitLines(1).splitBlocks)
+        assertEquals(listOf("one line only", "two\nlines"), texts(now.unsplitLines(1)))
+    }
+
+    @Test
+    fun `a block taken out is not offered to be separated`() {
+        val was = edit("two\nlines").remove(0)
+        assertEquals(emptySet<Int>(), was.splittable)
+        assertSame(was, was.splitLines(0))
+    }
+
+    @Test
+    fun `separating counts as one fix however many lines come out`() {
+        val now = edit("a\nb\nc\nd").splitLines(0)
+        assertEquals(4, texts(now).size)
+        assertEquals(1, now.fixes)
+        assertTrue(now.touched)
+        assertFalse(now.unsplitLines(0).touched, "putting it back left the document counted as edited")
+    }
+
+    @Test
+    fun `whatever a reader does, what is written says what the blocks say`() {
+        // The property over every edit there is now, separating included:
+        // the blocks never move, no mark lands outside the document, and
+        // what is written holds the words of exactly the blocks left in.
+        val rng = kotlin.random.Random(20260908)
+        val words = listOf("one", "two\nthree", "الاستمارة", "", "a longer line\nof words")
+        repeat(2000) {
+            val size = rng.nextInt(1, 6)
+            val start = DocumentEdit(DocumentModel(List(size) { body(words.random(rng)) }))
+            var now = start
+            repeat(rng.nextInt(0, 9)) {
+                val at = rng.nextInt(-1, size + 1)
+                now = when (rng.nextInt(7)) {
+                    0 -> now.retext(at, words.random(rng))
+                    1 -> now.reclassify(at, ParagraphKind.entries.random(rng))
+                    2 -> now.remove(at)
+                    3 -> now.restore(at)
+                    4 -> now.splitLines(at)
+                    5 -> now.unsplitLines(at)
+                    else -> now.joinUp(at)
+                }
+            }
+            assertEquals(size, now.document.blocks.size, "an edit moved the blocks")
+            assertTrue(
+                (now.corrected + now.removed + now.splitBlocks).all { it in 0 until size },
+                "a mark landed outside the document",
+            )
+            // Every block still in says its words in what is written, and
+            // separating one changes where its words sit and not what they are.
+            val written = now.asWritten.blocks.filterIsInstance<Paragraph>().joinToString("\u0000") { it.text }
+            for (at in 0 until size) {
+                if (at in now.removed) continue
+                val said = (now.document.blocks[at] as Paragraph).text
+                assertTrue(
+                    LineBreaks.split(said).all { it.isEmpty() || written.contains(it) },
+                    "block $at says \"$said\" and it is not in \"$written\"",
+                )
+            }
+            assertTrue(now.fixes <= size, "more blocks counted as fixed than there are blocks")
+        }
+    }
 }

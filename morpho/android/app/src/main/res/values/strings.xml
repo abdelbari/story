@@ -61,6 +61,8 @@
     <string name="review_removed">Removed</string>
     <string name="review_joined">Joined into the one above</string>
     <string name="review_join_up">Join to the one above</string>
+    <string name="review_split_lines">Separate the lines</string>
+    <string name="review_rejoin_lines">Rejoin the lines</string>
     <string name="about_open">About &amp; licenses</string>
     <string name="about_title">About Morpho</string>
     <string name="about_version">Version %1$s</string>

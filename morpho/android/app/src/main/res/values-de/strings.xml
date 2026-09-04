@@ -55,6 +55,8 @@
     <string name="review_removed">Entfernt</string>
     <string name="review_joined">Mit dem darüber verbunden</string>
     <string name="review_join_up">Mit dem darüber verbinden</string>
+    <string name="review_split_lines">Zeilen trennen</string>
+    <string name="review_rejoin_lines">Zeilen wieder verbinden</string>
     <string name="about_open">Über die App und Lizenzen</string>
     <string name="about_title">Über Morpho</string>
     <string name="about_version">Version %1$s</string>

@@ -137,6 +137,10 @@ data class ReviewState(
      * than offering a button that does nothing.
      */
     val restorable: Set<Int> = emptySet(),
+    /** Blocks whose lines could each be a paragraph of their own. */
+    val splittable: Set<Int> = emptySet(),
+    /** Blocks whose lines already are. */
+    val split: Set<Int> = emptySet(),
 ) {
     /** How many corrections the reader has made, of either kind. */
     val fixes: Int get() = (edited + dropped).size
@@ -310,7 +314,10 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     fun showReview() {
         val report = lastReport ?: return
         val made = edits ?: return
-        _review.value = ReviewState(report, made.corrected, made.removed, made.joinable, made.restorable)
+        _review.value = ReviewState(
+            report, made.corrected, made.removed, made.joinable, made.restorable,
+            made.splittable, made.splitBlocks,
+        )
     }
 
     fun hideReview() = leaveReview()
@@ -351,6 +358,15 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     fun joinUp(index: Int) = edit { it.joinUp(index) }
 
     /**
+     * Makes each line of a block a paragraph of its own — the way out of
+     * a reading that ran two paragraphs together.
+     */
+    fun splitLines(index: Int) = edit { it.splitLines(index) }
+
+    /** Leaves a block the one paragraph it is. */
+    fun unsplitLines(index: Int) = edit { it.unsplitLines(index) }
+
+    /**
      * One edit, and everything that has to follow from one.
      *
      * What an edit actually is lives in [DocumentEdit], in the engine,
@@ -370,7 +386,10 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         lastReport = report
         correctedSinceWrite = true
         previewIsStale = true
-        _review.value = ReviewState(report, now.corrected, now.removed, now.joinable, now.restorable)
+        _review.value = ReviewState(
+            report, now.corrected, now.removed, now.joinable, now.restorable,
+            now.splittable, now.splitBlocks,
+        )
     }
 
     /**

@@ -68,6 +68,8 @@ fun ReviewScreen(
     onRemove: (index: Int) -> Unit,
     onRestore: (index: Int) -> Unit,
     onJoinUp: (index: Int) -> Unit,
+    onSplitLines: (index: Int) -> Unit,
+    onUnsplitLines: (index: Int) -> Unit,
     onSaveCorrected: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -137,12 +139,16 @@ fun ReviewScreen(
                     dropped = entry.index in state.dropped,
                     restorable = entry.index in state.restorable,
                     canJoinUp = entry.index in state.joinable,
+                    canSplit = entry.index in state.splittable,
+                    split = entry.index in state.split,
                     textOf = { textOf(entry.index) },
                     onRetext = { text -> onRetext(entry.index, text) },
                     onReclassify = { kind -> onReclassify(entry.index, kind) },
                     onRemove = { onRemove(entry.index) },
                     onRestore = { onRestore(entry.index) },
                     onJoinUp = { onJoinUp(entry.index) },
+                    onSplitLines = { onSplitLines(entry.index) },
+                    onUnsplitLines = { onUnsplitLines(entry.index) },
                 )
             }
         }
@@ -217,12 +223,16 @@ private fun EntryRow(
     dropped: Boolean,
     restorable: Boolean,
     canJoinUp: Boolean,
+    canSplit: Boolean,
+    split: Boolean,
     textOf: () -> String,
     onRetext: (String) -> Unit,
     onReclassify: (ParagraphKind) -> Unit,
     onRemove: () -> Unit,
     onRestore: () -> Unit,
     onJoinUp: () -> Unit,
+    onSplitLines: () -> Unit,
+    onUnsplitLines: () -> Unit,
 ) {
     // Null is "not editing", so the draft and the state that it exists are
     // one thing and cannot disagree. Saveable because a reader retyping a
@@ -335,6 +345,19 @@ private fun EntryRow(
                         if (canJoinUp) {
                             TextButton(onClick = onJoinUp) {
                                 Text(stringResource(R.string.review_join_up))
+                            }
+                        }
+                        // Offered only on a block that holds a line break,
+                        // since the lines are the reader's own: they typed
+                        // them, or the document arrived with them.
+                        if (canSplit) {
+                            TextButton(onClick = onSplitLines) {
+                                Text(stringResource(R.string.review_split_lines))
+                            }
+                        }
+                        if (split) {
+                            TextButton(onClick = onUnsplitLines) {
+                                Text(stringResource(R.string.review_rejoin_lines))
                             }
                         }
                         // Offered on a picture and a table as well: a

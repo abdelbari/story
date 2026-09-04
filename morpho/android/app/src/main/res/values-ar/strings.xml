@@ -55,6 +55,8 @@
     <string name="review_removed">محذوف</string>
     <string name="review_joined">مضموم إلى ما فوقه</string>
     <string name="review_join_up">ضمّه إلى ما فوقه</string>
+    <string name="review_split_lines">افصل الأسطر</string>
+    <string name="review_rejoin_lines">أعد ضمّ الأسطر</string>
     <string name="about_open">حول التطبيق والتراخيص</string>
     <string name="about_title">حول مورفو</string>
     <string name="about_version">الإصدار %1$s</string>

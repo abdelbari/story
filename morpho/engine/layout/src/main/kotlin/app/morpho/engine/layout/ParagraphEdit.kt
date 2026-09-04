@@ -58,6 +58,53 @@ object ParagraphEdit {
         )
     }
 
+    /**
+     * [paragraph] broken into a paragraph for each line it holds.
+     *
+     * The inverse of [join], and the way out of the other thing a reading
+     * does to a page. Where it breaks one paragraph at every column and
+     * every page, which joining mends, it also runs two together wherever
+     * the space between them was ambiguous — a heading tight against its
+     * first line, an address block, list items sitting close.
+     *
+     * Where the break belongs is something only the reader knows, so they
+     * say it the way a word processor lets them say it: they put the line
+     * breaks in, and each line becomes a paragraph. Every line keeps the
+     * runs that were on it, so its bold, its links, its notes and any
+     * picture sitting in it come with it rather than being retyped away.
+     *
+     * Each piece is the paragraph it came from — a split list stays a
+     * list, a split heading keeps that heading's level, and all of them
+     * keep its confidence, since breaking a block apart says nothing about
+     * how well it was read.
+     */
+    fun split(paragraph: Paragraph): List<Paragraph> {
+        val text = paragraph.text
+        if (!LineBreaks.breaks(text)) return listOf(paragraph)
+        val out = mutableListOf<Paragraph>()
+        var from = 0
+        var at = 0
+        fun take(to: Int) {
+            val piece = merged(slice(paragraph.runs, from, to))
+            out += paragraph.copy(runs = piece.ifEmpty { listOf(TextRun("")) })
+        }
+        // Walked rather than split on a character, because a carriage
+        // return before a newline is one break of two characters and the
+        // pieces are cut by position in the runs.
+        while (at < text.length) {
+            val ch = text[at]
+            if (ch != '\r' && ch != LineBreaks.MARK) {
+                at++
+                continue
+            }
+            take(at)
+            at += if (ch == '\r' && text.getOrNull(at + 1) == LineBreaks.MARK) 2 else 1
+            from = at
+        }
+        take(text.length)
+        return out
+    }
+
     /** Whether nothing need go between [before] and [after] to keep them apart. */
     private fun abuts(before: String, after: String): Boolean =
         before.isEmpty() || after.isEmpty() ||

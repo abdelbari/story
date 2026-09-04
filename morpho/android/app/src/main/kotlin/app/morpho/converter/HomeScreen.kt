@@ -137,6 +137,8 @@ fun HomeScreen(viewModel: ConvertViewModel) {
             onRemove = viewModel::remove,
             onRestore = viewModel::restore,
             onJoinUp = viewModel::joinUp,
+            onSplitLines = viewModel::splitLines,
+            onUnsplitLines = viewModel::unsplitLines,
             onSaveCorrected = viewModel::saveCorrected,
             onClose = viewModel::hideReview,
         )
