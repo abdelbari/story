@@ -22,6 +22,7 @@ import app.morpho.engine.ooxml.DocxWriter
 import app.morpho.pdf.AndroidOcrReader
 import app.morpho.pdf.AndroidPdfReader
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -208,6 +209,27 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     private val editedBlocks = mutableSetOf<Int>()
 
     /**
+     * Whether the bytes the reader is about to save are older than the
+     * corrections they have made.
+     *
+     * The result is written once, when the conversion finishes, and held
+     * so that a dismissed save dialog costs a tap rather than a repeat of
+     * a three-minute OCR run. A correction makes those bytes wrong without
+     * making them look wrong, so this says so and the save writes again.
+     */
+    private var correctedSinceWrite = false
+
+    /**
+     * The redraw in flight for the preview. A reader putting five words
+     * right in a row asks for five drawings of a document that may be two
+     * hundred pages: only the last is worth having, and an older one that
+     * finishes late must not put the uncorrected pages back. Hence the
+     * count as well as the job.
+     */
+    private var redrawing: Job? = null
+    private var redrawEpoch = 0
+
+    /**
      * Set by [cancelConversion]; the reading and the recognizer both read
      * it between pages. An AtomicBoolean rather than job cancellation
      * because recognition sits in a native call Kotlin cannot interrupt
@@ -310,21 +332,54 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         (lastModel?.blocks?.getOrNull(index) as? Paragraph)?.text.orEmpty()
 
     /**
-     * A corrected model in place of the one that was there, with
-     * everything that was made from it made again.
+     * A corrected model in place of the one that was there.
      *
-     * The preview, the pages and the report are all readings of the
-     * model, and a correction that changed the model and left them would
-     * show the reader the document as it was before they corrected it.
+     * The report, the preview and the bytes waiting to be saved are all
+     * readings of the model, and a correction that changed the model and
+     * left them would show the reader the document as it was before they
+     * corrected it — and then save them that document. The report is
+     * remade here, since it is cheap and is what the reader is looking
+     * at; the preview follows in [redrawPreview]; the bytes are written
+     * again when the reader asks to save, which is once rather than after
+     * every word.
      */
     private fun republish(corrected: DocumentModel, index: Int) {
         val report = FidelityReport.of(corrected)
         lastModel = corrected
-        lastPreviewHtml = HtmlWriter.write(corrected, outputName)
-        lastPreviewPdf = previewPages(corrected)
         lastReport = report
         editedBlocks += index
+        correctedSinceWrite = true
         _review.value = ReviewState(report, editedBlocks.toSet())
+        redrawPreview()
+    }
+
+    /**
+     * The corrected document drawn again for the preview to show.
+     *
+     * Off the main thread, which is the whole reason this is not done in
+     * [republish]: laying a document out as pages is the work of making a
+     * PDF of it, and a correction to page three of two hundred would
+     * otherwise freeze the screen the reader is typing on for as long as
+     * that takes. The report and the review list are recomputed at once,
+     * because those are cheap and are what the reader is looking at; the
+     * pages arrive a moment later.
+     */
+    private fun redrawPreview() {
+        val model = lastModel ?: return
+        val epoch = ++redrawEpoch
+        redrawing?.cancel()
+        redrawing = viewModelScope.launch(Dispatchers.IO) {
+            val html = HtmlWriter.write(model, outputName)
+            val pages = previewPages(model)
+            // A later correction has already asked for its own drawing.
+            if (epoch != redrawEpoch) return@launch
+            lastPreviewHtml = html
+            lastPreviewPdf = pages
+            val shown = _state.value
+            if (shown is ConvertUiState.Converted) {
+                _state.value = shown.copy(previewHtml = html, previewPdf = pages)
+            }
+        }
     }
 
     /**
@@ -353,6 +408,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                 _state.value = ConvertUiState.Failed(FailReason.WRITE_ERROR)
                 return@launch
             }
+            correctedSinceWrite = false
             _state.value = ConvertUiState.ReadyToSave(outputName, lastMimeType, bytes)
         }
     }
@@ -386,6 +442,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         pdfPages = null
         wantsMarkdown = false
         editedBlocks.clear()
+        correctedSinceWrite = false
+        redrawEpoch++
+        redrawing?.cancel()
         _review.value = null
 
         val epoch = pickEpoch
@@ -582,6 +641,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         lastMimeType = mimeType
         lastReport = FidelityReport.of(model)
         editedBlocks.clear()
+        correctedSinceWrite = false
 
         val output = try {
             write(model)
@@ -797,6 +857,16 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     /** The reader asked to save the finished conversion. */
     fun requestSave() {
         val converted = _state.value as? ConvertUiState.Converted ?: return
+        // The bytes in hand are the ones the conversion made. A reader who
+        // has corrected something since then must not be given those: they
+        // would save the document as it was before they fixed it, with
+        // nothing on the screen to say so — the correction taken, shown in
+        // the preview, and then not in the file. Writing again is a
+        // moment's work against a conversion that may have been minutes.
+        if (correctedSinceWrite) {
+            saveCorrected()
+            return
+        }
         _state.value = ConvertUiState.ReadyToSave(
             converted.suggestedName,
             converted.mimeType,
