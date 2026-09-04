@@ -151,7 +151,7 @@ object EditorProtocol {
 
     /** What the screen needs to paint [state] from nothing: the whole body. */
     fun opening(state: EditorState): String = Json.write(
-        status(state) + mapOf("all" to true, "body" to HtmlWriter.writeBody(state.document)),
+        status(state) + mapOf("all" to true, "body" to HtmlWriter.writeBody(state.document, comments = false)),
     )
 
     /**
@@ -172,14 +172,14 @@ object EditorProtocol {
             block is Paragraph && (block.style.listMarker != null || block.style.sectionSetup != null)
         }
         val painting: Map<String, Any?> = if (wholeBody) {
-            mapOf("all" to true, "body" to HtmlWriter.writeBody(after.document))
+            mapOf("all" to true, "body" to HtmlWriter.writeBody(after.document, comments = false))
         } else {
             mapOf(
                 "all" to false,
                 "splice" to mapOf(
                     "from" to head,
                     "to" to was.size - tail,
-                    "blocks" to come.indices.map { HtmlWriter.writeBlock(after.document, head + it) },
+                    "blocks" to come.indices.map { HtmlWriter.writeBlock(after.document, head + it, comments = false) },
                 ),
             )
         }

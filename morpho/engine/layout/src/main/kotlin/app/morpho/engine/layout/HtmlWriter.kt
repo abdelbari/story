@@ -116,6 +116,47 @@ object HtmlWriter {
             remarks.remove()
         }
 
+    /**
+     * The page the editor is: the body of [document], marked, inside an
+     * element the reader can put a caret in, with the script that turns
+     * what they do there into operations for the engine.
+     *
+     * Locked down as far as a page can be, since it renders a document
+     * somebody else wrote and runs script: its policy allows no source
+     * at all but its own inline style and script, and a picture's data.
+     * Nothing in it can fetch, frame, or follow a link out — and the
+     * app it runs in has no network permission to follow one with.
+     */
+    fun writeEditor(document: DocumentModel): String {
+        val defaultDirection = document.defaultDirection
+        val dir = if (defaultDirection == TextDirection.RTL) "rtl" else "ltr"
+        val lang = document.defaultLanguage?.let { """ lang="${escape(it)}"""" }.orEmpty()
+        val shapes = sectionShapes(document)
+        val sb = StringBuilder(16 * 1024)
+        sb.append("<!DOCTYPE html>\n")
+        sb.append("""<html dir="$dir"$lang><head><meta charset="utf-8"/>""")
+        sb.append("""<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"/>""")
+        sb.append("<title>").append(escape(document.properties.title ?: "Document")).append("</title>")
+        sb.append("<style>").append(CSS).append(pageCss(document.pageSetup, defaultDirection))
+            .append(sectionCss(shapes)).append(EDITOR_CSS).append("</style></head><body>\n")
+        sb.append("""<div id="doc" contenteditable="true" spellcheck="false">""").append("\n")
+        sb.append(writeBody(document, comments = false))
+        sb.append("</div>\n<script>").append(editorScript()).append("</script></body></html>\n")
+        return sb.toString()
+    }
+
+    /** What the editor's page needs beyond the document's own style. */
+    private const val EDITOR_CSS =
+        "#doc{outline:none;min-height:60vh;}" +
+            "[data-block]:empty{min-height:1.6em;}" +
+            "#doc td,#doc th{min-width:2em;}"
+
+    /** The editor's script, kept beside the writer that writes the page it runs in. */
+    private fun editorScript(): String =
+        HtmlWriter::class.java.getResourceAsStream("/app/morpho/engine/layout/editor.js")
+            ?.use { it.readBytes().toString(Charsets.UTF_8) }
+            ?: throw IllegalStateException("the editor's script is not on the classpath")
+
     /** The attribute that says which block of the body an element is. */
     private fun markOf(index: Int): String = """ data-block="$index""""
 

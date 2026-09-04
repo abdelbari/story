@@ -161,18 +161,30 @@ Two spikes and a decision. Nothing ships.
    `DocumentEdit` is untouched — it is the review screen's, kept by
    position; the editor is opened on what it produces and keeps
    `modified` by origin instead.
-2. **Device spike.** A throwaway `contenteditable` page in a WebView, on a
-   real phone, driven by hand: type Arabic with an English phrase inside
-   it, put the caret in the middle of a bold word, select across two
-   paragraphs, use the IME, rotate the device. This is the question Compose
-   cannot answer on this machine and is the reason the device pass matters.
-   Then the same page wired to `EditorState` through the bridge, sending
-   operations and painting what comes back — and the question the spike
-   is really asking: whether a bridge round trip on every keystroke is
-   fast enough to feel like typing. In-process, it should be well under a
-   frame; if it is not, the script keeps the paragraph being typed into
-   and sends the operations in batches, which changes the timing and not
-   the design.
+2. **Device spike — its Blink half done 4 September.** The page is
+   written (`HtmlWriter.writeEditor`), its script with it
+   (`layout/src/main/resources/.../editor.js`), and the two were driven in
+   headless Chromium — Blink, which is what Android's WebView is —
+   against the real engine over a loopback socket (`EditorPageTest`, run
+   where `node` and Playwright are to hand, skipped in CI). Nineteen
+   actions: typing Latin and Arabic into an RTL paragraph, Return at the
+   end and in the middle, Backspace joining upward and on an empty
+   paragraph, a selection across two paragraphs made bold with Ctrl+B,
+   undo and redo, a click on a table, a caret the browser placed itself,
+   typing over a selection, a table put in, a paragraph made a list item
+   (the whole-body repaint), Return continuing the list, and two hundred
+   keystrokes. After every one the page's text and caret agree with the
+   engine's document and selection, exactly. What the phone still has to
+   answer, and only it can: **an input method composing** — the script
+   lets a composition finish and then sends what it composed as typing,
+   which repaints the block over what the browser had put there, but
+   Playwright types without composing, so that path is untested until a
+   phone's keyboard runs it; touch selection handles; the keyboard's
+   showing and hiding; and the true round trip through the app's bridge,
+   which is a call — the 49 ms the harness measures is its own socket
+   and the browser's IPC. If the true figure is over a frame, the script
+   batches operations while a paragraph is being typed into, which
+   changes the timing and not the design.
 
 **Gate to Stage 1:** a paragraph of mixed Arabic and English, bolded
 across a word boundary, edited on the device through the bridge, comes
@@ -277,12 +289,15 @@ Most of this is model → HTML → model plumbing once Stage 1 stands, because
 
 ## What to do first on Saturday
 
-Everything of Stage 0 and Stage 1 that a machine can do is done; what
-is left needs a device:
+Everything of Stage 0 and Stage 1 that a machine can do is done, the
+page and its script included; what is left needs a device:
 
-1. The `contenteditable` device spike, and the JavaScript posture
-   decision that goes with it.
-2. The bridge, wired to `EditorProtocol`, and the timing question above.
+1. The JavaScript posture decision (Price one above), and the page on a
+   real phone: an input method composing Arabic, touch selection, the
+   keyboard showing and hiding.
+2. The bridge — an object with `send(json): String` and `status(json)`
+   given to the page as `Morpho`, which is all the script asks for — and
+   the timing question above.
 
 What the device spike lands on is all there. Every block of the body
 carries `data-block="N"` on its outermost element; `HtmlWriter.writeBlock`
