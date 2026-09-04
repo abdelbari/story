@@ -51,6 +51,10 @@ object EditorProtocol {
         data class Format(val change: RunChange) : Operation
         data class Restyle(val change: ParagraphChange) : Operation
         data class InsertTable(val rows: Int, val columns: Int) : Operation
+        data class InsertRow(val below: Boolean) : Operation
+        data object DeleteRow : Operation
+        data class InsertColumn(val after: Boolean) : Operation
+        data object DeleteColumn : Operation
         data class RemoveBlock(val block: Int) : Operation
         data object Undo : Operation
         data object Redo : Operation
@@ -111,6 +115,10 @@ object EditorProtocol {
                     rows = whole(map["rows"] as? Double ?: return null, 1, MOST_TABLE_SIDE),
                     columns = whole(map["columns"] as? Double ?: return null, 1, MOST_TABLE_SIDE),
                 )
+                "insertRow" -> Operation.InsertRow(flag(map, "below") ?: true)
+                "deleteRow" -> Operation.DeleteRow
+                "insertColumn" -> Operation.InsertColumn(flag(map, "after") ?: true)
+                "deleteColumn" -> Operation.DeleteColumn
                 "removeBlock" -> Operation.RemoveBlock(whole(map["block"] as? Double ?: return null, 0, Int.MAX_VALUE))
                 "undo" -> Operation.Undo
                 "redo" -> Operation.Redo
@@ -131,6 +139,10 @@ object EditorProtocol {
         is Operation.Format -> state.format(operation.change)
         is Operation.Restyle -> state.restyle(operation.change)
         is Operation.InsertTable -> state.insertBlock(emptyTable(operation.rows, operation.columns))
+        is Operation.InsertRow -> state.insertRow(operation.below)
+        Operation.DeleteRow -> state.deleteRow()
+        is Operation.InsertColumn -> state.insertColumn(operation.after)
+        Operation.DeleteColumn -> state.deleteColumn()
         is Operation.RemoveBlock -> state.removeBlock(operation.block)
         Operation.Undo -> state.undo()
         Operation.Redo -> state.redo()
@@ -192,8 +204,8 @@ object EditorProtocol {
         val style = state.paragraphAt(state.selection.start).style
         return mapOf(
             "selection" to mapOf(
-                "anchor" to listOf(state.selection.anchor.block, state.selection.anchor.offset),
-                "focus" to listOf(state.selection.focus.block, state.selection.focus.offset),
+                "anchor" to caretJson(state.selection.anchor),
+                "focus" to caretJson(state.selection.focus),
             ),
             "canUndo" to state.canUndo,
             "canRedo" to state.canRedo,
@@ -230,12 +242,24 @@ object EditorProtocol {
 
     private class Refused : Exception()
 
+    /**
+     * A caret as the page says it: `[block, offset]`, or inside a cell
+     * `[block, offset, row, column, paragraph]`. Anything out of range is
+     * put in range by the editor; anything that is not a whole number is
+     * not a caret.
+     */
     private fun caret(value: Any?): Caret? {
-        val pair = value as? List<*> ?: return null
-        if (pair.size != 2) return null
-        val block = pair[0] as? Double ?: return null
-        val offset = pair[1] as? Double ?: return null
-        return Caret(whole(block, -1, Int.MAX_VALUE), whole(offset, -1, Int.MAX_VALUE))
+        val parts = value as? List<*> ?: return null
+        if (parts.size != 2 && parts.size != 5) return null
+        val numbers = parts.map { (it as? Double ?: return null).let { d -> whole(d, -1, Int.MAX_VALUE) } }
+        val cell = if (parts.size == 5) Cell(numbers[2], numbers[3], numbers[4]) else null
+        return Caret(numbers[0], numbers[1], cell)
+    }
+
+    /** A caret as the page reads it; see [caret]. */
+    private fun caretJson(caret: Caret): List<Int> {
+        val cell = caret.cell ?: return listOf(caret.block, caret.offset)
+        return listOf(caret.block, caret.offset, cell.row, cell.column, cell.paragraph)
     }
 
     /** A yes, a no, or nothing said. */

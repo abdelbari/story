@@ -294,6 +294,153 @@ class EditorStateTest {
         assertEquals(emptySet<Int>(), split.undo().undo().modified)
     }
 
+    // ---- cells ----
+
+    private fun grid(vararg rows: List<String>, spans: Boolean = false) = Table(
+        rows.map { row ->
+            TableRow(row.mapIndexed { at, text -> TableCell(listOf(p(text)), columnSpan = if (spans && at == 0) 2 else 1) })
+        },
+    )
+
+    private fun cells(state: EditorState, block: Int) =
+        (state.document.blocks[block] as Table).rows.map { r -> r.cells.map { c -> c.blocks.map { (it as? Paragraph)?.text } } }
+
+    private fun EditorState.inCell(block: Int, row: Int, column: Int, paragraph: Int, offset: Int) =
+        select(Selection(Caret(block, offset, Cell(row, column, paragraph))))
+
+    @Test
+    fun `typing in a cell changes that cell and nothing else`() {
+        val state = EditorState.open(doc(grid(listOf("a", "b"), listOf("c", "d")), p("after")))
+        val typed = state.inCell(0, 0, 1, 0, 1).type("!")
+        assertEquals(listOf(listOf(listOf("a"), listOf("b!")), listOf(listOf("c"), listOf("d"))), cells(typed, 0))
+        assertEquals(Caret(0, 2, Cell(0, 1, 0)), typed.selection.anchor)
+        assertEquals(setOf(0), typed.modified)
+        assertTrue(typed.lookAt(typed.selection.anchor).text.isEmpty())
+    }
+
+    @Test
+    fun `Return in a cell makes a second paragraph of the cell, and Backspace at its head does nothing`() {
+        val state = EditorState.open(doc(grid(listOf("cd", "x"))))
+        val split = state.inCell(0, 0, 0, 0, 1).splitParagraph()
+        assertEquals(listOf(listOf(listOf("c", "d"), listOf("x"))), cells(split, 0))
+        assertEquals(Caret(0, 0, Cell(0, 0, 1)), split.selection.anchor)
+        assertEquals(state.document.blocks.size, split.document.blocks.size, "the table is still the one block it was")
+        assertTrue(split.document.blocks[0] is Table)
+        val joined = split.erase()
+        assertEquals(listOf(listOf(listOf("cd"), listOf("x"))), cells(joined, 0), "Backspace at the head of the second paragraph joins it upward in the cell")
+        assertEquals(Caret(0, 1, Cell(0, 0, 0)), joined.selection.anchor)
+        val head = joined.inCell(0, 0, 0, 0, 0)
+        assertSame(head, head.erase(), "a cell's edge is not crossed")
+        val end = joined.inCell(0, 0, 0, 0, 2)
+        assertSame(end, end.eraseForward())
+    }
+
+    @Test
+    fun `a selection that reaches out of a cell stands where it began`() {
+        val state = EditorState.open(doc(grid(listOf("ab", "cd")), p("after")))
+        val reaching = state.select(Selection(Caret(0, 1, Cell(0, 0, 0)), Caret(1, 3)))
+        assertTrue(reaching.selection.collapsed)
+        assertEquals(Caret(0, 1, Cell(0, 0, 0)), reaching.selection.anchor)
+        val across = state.select(Selection(Caret(0, 0, Cell(0, 0, 0)), Caret(0, 1, Cell(0, 1, 0))))
+        assertTrue(across.selection.collapsed, "two cells are not one selection yet")
+        assertEquals(listOf("after"), texts(across.type("X")).drop(1))
+    }
+
+    @Test
+    fun `rows and columns come and go, and take the table with them when it is the last`() {
+        val state = EditorState.open(doc(p("before"), grid(listOf("a", "b"), listOf("c", "d")).copy(columnWidthsPt = listOf(100f, 200f))))
+        val rowed = state.inCell(1, 0, 1, 0, 0).insertRow(below = true)
+        assertEquals(listOf(listOf(listOf("a"), listOf("b")), listOf(listOf(""), listOf("")), listOf(listOf("c"), listOf("d"))), cells(rowed, 1))
+        assertEquals(Caret(1, 0, Cell(1, 1, 0)), rowed.selection.anchor)
+        val columned = rowed.insertColumn(after = false)
+        assertEquals(listOf(listOf("a"), listOf(""), listOf("b")), cells(columned, 1)[0])
+        assertEquals(listOf(100f, 200f, 200f), (columned.document.blocks[1] as Table).columnWidthsPt)
+        assertEquals(Caret(1, 0, Cell(1, 1, 0)), columned.selection.anchor)
+        val unrowed = columned.deleteRow()
+        assertEquals(2, (unrowed.document.blocks[1] as Table).rows.size)
+        assertEquals(Caret(1, 0, Cell(1, 1, 0)), unrowed.selection.anchor)
+        val gone = unrowed.deleteColumn().deleteColumn().deleteColumn()
+        assertEquals(listOf("before"), texts(gone), "the last column taken out took the table")
+        assertEquals(listOf("before", "<Table>"), texts(unrowed.deleteRow()), "one row left, still a table")
+        assertEquals(listOf("before"), texts(unrowed.deleteRow().deleteRow()), "the last row taken out took the table")
+        assertEquals(Selection.at(0, 6), unrowed.deleteRow().deleteRow().selection, "and the caret stands in the paragraph before it")
+    }
+
+    @Test
+    fun `a table with a merged cell keeps its shape`() {
+        val state = EditorState.open(doc(grid(listOf("a", "b"), listOf("c", "d"), spans = true)))
+        val inCell = state.inCell(0, 1, 0, 0, 1)
+        assertSame(inCell, inCell.insertRow(true))
+        assertSame(inCell, inCell.deleteColumn())
+        // Typing in it is still typing.
+        assertEquals(listOf(listOf("c!"), listOf("d")), cells(inCell.type("!"), 0)[1])
+    }
+
+    @Test
+    fun `a cell with nothing in it is given a paragraph to stand in`() {
+        val bare = Table(listOf(TableRow(listOf(TableCell(emptyList()), TableCell(listOf(picture())))), TableRow(emptyList())))
+        val state = EditorState.open(doc(bare))
+        assertEquals(listOf(listOf(listOf(""), listOf(null, "")), listOf(listOf(""))), cells(state, 0))
+        assertEquals(emptySet<Int>(), state.modified)
+        val typed = state.inCell(0, 1, 0, 0, 0).type("x")
+        assertEquals(listOf(listOf("x")), cells(typed, 0)[1])
+    }
+
+    @Test
+    fun `whatever a reader does in a cell, the cell stands and every step comes back`() {
+        for (seed in 1..800) {
+            val random = Random(seed)
+            val table = Table(
+                (1..random.nextInt(1, 4)).map {
+                    TableRow((1..random.nextInt(1, 4)).map { TableCell((0 until random.nextInt(0, 3)).map { p(words[random.nextInt(words.size)]) }) })
+                },
+            )
+            val opened = EditorState.open(DocumentModel(listOf(p("before"), table, p("after"))))
+            var state = opened
+            for (step in 1..random.nextInt(1, 20)) {
+                val where = "seed $seed step $step"
+                val before = state
+                when (random.nextInt(11)) {
+                    0, 1 -> state = state.select(Selection(Caret(1, random.nextInt(-1, 6), Cell(random.nextInt(-1, 4), random.nextInt(-1, 4), random.nextInt(-1, 3)))))
+                    2, 3 -> {
+                        val at = state.selection.start
+                        val word = words[random.nextInt(words.size)]
+                        state = state.type(word)
+                        if (at.cell != null && before.selection.collapsed) {
+                            val text = state.paragraphAt(state.selection.anchor).text
+                            assertEquals(word, text.substring(at.offset, at.offset + word.length), where)
+                            assertEquals(before.paragraphAt(at).text.length + word.length, text.length, where)
+                        }
+                    }
+                    4 -> state = state.erase()
+                    5 -> state = state.eraseForward()
+                    6 -> state = state.splitParagraph()
+                    7 -> state = state.insertRow(random.nextBoolean())
+                    8 -> state = state.insertColumn(random.nextBoolean())
+                    9 -> state = if (random.nextBoolean()) state.deleteRow() else state.deleteColumn()
+                    else -> state = if (random.nextBoolean()) state.undo() else state.redo()
+                }
+                assertSound(state, where)
+                for (block in state.document.blocks) {
+                    if (block !is Table) continue
+                    for (row in block.rows) {
+                        assertTrue(row.cells.isNotEmpty(), "$where: a row with no cells")
+                        for (cell in row.cells) assertTrue(cell.blocks.any { it is Paragraph }, "$where: a cell with nothing to stand in")
+                    }
+                }
+                val caret = state.selection.anchor
+                if (caret.cell != null) {
+                    val t = state.document.blocks[caret.block] as Table
+                    val held = t.rows[caret.cell!!.row].cells[caret.cell!!.column].blocks
+                    assertTrue(held[caret.cell!!.paragraph] is Paragraph, "$where: the caret is not in a paragraph of its cell")
+                }
+            }
+            var back = state
+            while (back.canUndo) back = back.undo()
+            assertEquals(opened.document, back.document, "seed $seed: undoing everything did not give back the document opened")
+        }
+    }
+
     // ---- the fuzz ----
 
     private val words = listOf("form", "بحث", "the", "استمارة", "2022", "x", "لا")
@@ -374,7 +521,13 @@ class EditorStateTest {
         val blocks = state.document.blocks
         assertTrue(blocks.any { it is Paragraph }, "$where: no paragraph to stand in")
         for (caret in listOf(state.selection.anchor, state.selection.focus)) {
-            val paragraph = blocks.getOrNull(caret.block) as? Paragraph
+            val cell = caret.cell
+            val paragraph = if (cell == null) {
+                blocks.getOrNull(caret.block) as? Paragraph
+            } else {
+                (blocks.getOrNull(caret.block) as? Table)?.rows?.getOrNull(cell.row)?.cells?.getOrNull(cell.column)
+                    ?.blocks?.getOrNull(cell.paragraph) as? Paragraph
+            }
             assertTrue(paragraph != null, "$where: the caret is not in a paragraph: $caret")
             assertTrue(caret.offset in 0..paragraph!!.text.length, "$where: the caret is outside its paragraph: $caret")
             val text = paragraph.text

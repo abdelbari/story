@@ -57,6 +57,29 @@ class EditorProtocolTest {
     }
 
     @Test
+    fun `a caret in a cell crosses the bridge as five numbers, and rows and columns come and go over it`() {
+        val table = Table(listOf(TableRow(listOf(TableCell(listOf(p("ab"))), TableCell(listOf(p("cd")))))))
+        val state = open(p("before"), table)
+        val into = EditorProtocol.step(state, """{"op":"select","anchor":[1,1,0,1,0],"focus":[1,1,0,1,0]}""")
+        assertEquals(Caret(1, 1, Cell(0, 1, 0)), into.state.selection.anchor)
+        assertEquals(mapOf("anchor" to listOf(1.0, 1.0, 0.0, 1.0, 0.0), "focus" to listOf(1.0, 1.0, 0.0, 1.0, 0.0)), reply(into.reply)["selection"])
+        val typed = EditorProtocol.step(into.state, """{"op":"type","text":"!"}""")
+        val cells = (typed.state.document.blocks[1] as Table).rows[0].cells.map { (it.blocks[0] as Paragraph).text }
+        assertEquals(listOf("ab", "c!d"), cells)
+        val splice = reply(typed.reply)["splice"] as Map<*, *>
+        assertEquals(listOf(1.0, 2.0), listOf(splice["from"], splice["to"]), "the table is the block repainted")
+        assertTrue(((splice["blocks"] as List<*>)[0] as String).startsWith("<table"))
+        val rowed = EditorProtocol.step(typed.state, """{"op":"insertRow","below":true}""")
+        assertEquals(2, (rowed.state.document.blocks[1] as Table).rows.size)
+        assertEquals(rowed.state.document, typed.state.insertRow(true).document)
+        val columned = EditorProtocol.step(rowed.state, """{"op":"insertColumn","after":false}""")
+        assertEquals(3, (columned.state.document.blocks[1] as Table).rows[0].cells.size)
+        assertEquals(2, (EditorProtocol.step(columned.state, """{"op":"deleteColumn"}""").state.document.blocks[1] as Table).rows[0].cells.size)
+        assertEquals(1, (EditorProtocol.step(columned.state, """{"op":"deleteRow"}""").state.document.blocks[1] as Table).rows.size)
+        assertNull(EditorProtocol.operation("""{"op":"select","anchor":[1,1,0],"focus":[1,1,0]}"""), "three numbers are not a caret")
+    }
+
+    @Test
     fun `a property set to nothing and a property left out are told apart`() {
         val state = open(Paragraph(listOf(TextRun("the site", link = "https://x", bold = false))))
             .select(Selection(Caret(0, 0), Caret(0, 8)))
@@ -147,7 +170,7 @@ class EditorProtocolTest {
     private fun document(random: Random): DocumentModel = DocumentModel(
         blocks = (1..random.nextInt(0, 6)).map {
             when (random.nextInt(6)) {
-                0 -> Table(listOf(TableRow(listOf(TableCell(listOf(p("cell")))))))
+                0 -> Table((1..random.nextInt(1, 3)).map { TableRow((1..random.nextInt(1, 3)).map { TableCell(listOf(p("cell"))) }) })
                 1 -> ImageBlock(ByteArray(2), "image/png", 1, 1)
                 2 -> item(words[random.nextInt(words.size)])
                 else -> Paragraph(
@@ -162,7 +185,11 @@ class EditorProtocolTest {
 
     private fun operation(random: Random, state: EditorState): String {
         val n = state.document.blocks.size
-        return when (random.nextInt(14)) {
+        return when (random.nextInt(18)) {
+            14 -> """{"op":"select","anchor":[${random.nextInt(n)},${random.nextInt(4)},${random.nextInt(-1, 3)},${random.nextInt(-1, 3)},${random.nextInt(-1, 2)}],"focus":[${random.nextInt(n)},${random.nextInt(4)},${random.nextInt(3)},${random.nextInt(3)},0]}"""
+            15 -> """{"op":"insertRow","below":${random.nextBoolean()}}"""
+            16 -> """{"op":"insertColumn","after":${random.nextBoolean()}}"""
+            17 -> if (random.nextBoolean()) """{"op":"deleteRow"}""" else """{"op":"deleteColumn"}"""
             0 -> """{"op":"select","anchor":[${random.nextInt(-1, n + 1)},${random.nextInt(-1, 9)}],"focus":[${random.nextInt(n)},${random.nextInt(9)}]}"""
             1, 2 -> """{"op":"type","text":${Json.write(words[random.nextInt(words.size)])}}"""
             3 -> """{"op":"erase"}"""

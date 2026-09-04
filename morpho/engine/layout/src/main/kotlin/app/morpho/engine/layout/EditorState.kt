@@ -1,19 +1,46 @@
 package app.morpho.engine.layout
 
 /**
+ * Where in a table a caret stands: the paragraph at [paragraph] among
+ * the blocks of the cell at [column] of the row at [row] — the indices
+ * the table stores its cells by, which are the indices a page gives its
+ * `<td>`s, spans and all, so the two sides of the bridge count alike.
+ */
+data class Cell(val row: Int, val column: Int, val paragraph: Int = 0)
+
+/**
  * A place a caret can stand: [offset] UTF-16 units into the text of the
- * paragraph at [block].
+ * paragraph at [block] — or, where that block is a table, into the
+ * paragraph [cell] names inside it.
  *
  * UTF-16 because that is what a Kotlin string and a JavaScript string
  * both count in, so a position handed across the bridge from the screen
- * means the same thing on both sides without anybody converting it. A
- * caret is only ever in a paragraph at the top of the document; a cell of
- * a table is a later stage of the editor and will widen this rather than
- * change it.
+ * means the same thing on both sides without anybody converting it.
  */
-data class Caret(val block: Int, val offset: Int) : Comparable<Caret> {
-    override fun compareTo(other: Caret): Int =
-        if (block != other.block) block.compareTo(other.block) else offset.compareTo(other.offset)
+data class Caret(val block: Int, val offset: Int, val cell: Cell? = null) : Comparable<Caret> {
+    override fun compareTo(other: Caret): Int {
+        if (block != other.block) return block.compareTo(other.block)
+        val a = cell
+        val b = other.cell
+        if (a != null || b != null) {
+            val rows = (a?.row ?: -1).compareTo(b?.row ?: -1)
+            if (rows != 0) return rows
+            val columns = (a?.column ?: -1).compareTo(b?.column ?: -1)
+            if (columns != 0) return columns
+            val paragraphs = (a?.paragraph ?: -1).compareTo(b?.paragraph ?: -1)
+            if (paragraphs != 0) return paragraphs
+        }
+        return offset.compareTo(other.offset)
+    }
+
+    /** Whether this and [other] stand in the same run of paragraphs: the document's, or one cell's. */
+    fun sharesContainerWith(other: Caret): Boolean {
+        val a = cell
+        val b = other.cell
+        if (a == null && b == null) return true
+        if (a == null || b == null) return false
+        return block == other.block && a.row == b.row && a.column == b.column
+    }
 }
 
 /**
@@ -167,6 +194,16 @@ data class ParagraphChange(
  * back exactly the document that was opened, and redoing them all gives
  * back exactly the document that was left.
  *
+ * A caret stands in a paragraph of the document or in a paragraph of a
+ * cell, and inside a cell every edit is the edit it is outside one — a
+ * Return makes a second paragraph in the cell, Backspace at the head of
+ * a cell's first paragraph does nothing, as in every word processor —
+ * except that nothing crosses a cell's edge: a selection that reaches
+ * out of a cell, or into one, stands where it began. Rows and columns
+ * are put in and taken out of a table with no merged cell in it; a
+ * table with one keeps its shape, since a row cut through a cell that
+ * covers two is not a row anybody asked for.
+ *
  * Blocks move here — a paragraph split is two paragraphs, a table deleted
  * is gone — which is what [DocumentEdit] exists to forbid, and the two are
  * for different screens: that one lists a reading's blocks against marks
@@ -221,7 +258,7 @@ class EditorState private constructor(
         }
 
     /** The paragraph the caret stands in. */
-    fun paragraphAt(caret: Caret): Paragraph = paragraph(normalised(caret).block)
+    fun paragraphAt(caret: Caret): Paragraph = document.paragraphAt(normalised(caret))
 
     /**
      * The way words typed at [caret] would be set: the look of the
@@ -230,7 +267,7 @@ class EditorState private constructor(
      */
     fun lookAt(caret: Caret): TextRun {
         val at = normalised(caret)
-        val look = ParagraphEdit.plain(lookIn(paragraph(at.block).runs, at.offset))
+        val look = ParagraphEdit.plain(lookIn(document.paragraphAt(at).runs, at.offset))
         return pending?.applyTo(look) ?: look
     }
 
@@ -240,7 +277,9 @@ class EditorState private constructor(
      * was chosen for where the caret was.
      */
     fun select(selection: Selection): EditorState {
-        val normalised = Selection(normalised(selection.anchor), normalised(selection.focus))
+        val anchor = normalised(selection.anchor)
+        val focus = normalised(selection.focus).let { if (it.sharesContainerWith(anchor)) it else anchor }
+        val normalised = Selection(anchor, focus)
         if (normalised == this.selection && pending == null && continuing == null) return this
         return with(selection = normalised, pending = null, continuing = null)
     }
@@ -260,17 +299,17 @@ class EditorState private constructor(
         if (text.isEmpty()) return this
         val cleared = deletion(selection)
         val at = if (cleared == null) normalised(selection.start) else cleared.selection.start
-        val blocks = cleared?.document?.blocks ?: document.blocks
-        val paragraph = blocks[at.block] as Paragraph
+        val doc = cleared?.document ?: document
+        val paragraph = doc.paragraphAt(at)
         val look = ParagraphEdit.plain(lookIn(paragraph.runs, at.offset))
         val typed = (pending?.applyTo(look) ?: look).copy(text = text)
         val runs = ParagraphEdit.merged(
             ParagraphEdit.slice(paragraph.runs, 0, at.offset) + typed +
                 ParagraphEdit.slice(paragraph.runs, at.offset, paragraph.text.length),
         )
-        val after = Caret(at.block, at.offset + text.length)
+        val after = at.copy(offset = at.offset + text.length)
         val change = Change(
-            document = (cleared?.document ?: document).replacing(at.block, paragraph.copy(runs = runs)),
+            document = doc.replacingAt(at, paragraph.copy(runs = runs)),
             origins = cleared?.origins ?: origins,
             selection = Selection(after),
         )
@@ -291,16 +330,25 @@ class EditorState private constructor(
     fun erase(): EditorState {
         if (!selection.collapsed) return committed(deletion(selection) ?: return this)
         val at = normalised(selection.start)
-        val text = paragraph(at.block).text
+        val text = document.paragraphAt(at).text
         if (at.offset > 0) {
             val from = at.offset - if (pairEndsAt(text, at.offset)) 2 else 1
-            val range = Selection(Caret(at.block, from), at)
+            val range = Selection(at.copy(offset = from), at)
             val change = deletion(range) ?: return this
             return committed(
                 change,
-                next = Continuing(Continuing.Kind.ERASING, Caret(at.block, from)),
+                next = Continuing(Continuing.Kind.ERASING, at.copy(offset = from)),
                 joins = Continuing(Continuing.Kind.ERASING, at),
             )
+        }
+        val cell = at.cell
+        if (cell != null) {
+            // At the head of a cell's paragraph: joined to the one above it
+            // in the cell, or nothing, since a cell's edge is not crossed.
+            val above = cell.paragraph - 1
+            val blocks = document.cellBlocksAt(at)
+            if (above < 0 || blocks[above] !is Paragraph) return this
+            return committed(mergingInCell(at, above))
         }
         if (at.block == 0) return this
         return if (document.blocks[at.block - 1] is Paragraph) {
@@ -318,15 +366,24 @@ class EditorState private constructor(
     fun eraseForward(): EditorState {
         if (!selection.collapsed) return committed(deletion(selection) ?: return this)
         val at = normalised(selection.start)
-        val text = paragraph(at.block).text
+        val text = document.paragraphAt(at).text
         if (at.offset < text.length) {
             val to = at.offset + if (pairStartsAt(text, at.offset)) 2 else 1
-            val change = deletion(Selection(at, Caret(at.block, to))) ?: return this
+            val change = deletion(Selection(at, at.copy(offset = to))) ?: return this
             return committed(
                 change,
                 next = Continuing(Continuing.Kind.ERASING, at),
                 joins = Continuing(Continuing.Kind.ERASING, at),
             )
+        }
+        val cell = at.cell
+        if (cell != null) {
+            val blocks = document.cellBlocksAt(at)
+            val below = cell.paragraph + 1
+            if (below >= blocks.size || blocks[below] !is Paragraph) return this
+            return committed(mergingInCell(at.copy(cell = cell.copy(paragraph = below)), cell.paragraph).let {
+                Change(it.document, it.origins, Selection(at))
+            })
         }
         if (at.block == document.blocks.size - 1) return this
         return if (document.blocks[at.block + 1] is Paragraph) {
@@ -355,15 +412,14 @@ class EditorState private constructor(
      */
     fun splitParagraph(): EditorState {
         val cleared = deletion(selection)
-        val blocks = cleared?.document?.blocks ?: document.blocks
+        val doc = cleared?.document ?: document
         val origins = cleared?.origins ?: origins
         val at = cleared?.selection?.start ?: normalised(selection.start)
-        val paragraph = blocks[at.block] as Paragraph
+        val paragraph = doc.paragraphAt(at)
         val length = paragraph.text.length
         if (length == 0 && paragraph.style.listMarker != null) {
             val ended = paragraph.copy(style = paragraph.style.copy(listMarker = null, listLevel = 0, listFormat = null))
-            val document = (cleared?.document ?: document).replacing(at.block, ended)
-            return committed(Change(document, origins, Selection(at)))
+            return committed(Change(doc.replacingAt(at, ended), origins, Selection(at)))
         }
         val look = ParagraphEdit.plain(lookIn(paragraph.runs, at.offset))
         val head = ParagraphEdit.merged(ParagraphEdit.slice(paragraph.runs, 0, at.offset))
@@ -389,9 +445,17 @@ class EditorState private constructor(
             ),
             confidence = paragraph.confidence,
         )
-        val document = (cleared?.document ?: document).let { doc ->
-            doc.copy(blocks = doc.blocks.take(at.block) + first + second + doc.blocks.drop(at.block + 1))
+        val cell = at.cell
+        if (cell != null) {
+            // Inside a cell, the second half is a second paragraph of the
+            // cell; the table stays the block it is.
+            val cellBlocks = doc.cellBlocksAt(at)
+            val split = cellBlocks.take(cell.paragraph) + first + second + cellBlocks.drop(cell.paragraph + 1)
+            return committed(
+                Change(doc.replacingCellBlocks(at, split), origins, Selection(at.copy(offset = 0, cell = cell.copy(paragraph = cell.paragraph + 1)))),
+            )
         }
+        val document = doc.copy(blocks = doc.blocks.take(at.block) + first + second + doc.blocks.drop(at.block + 1))
         val nextOrigins = origins.take(at.block) + origins[at.block] + null + origins.drop(at.block + 1)
         return committed(Change(document, nextOrigins, Selection(Caret(at.block + 1, 0))))
     }
@@ -411,22 +475,22 @@ class EditorState private constructor(
         if (selection.collapsed) return with(pending = (pending ?: RunChange()).over(change))
         val start = normalised(selection.start)
         val end = normalised(selection.end)
-        var blocks = document.blocks
-        for (block in start.block..end.block) {
-            val paragraph = blocks[block] as? Paragraph ?: continue
+        var doc = document
+        for (at in doc.paragraphsBetween(start, end)) {
+            val paragraph = doc.paragraphAt(at)
             val length = paragraph.text.length
-            val from = if (block == start.block) start.offset else 0
-            val to = if (block == end.block) end.offset else length
+            val from = if (at.sameParagraphAs(start)) start.offset else 0
+            val to = if (at.sameParagraphAs(end)) end.offset else length
             if (from >= to) continue
             val runs = ParagraphEdit.merged(
                 ParagraphEdit.slice(paragraph.runs, 0, from) +
                     ParagraphEdit.slice(paragraph.runs, from, to).map(change::applyTo) +
                     ParagraphEdit.slice(paragraph.runs, to, length),
             )
-            blocks = blocks.toMutableList().also { it[block] = paragraph.copy(runs = runs) }
+            doc = doc.replacingAt(at, paragraph.copy(runs = runs))
         }
-        if (blocks === document.blocks) return this
-        return committed(Change(document.copy(blocks = blocks), origins, selection))
+        if (doc === document) return this
+        return committed(Change(doc, origins, selection))
     }
 
     /** Every paragraph the selection touches set as [change] says. */
@@ -434,15 +498,15 @@ class EditorState private constructor(
         if (change.isEmpty) return this
         val start = normalised(selection.start)
         val end = normalised(selection.end)
-        var blocks = document.blocks
-        for (block in start.block..end.block) {
-            val paragraph = blocks[block] as? Paragraph ?: continue
+        var doc = document
+        for (at in doc.paragraphsBetween(start, end)) {
+            val paragraph = doc.paragraphAt(at)
             val style = change.applyTo(paragraph.style)
             if (style == paragraph.style) continue
-            blocks = blocks.toMutableList().also { it[block] = paragraph.copy(style = style) }
+            doc = doc.replacingAt(at, paragraph.copy(style = style))
         }
-        if (blocks === document.blocks) return this
-        return committed(Change(document.copy(blocks = blocks), origins, selection))
+        if (doc === document) return this
+        return committed(Change(doc, origins, selection))
     }
 
     /**
@@ -457,6 +521,9 @@ class EditorState private constructor(
      * way a Word document always ends with a paragraph mark.
      */
     fun insertBlock(block: Block): EditorState {
+        // Not inside a cell: a table in a table is a thing the model can
+        // hold and the page cannot yet put a caret in.
+        if (normalised(selection.start).cell != null) return this
         val cleared = deletion(selection)
         val blocks = cleared?.document?.blocks ?: document.blocks
         val origins = cleared?.origins ?: origins
@@ -513,8 +580,84 @@ class EditorState private constructor(
         }
         out += rest
         outOrigins += origins.drop(at.block + 1)
-        val document = (cleared?.document ?: document).copy(blocks = out)
+        val document = withParagraphsToStandIn((cleared?.document ?: document).copy(blocks = out))
         return committed(Change(document, outOrigins, Selection(Caret(landing, 0))))
+    }
+
+    // ---- rows and columns ----
+
+    /**
+     * A row put into the table the caret is in, [below] the caret's row
+     * or above it: as many empty cells as the row has, and the caret in
+     * the one under or over where it was.
+     */
+    fun insertRow(below: Boolean): EditorState {
+        val at = normalised(selection.start)
+        val cell = at.cell ?: return this
+        val table = document.blocks[at.block] as Table
+        if (hasMergedCells(table)) return this
+        val row = table.rows[cell.row]
+        val added = TableRow(row.cells.map { TableCell(listOf(emptyParagraph())) })
+        val index = if (below) cell.row + 1 else cell.row
+        val rows = table.rows.toMutableList().also { it.add(index, added) }
+        val landing = Caret(at.block, 0, Cell(index, cell.column, 0))
+        return committed(Change(document.replacing(at.block, table.copy(rows = rows)), origins, Selection(landing)))
+    }
+
+    /**
+     * The caret's row taken out of its table — and the table with it,
+     * where that was its only row, since a table with no rows is not a
+     * table anybody can see.
+     */
+    fun deleteRow(): EditorState {
+        val at = normalised(selection.start)
+        val cell = at.cell ?: return this
+        val table = document.blocks[at.block] as Table
+        if (hasMergedCells(table)) return this
+        if (table.rows.size == 1) return committed(removal(at.block, null))
+        val rows = table.rows.toMutableList().also { it.removeAt(cell.row) }
+        val row = cell.row.coerceAtMost(rows.size - 1)
+        val landing = Caret(at.block, 0, Cell(row, cell.column.coerceAtMost(rows[row].cells.size - 1), 0))
+        return committed(Change(document.replacing(at.block, table.copy(rows = rows)), origins, Selection(landing)))
+    }
+
+    /**
+     * A column put into the table the caret is in, [after] the caret's
+     * column or before it: an empty cell in every row, as wide as the
+     * column it was put beside where the table knows its widths.
+     */
+    fun insertColumn(after: Boolean): EditorState {
+        val at = normalised(selection.start)
+        val cell = at.cell ?: return this
+        val table = document.blocks[at.block] as Table
+        if (hasMergedCells(table)) return this
+        val index = if (after) cell.column + 1 else cell.column
+        val rows = table.rows.map { row ->
+            val place = index.coerceAtMost(row.cells.size)
+            row.copy(cells = row.cells.toMutableList().also { it.add(place, TableCell(listOf(emptyParagraph()))) })
+        }
+        val widths = table.columnWidthsPt?.let { widths ->
+            val beside = widths.getOrNull(cell.column) ?: widths.lastOrNull() ?: return@let null
+            widths.toMutableList().also { it.add(index.coerceAtMost(it.size), beside) }
+        }
+        val landing = Caret(at.block, 0, Cell(cell.row, index, 0))
+        return committed(Change(document.replacing(at.block, table.copy(rows = rows, columnWidthsPt = widths)), origins, Selection(landing)))
+    }
+
+    /** The caret's column taken out of its table — and the table with it, where that was its only column. */
+    fun deleteColumn(): EditorState {
+        val at = normalised(selection.start)
+        val cell = at.cell ?: return this
+        val table = document.blocks[at.block] as Table
+        if (hasMergedCells(table)) return this
+        if (table.rows.all { it.cells.size <= 1 }) return committed(removal(at.block, null))
+        val rows = table.rows.map { row ->
+            if (cell.column < row.cells.size && row.cells.size > 1) row.copy(cells = row.cells.toMutableList().also { it.removeAt(cell.column) }) else row
+        }
+        val widths = table.columnWidthsPt?.toMutableList()?.also { if (cell.column < it.size && it.size > 1) it.removeAt(cell.column) }
+        val column = cell.column.coerceAtMost(rows[cell.row].cells.size - 1)
+        val landing = Caret(at.block, 0, Cell(cell.row, column, 0))
+        return committed(Change(document.replacing(at.block, table.copy(rows = rows, columnWidthsPt = widths)), origins, Selection(landing)))
     }
 
     /**
@@ -576,28 +719,52 @@ class EditorState private constructor(
         var end = normalised(selection.end)
         if (end < start) start = end.also { end = start }
         if (start == end) return null
-        val first = paragraph(start.block)
+        // Nothing crosses a cell's edge.
+        if (!start.sharesContainerWith(end)) return null
+        val first = document.paragraphAt(start)
         // Never inside a surrogate pair: a caret is put after one by
         // normalising, so a selection starting on the second half of a
         // character starts after the character.
         val from = start.offset
         val head = ParagraphEdit.slice(first.runs, 0, from)
         val look = ParagraphEdit.plain(lookIn(first.runs, from))
-        if (start.block == end.block) {
+        if (start.sameParagraphAs(end)) {
             val runs = ParagraphEdit.merged(head + ParagraphEdit.slice(first.runs, end.offset, first.text.length))
             val kept = first.copy(runs = runs.ifEmpty { emptied(look) })
-            return Change(document.replacing(start.block, kept), origins, Selection(Caret(start.block, from)))
+            return Change(document.replacingAt(start, kept), origins, Selection(start.copy(offset = from)))
         }
-        val last = paragraph(end.block)
+        val last = document.paragraphAt(end)
         val runs = ParagraphEdit.merged(head + ParagraphEdit.slice(last.runs, end.offset, last.text.length))
         val kept = first.copy(
             runs = runs.ifEmpty { emptied(look) },
             confidence = minOf(first.confidence, last.confidence),
             bookmarks = first.bookmarks + last.bookmarks,
         )
+        val cell = start.cell
+        if (cell != null) {
+            val cellBlocks = document.cellBlocksAt(start)
+            val left = cellBlocks.take(cell.paragraph) + kept + cellBlocks.drop(end.cell!!.paragraph + 1)
+            return Change(document.replacingCellBlocks(start, left), origins, Selection(start.copy(offset = from)))
+        }
         val blocks = document.blocks.take(start.block) + kept + document.blocks.drop(end.block + 1)
         val nextOrigins = origins.take(start.block) + origins[start.block] + origins.drop(end.block + 1)
         return Change(document.copy(blocks = blocks), nextOrigins, Selection(Caret(start.block, from)))
+    }
+
+    /** The paragraph at [caret] joined onto the paragraph at [above] in the same cell, with nothing between. */
+    private fun mergingInCell(caret: Caret, above: Int): Change {
+        val cell = caret.cell!!
+        val blocks = document.cellBlocksAt(caret)
+        val first = blocks[above] as Paragraph
+        val second = blocks[cell.paragraph] as Paragraph
+        val joined = first.copy(
+            runs = ParagraphEdit.merged(first.runs + second.runs).ifEmpty { emptied(lookIn(first.runs, 0)) },
+            confidence = minOf(first.confidence, second.confidence),
+            bookmarks = first.bookmarks + second.bookmarks,
+        )
+        val left = blocks.take(above) + joined + blocks.drop(cell.paragraph + 1)
+        val landing = Caret(caret.block, first.text.length, cell.copy(paragraph = above))
+        return Change(document.replacingCellBlocks(caret, left), origins, Selection(landing))
     }
 
     /** The paragraph at [index] joined onto the paragraph above it, with nothing between. */
@@ -616,8 +783,9 @@ class EditorState private constructor(
 
     /**
      * The block at [index] taken out, and the caret put at [landing] —
-     * or, given none, at the nearest paragraph. A document is never left
-     * without a paragraph to stand in.
+     * or, given none, where the block was: at the head of the paragraph
+     * after it, or at the end of the one before where nothing follows.
+     * A document is never left without a paragraph to stand in.
      */
     private fun removal(index: Int, landing: Selection?): Change {
         var blocks = document.blocks.take(index) + document.blocks.drop(index + 1)
@@ -627,9 +795,13 @@ class EditorState private constructor(
             nextOrigins = nextOrigins + null
         }
         val selection = landing ?: run {
-            val block = (index until blocks.size).firstOrNull { blocks[it] is Paragraph }
-                ?: (index - 1 downTo 0).first { blocks[it] is Paragraph }
-            Selection(Caret(block, 0))
+            val after = (index until blocks.size).firstOrNull { blocks[it] is Paragraph }
+            if (after != null) {
+                Selection(Caret(after, 0))
+            } else {
+                val before = (index - 1 downTo 0).first { blocks[it] is Paragraph }
+                Selection(Caret(before, (blocks[before] as Paragraph).text.length))
+            }
         }
         return Change(document.copy(blocks = blocks), nextOrigins, selection)
     }
@@ -673,6 +845,12 @@ class EditorState private constructor(
 
     private fun normalised(caret: Caret): Caret = normalisedIn(document, caret)
 
+    /** Whether a table has a cell covering more than its own place. */
+    private fun hasMergedCells(table: Table): Boolean =
+        table.rows.any { row -> row.cells.any { it.columnSpan > 1 || it.rowSpan > 1 } }
+
+    private fun emptyParagraph(): Paragraph = Paragraph(listOf(TextRun("")))
+
     /** The look at [at] in [runs], or a plain one where the paragraph holds nothing to take it from. */
     private fun lookIn(runs: List<TextRun>, at: Int): TextRun =
         if (runs.isEmpty()) TextRun("") else ParagraphEdit.lookOf(runs, at)
@@ -696,9 +874,8 @@ class EditorState private constructor(
          * [modified].
          */
         fun open(document: DocumentModel): EditorState {
-            var blocks = document.blocks
-            if (blocks.none { it is Paragraph }) blocks = blocks + Paragraph(listOf(TextRun("")))
-            val opened = document.copy(blocks = blocks)
+            val opened = withParagraphsToStandIn(document)
+            val blocks = opened.blocks
             val first = blocks.indexOfFirst { it is Paragraph }
             return EditorState(
                 document = opened,
@@ -724,16 +901,108 @@ class EditorState private constructor(
         private fun normalisedIn(document: DocumentModel, caret: Caret): Caret {
             val blocks = document.blocks
             var block = caret.block.coerceIn(0, blocks.size - 1)
+            val cell = caret.cell
+            val table = blocks[block] as? Table
+            if (table != null && cell != null && table.rows.isNotEmpty()) {
+                // Into the nearest cell paragraph the table has, which it
+                // always has, since every cell is given one to stand in.
+                val row = cell.row.coerceIn(0, table.rows.size - 1)
+                val cells = table.rows[row].cells
+                val column = cell.column.coerceIn(0, cells.size - 1)
+                val held = cells[column].blocks
+                val paragraphs = held.indices.filter { held[it] is Paragraph }
+                val paragraph = paragraphs.minByOrNull { kotlin.math.abs(it - cell.paragraph) }!!
+                val text = (held[paragraph] as Paragraph).text
+                return Caret(block, snapped(text, caret.offset), Cell(row, column, paragraph))
+            }
             if (blocks[block] !is Paragraph) {
                 block = (block until blocks.size).firstOrNull { blocks[it] is Paragraph }
                     ?: (block downTo 0).first { blocks[it] is Paragraph }
             }
-            val text = (blocks[block] as Paragraph).text
-            var offset = caret.offset.coerceIn(0, text.length)
-            if (offset in 1 until text.length && text[offset].isLowSurrogate() && text[offset - 1].isHighSurrogate()) {
-                offset++
+            return Caret(block, snapped((blocks[block] as Paragraph).text, caret.offset))
+        }
+
+        /** [offset] inside [text], and never between the two halves of a surrogate pair. */
+        private fun snapped(text: String, offset: Int): Int {
+            var at = offset.coerceIn(0, text.length)
+            if (at in 1 until text.length && text[at].isLowSurrogate() && text[at - 1].isHighSurrogate()) at++
+            return at
+        }
+
+        /**
+         * [document] with a paragraph everywhere a caret may need one: at
+         * the top, and in every cell of every table, since a cell with
+         * nothing in it is a cell a reader will want to type into.
+         */
+        private fun withParagraphsToStandIn(document: DocumentModel): DocumentModel {
+            var blocks = document.blocks.map { block ->
+                if (block !is Table) return@map block
+                var changed = false
+                val rows = block.rows.map { row ->
+                    if (row.cells.isEmpty()) {
+                        changed = true
+                        return@map TableRow(listOf(TableCell(listOf(Paragraph(listOf(TextRun("")))))), row.repeatsAsHeader)
+                    }
+                    val cells = row.cells.map { cell ->
+                        if (cell.blocks.any { it is Paragraph }) cell
+                        else cell.copy(blocks = cell.blocks + Paragraph(listOf(TextRun("")))).also { changed = true }
+                    }
+                    if (changed) row.copy(cells = cells) else row
+                }
+                if (changed) block.copy(rows = rows) else block
             }
-            return Caret(block, offset)
+            if (blocks.none { it is Paragraph }) blocks = blocks + Paragraph(listOf(TextRun("")))
+            return if (blocks == document.blocks) document else document.copy(blocks = blocks)
+        }
+
+        /** The paragraph [caret] names, at the top or in a cell. */
+        private fun DocumentModel.paragraphAt(caret: Caret): Paragraph {
+            val cell = caret.cell ?: return blocks[caret.block] as Paragraph
+            return cellBlocksAt(caret)[cell.paragraph] as Paragraph
+        }
+
+        /** The blocks of the cell [caret] stands in. */
+        private fun DocumentModel.cellBlocksAt(caret: Caret): List<Block> {
+            val cell = caret.cell!!
+            return (blocks[caret.block] as Table).rows[cell.row].cells[cell.column].blocks
+        }
+
+        /** This document with the paragraph at [caret] replaced by [paragraph]. */
+        private fun DocumentModel.replacingAt(caret: Caret, paragraph: Paragraph): DocumentModel {
+            val cell = caret.cell ?: return replacing(caret.block, paragraph)
+            return replacingCellBlocks(caret, cellBlocksAt(caret).toMutableList().also { it[cell.paragraph] = paragraph })
+        }
+
+        /** This document with the blocks of the cell [caret] stands in replaced by [held]. */
+        private fun DocumentModel.replacingCellBlocks(caret: Caret, held: List<Block>): DocumentModel {
+            val cell = caret.cell!!
+            val table = blocks[caret.block] as Table
+            val row = table.rows[cell.row]
+            val cells = row.cells.toMutableList().also { it[cell.column] = it[cell.column].copy(blocks = held) }
+            val rows = table.rows.toMutableList().also { it[cell.row] = row.copy(cells = cells) }
+            return replacing(caret.block, table.copy(rows = rows))
+        }
+
+        /** Whether two carets name the same paragraph. */
+        private fun Caret.sameParagraphAs(other: Caret): Boolean =
+            block == other.block && cell == other.cell
+
+        /**
+         * The paragraphs from [start] to [end], in order — the document's
+         * between two blocks, or one cell's between two of its paragraphs.
+         * Two ends in different cells reach only the first.
+         */
+        private fun DocumentModel.paragraphsBetween(start: Caret, end: Caret): List<Caret> {
+            val cell = start.cell
+            if (cell == null) {
+                if (end.cell != null) return listOf(start)
+                return (start.block..end.block).mapNotNull { at -> if (blocks[at] is Paragraph) Caret(at, 0) else null }
+            }
+            if (!start.sharesContainerWith(end)) return listOf(start)
+            val held = cellBlocksAt(start)
+            return (cell.paragraph..end.cell!!.paragraph).mapNotNull { at ->
+                if (held[at] is Paragraph) Caret(start.block, 0, cell.copy(paragraph = at)) else null
+            }
         }
 
         /** Whether the character ending at [offset] in [text] is a surrogate pair. */

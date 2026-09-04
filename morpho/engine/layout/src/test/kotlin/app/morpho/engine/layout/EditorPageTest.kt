@@ -73,11 +73,17 @@ class EditorPageTest {
             val truth = synchronized(lock) {
                 Json.write(
                     mapOf(
-                        "texts" to state.document.blocks.map { (it as? Paragraph)?.text },
-                        "selection" to listOf(
-                            listOf(state.selection.anchor.block, state.selection.anchor.offset),
-                            listOf(state.selection.focus.block, state.selection.focus.offset),
-                        ),
+                        "texts" to state.document.blocks.map { block ->
+                            when (block) {
+                                is Paragraph -> block.text
+                                is Table -> block.rows.map { r -> r.cells.map { c -> c.blocks.map { (it as? Paragraph)?.text } } }
+                                else -> null
+                            }
+                        },
+                        "selection" to listOf(state.selection.anchor, state.selection.focus).map { c ->
+                            val cell = c.cell
+                            if (cell == null) listOf(c.block, c.offset) else listOf(c.block, c.offset, cell.row, cell.column, cell.paragraph)
+                        },
                         "runs" to state.document.blocks.map { b -> (b as? Paragraph)?.runs?.map { listOf(it.text, it.bold, it.italic) } },
                         "canUndo" to state.canUndo,
                     )

@@ -43,14 +43,66 @@
     return n;
   }
 
-  // The block and offset of a point in the page, or null outside any block.
+  // The block elements of a cell in the order the engine holds them: a
+  // paragraph, a heading, an item of a list, a table inside the cell —
+  // and not what stands inside that table, which is that table's.
+  function blockElementsOf(td) {
+    var out = [];
+    var w = document.createTreeWalker(td, NodeFilter.SHOW_ELEMENT, null);
+    var c;
+    while ((c = w.nextNode())) {
+      if (c.closest('td,th') !== td) continue;
+      var t = c.tagName;
+      if (t === 'P' || t === 'H1' || t === 'H2' || t === 'H3' || t === 'LI' || t === 'TABLE') out.push(c);
+    }
+    return out;
+  }
+
+  // The cell of the block `table` that holds `node`, climbing out of any
+  // table inside it, or null.
+  function cellOf(table, node) {
+    var e = node.nodeType === 1 ? node : node.parentNode;
+    var td = e && e.closest ? e.closest('td,th') : null;
+    while (td && td.closest('table') !== table) td = td.parentNode ? td.parentNode.closest('td,th') : null;
+    return td;
+  }
+
+  // The caret a point in the page is: [block, offset], or inside a cell
+  // [block, offset, row, column, paragraph]. Null outside any block.
   function caretOf(node, offset) {
     var el = blockOf(node);
     if (!el) return null;
+    var block = Number(el.getAttribute('data-block'));
+    if (el.tagName === 'TABLE') {
+      var td = cellOf(el, node);
+      if (!td) return [block, 0];
+      var row = td.parentNode.rowIndex, column = td.cellIndex;
+      var held = blockElementsOf(td);
+      for (var i = 0; i < held.length; i++) {
+        if (held[i] === node || held[i].contains(node)) {
+          var rr = document.createRange();
+          rr.setStart(held[i], 0);
+          rr.setEnd(node, offset);
+          return [block, lengthOf(rr.cloneContents()), row, column, i];
+        }
+      }
+      return [block, 0, row, column, 0];
+    }
     var r = document.createRange();
     r.setStart(el, 0);
     r.setEnd(node, offset);
-    return [Number(el.getAttribute('data-block')), lengthOf(r.cloneContents())];
+    return [block, lengthOf(r.cloneContents())];
+  }
+
+  // The element a caret's text is counted in: the block, or a cell's paragraph.
+  function containerOf(caret) {
+    var el = blocks()[caret[0]];
+    if (!el) return null;
+    if (caret.length < 5) return el;
+    var tr = el.rows[caret[2]];
+    var td = tr ? tr.cells[caret[3]] : null;
+    if (!td) return null;
+    return blockElementsOf(td)[caret[4]] || td;
   }
 
   // The point in block element `el` that is `offset` characters in.
@@ -127,8 +179,7 @@
   }
 
   function placeCaret(sel) {
-    var all = blocks();
-    var a = all[sel.anchor[0]], f = all[sel.focus[0]];
+    var a = containerOf(sel.anchor), f = containerOf(sel.focus);
     if (!a || !f) return;
     var ap = pointAt(a, sel.anchor[1]);
     var fp = pointAt(f, sel.focus[1]);
@@ -244,18 +295,28 @@
     undo: function () { return op({ op: 'undo' }); },
     redo: function () { return op({ op: 'redo' }); },
     insertTable: function (rows, columns) { return op({ op: 'insertTable', rows: rows, columns: columns }); },
+    insertRow: function (below) { return op({ op: 'insertRow', below: below !== false }); },
+    deleteRow: function () { return op({ op: 'deleteRow' }); },
+    insertColumn: function (after) { return op({ op: 'insertColumn', after: after !== false }); },
+    deleteColumn: function () { return op({ op: 'deleteColumn' }); },
     removeBlock: function (block) { return op({ op: 'removeBlock', block: block }); },
     select: function (anchor, focus) { return op({ op: 'select', anchor: anchor, focus: focus || anchor }); },
     settled: function () { return queue; },
     caret: function () { var s = currentSelection(); return s ? [s.anchor, s.focus] : null; },
     texts: function () {
-      return blocks().map(function (e) {
+      function textOf(e) {
         if (e.tagName === 'TABLE' || e.classList.contains('image')) return null;
         var out = '';
         var w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, null);
         var c;
         while ((c = w.nextNode())) { if (c.nodeType === 3) out += c.data; else if (c.tagName === 'BR') out += '\n'; }
         return out;
+      }
+      return blocks().map(function (e) {
+        if (e.tagName !== 'TABLE') return textOf(e);
+        return Array.prototype.map.call(e.rows, function (tr) {
+          return Array.prototype.map.call(tr.cells, function (td) { return blockElementsOf(td).map(textOf); });
+        });
       });
     },
     look: function () { return look; },

@@ -241,12 +241,28 @@ Most of this is model → HTML → model plumbing once Stage 1 stands, because
 
 ## Stage 3 — tables and images
 
-- Type in a cell; move between cells; add and remove rows and columns.
-- Merged cells, which the model already carries as spans.
+- **Done 4 September, in the engine and the page:** a caret stands in a
+  cell's paragraph (`Caret.cell`, five numbers over the bridge), and
+  inside a cell every edit is the edit it is outside one — Return makes
+  a second paragraph of the cell, Backspace at the head of a cell's
+  first paragraph does nothing, nothing crosses a cell's edge. Rows and
+  columns go in and come out of a table with no merged cell, the last
+  of either taking the table with it; a column put in takes the width
+  of the one beside it. Every cell is given a paragraph to stand in on
+  opening. The page finds a cell by the browser's own `rowIndex` and
+  `cellIndex`, which are the indices the model stores cells by, spans
+  and all. Driven in Chromium: a click into a cell, typing, Return,
+  rows, columns, undo, and a selection dragged out of a cell.
+- Still to do: a selection across cells (Word selects whole cells);
+  splitting and merging cells, which the model carries as spans and
+  the row and column operations refuse for now; moving between cells
+  by Tab.
 - Insert an image, resize it, give it alt text — the model has alt text
   already, and it is the accessibility feature competitors mostly skip.
+  The bytes are the app's to supply, so the operation is the app's to
+  add to the grammar.
 - Keep a table's ruling and column widths through an edit, since the
-  reading works hard to recover them.
+  reading works hard to recover them: held now for rows and columns.
 
 ## Stage 4 — what makes it feel finished
 

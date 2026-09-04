@@ -43,6 +43,16 @@ await p.keyboard.press('Enter'); await p.keyboard.press('Enter'); await check('t
 await p.keyboard.press('Backspace'); await check('Backspace on an empty paragraph');
 await select([3, 4], [3, 9]); await p.keyboard.type('X'); await check('typed over a selection');
 await p.evaluate(() => window.morphoEditor.insertTable(2, 2)); await check('a table put in');
+// Into the new table's cells: by a click, then by typing, Return, rows and columns.
+await p.click('table[data-block="4"] td'); await check('clicked into a cell');
+await p.keyboard.type('cell A'); await check('typed in a cell');
+await p.keyboard.press('Enter'); await p.keyboard.type('more'); await check('Return in a cell');
+await p.evaluate(() => window.morphoEditor.insertRow(true)); await check('a row put in below');
+await select([4, 0, 2, 1, 0]); await p.keyboard.type('B'); await check('typed in the last cell');
+await p.evaluate(() => window.morphoEditor.insertColumn(true)); await check('a column put in after');
+await p.evaluate(() => window.morphoEditor.deleteColumn()); await check('the column taken out again');
+await p.keyboard.press('Control+z'); await check('undo in a table');
+await select([4, 0, 0, 0, 0], [5, 2]); await p.keyboard.type('Z'); await check('a selection out of a cell stands where it began');
 await p.evaluate(() => window.morphoEditor.restyle({ listMarker: 'BULLET' })); await check('made a list item (whole body)');
 await p.keyboard.press('Enter'); await p.keyboard.type('item two'); await check('Return in a list continues it');
 // Timing: two hundred keystrokes, one round trip each.
