@@ -180,7 +180,7 @@ object ParagraphEdit {
      * edit inside a link stay inside the link. At the very start there is
      * nothing to the left, so the paragraph's first run stands in.
      */
-    private fun lookOf(runs: List<TextRun>, at: Int): TextRun {
+    internal fun lookOf(runs: List<TextRun>, at: Int): TextRun {
         if (at <= 0) return runs.first()
         var seen = 0
         for (run in runs) {
@@ -200,11 +200,11 @@ object ParagraphEdit {
      * A note's mark is the same — it belongs to the mark and not to what
      * follows it.
      */
-    private fun plain(run: TextRun): TextRun =
+    internal fun plain(run: TextRun): TextRun =
         run.copy(text = "", field = null, image = null, note = null)
 
     /** The part of [runs] covering the characters from [from] until [to]. */
-    private fun slice(runs: List<TextRun>, from: Int, to: Int): List<TextRun> {
+    internal fun slice(runs: List<TextRun>, from: Int, to: Int): List<TextRun> {
         if (from >= to) return emptyList()
         val out = mutableListOf<TextRun>()
         var at = 0
@@ -236,7 +236,7 @@ object ParagraphEdit {
      * remember this. A run carrying something of its own, rather than a
      * way of being set, is never joined to its neighbour.
      */
-    private fun merged(runs: List<TextRun>): List<TextRun> {
+    internal fun merged(runs: List<TextRun>): List<TextRun> {
         val out = mutableListOf<TextRun>()
         for (run in runs) {
             if (run.text.isEmpty() && run.image == null && run.field == null) continue
