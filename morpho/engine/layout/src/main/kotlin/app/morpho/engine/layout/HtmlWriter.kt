@@ -495,7 +495,11 @@ object HtmlWriter {
         }
         // A field's last value stands in: a page has no number in a page
         // that scrolls.
-        var html = escape(run.text.ifEmpty { if (run.field != null) "1" else "" })
+        // A line break inside a paragraph is a break, not whitespace: HTML
+        // folds a newline into the space round it, so what the document
+        // sets on two lines would be shown on one.
+        var html = LineBreaks.split(run.text.ifEmpty { if (run.field != null) "1" else "" })
+            .joinToString("<br>") { escape(it) }
         if (run.superscript) html = "<sup>$html</sup>"
         else if (run.subscript) html = "<sub>$html</sub>"
         if (run.underline) html = "<u>$html</u>"

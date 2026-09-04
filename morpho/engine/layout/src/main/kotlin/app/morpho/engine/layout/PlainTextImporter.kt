@@ -90,7 +90,8 @@ object PlainTextImporter {
         fun flush() {
             if (buffer.isEmpty()) return
             blocks += paragraph(
-                LineJoiner.join(buffer, spelling), ParagraphKind.BODY, listMarker = null, notes = notes,
+                LineJoiner.join(buffer, spelling, hardBreaks = true),
+                ParagraphKind.BODY, listMarker = null, notes = notes,
             )
             buffer.clear()
         }

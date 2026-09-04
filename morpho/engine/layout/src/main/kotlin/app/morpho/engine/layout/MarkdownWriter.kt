@@ -90,13 +90,22 @@ object MarkdownWriter {
                     val indent = "    ".repeat(level)
                     when (marker) {
                         ListMarker.BULLET ->
-                            out.append(indent).append("- ").append(runsToMarkdown(block.runs, notes))
+                            out.append(indent).append("- ")
+                                .append(hardBreaks(runsToMarkdown(block.runs, notes)))
                         ListMarker.NUMBERED ->
                             out.append(indent).append(count).append(". ")
-                                .append(runsToMarkdown(block.runs, notes))
+                                .append(hardBreaks(runsToMarkdown(block.runs, notes)))
                         null -> {
                             val prefix = headingPrefix(block.style.kind)
-                            val line = runsToMarkdown(block.runs, notes)
+                            val words = runsToMarkdown(block.runs, notes)
+                            // A heading ends where its line ends: Markdown has
+                            // no heading of two lines and no way to write one,
+                            // so a title the page set on two is set on one
+                            // here rather than half of it becoming a
+                            // paragraph of its own.
+                            val line =
+                                if (prefix.isEmpty()) hardBreaks(words)
+                                else LineBreaks.flattened(words)
                             // A heading already says what it is; a paragraph
                             // that only begins like one must say it does not.
                             out.append(prefix)
@@ -404,6 +413,23 @@ object MarkdownWriter {
     /** Whether the link says no more than the text it sits on already does. */
     private fun linksToItself(text: String, link: String): Boolean =
         link == text || link == "mailto:$text" || link == "https://$text" || link == "http://$text"
+
+    /**
+     * [line] with every break inside it written as Markdown's own hard
+     * break: a backslash before the line ending.
+     *
+     * The other spelling is two spaces at the end of the line, and it is
+     * the one to avoid — every editor that trims trailing whitespace, and
+     * most do, silently turns those breaks back into the spaces this
+     * writer exists to keep them from being. The backslash survives that.
+     *
+     * Written after the text is escaped, which is what makes it readable
+     * back: a backslash the document itself holds has already become two
+     * by then, so an odd number at the end of a line is this break and an
+     * even number is the document's own.
+     */
+    private fun hardBreaks(line: String): String =
+        if (!LineBreaks.breaks(line)) line else LineBreaks.split(line).joinToString("\\\n")
 
     // Brackets among them: a document's own words hold "see [note 3]" and
     // "[Ibn Khaldun 1377]", and a reader that has learnt what a link and a

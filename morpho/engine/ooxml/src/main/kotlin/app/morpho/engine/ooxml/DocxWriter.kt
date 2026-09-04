@@ -6,6 +6,7 @@ import app.morpho.engine.layout.Comment
 import app.morpho.engine.layout.DocumentFormats
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
+import app.morpho.engine.layout.LineBreaks
 import app.morpho.engine.layout.Links
 import app.morpho.engine.layout.ListMarker
 import app.morpho.engine.layout.PageSetup
@@ -1053,16 +1054,19 @@ object DocxWriter {
         if (note != null) {
             sb.append("""<w:footnoteReference w:customMarkFollows="1" w:id="${note.id}"/>""")
         }
-        // A tab is an element of its own; the character itself has no
-        // meaning in w:t.
+        // A tab and a line break are each an element of their own; neither
+        // character means anything inside w:t, where a newline is folded
+        // into the whitespace round it and the line runs on.
         val text = if (field != null && run.text.isEmpty()) fieldPlaceholder(field, document) else run.text
-        val pieces = text.split('\t')
-        for ((index, piece) in pieces.withIndex()) {
-            if (index > 0) sb.append("<w:tab/>")
-            if (piece.isEmpty()) continue
-            sb.append("""<w:t xml:space="preserve">""")
-            sb.append(xmlEscape(piece))
-            sb.append("</w:t>")
+        for ((index, line) in LineBreaks.split(text).withIndex()) {
+            if (index > 0) sb.append("<w:br/>")
+            for ((at, piece) in line.split('\t').withIndex()) {
+                if (at > 0) sb.append("<w:tab/>")
+                if (piece.isEmpty()) continue
+                sb.append("""<w:t xml:space="preserve">""")
+                sb.append(xmlEscape(piece))
+                sb.append("</w:t>")
+            }
         }
         sb.append("</w:r>")
         if (field != null) sb.append("</w:fldSimple>")

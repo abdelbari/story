@@ -7,6 +7,7 @@ import app.morpho.engine.layout.Comment
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.DocumentProperties
 import app.morpho.engine.layout.ImageBlock
+import app.morpho.engine.layout.LineBreaks
 import app.morpho.engine.layout.ListLabels
 import app.morpho.engine.layout.Links
 import app.morpho.engine.layout.ListMarker
@@ -77,6 +78,8 @@ object DocxReader {
 
     private const val W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
     private const val MAX_NESTING_DEPTH = 64
+    /** The kind of break `<w:br/>` is when it does not say: a line break. */
+    private const val TEXT_WRAPPING = "textWrapping"
     /** One inch: what a section that names a page size but no margins gets. */
     private const val DEFAULT_MARGIN_PT = 72f
     private const val MAX_PART_BYTES = 32 * 1024 * 1024
@@ -802,6 +805,19 @@ object DocxReader {
      * with no break in it, true for a break before the text, false for one
      * after it.
      */
+    /**
+     * Whether [element] is the break that moves to the next line inside a
+     * paragraph — Word's shift+Enter, and the one the format leaves
+     * untyped because it is the ordinary kind.
+     *
+     * The two that carry a type break the page and the column, and are
+     * not text: a page break is read as the paragraph property it amounts
+     * to, in [pageBreakBeforeText]. Reading them here as well would put a
+     * stray line into every paragraph that starts a page.
+     */
+    private fun isLineBreak(element: Element): Boolean =
+        element.localName == "br" && (attr(element, "type") ?: TEXT_WRAPPING) == TEXT_WRAPPING
+
     private fun pageBreakBeforeText(p: Element): Boolean? {
         var sawText = false
         var answer: Boolean? = null
@@ -1539,7 +1555,11 @@ object DocxReader {
         val footnote = notes.of(r, "footnoteReference", "footnote")
         val note = footnote ?: notes.of(r, "endnoteReference", "endnote")
         // A run of tabs alone is text too: Word sets a line of dates with one.
-        val textElements = children(r).filter { it.localName == "t" || it.localName == "tab" }
+        // So is a run of nothing but a line break, which is exactly how Word
+        // writes the break shift+Enter makes.
+        val textElements = children(r).filter {
+            it.localName == "t" || it.localName == "tab" || isLineBreak(it)
+        }
         // A run that refers to a note and writes nothing is Word leaving the
         // number to itself; the mark it would have drawn is made here, since
         // a page has to show something for the note to hang from.
@@ -1550,7 +1570,13 @@ object DocxReader {
         }
         if (textElements.isEmpty() && drawnMark == null) return null
         val text = drawnMark
-            ?: textElements.joinToString(separator = "") { if (it.localName == "tab") "\t" else it.textContent }
+            ?: textElements.joinToString(separator = "") {
+                when (it.localName) {
+                    "tab" -> "\t"
+                    "br" -> LineBreaks.MARK.toString()
+                    else -> it.textContent
+                }
+            }
         // In OOXML the absence of w:rtl means a left-to-right run even inside
         // a bidi paragraph, while the IR's null means "inherit" — so inside an
         // RTL paragraph, LTR is recorded explicitly to keep round-trips true.

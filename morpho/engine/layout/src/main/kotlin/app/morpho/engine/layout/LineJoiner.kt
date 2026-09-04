@@ -112,7 +112,18 @@ object LineJoiner {
         }
     }
 
-    fun join(lines: List<String>, known: Vocabulary = Vocabulary.NONE): String {
+    fun join(
+        lines: List<String>,
+        known: Vocabulary = Vocabulary.NONE,
+        /**
+         * Whether a line ending in Markdown's hard break is one — true
+         * where the lines came out of a file written in Markdown, false
+         * where they came off a page. A PDF has no escaping convention,
+         * so a line of one that happens to end on a backslash means a
+         * backslash and nothing else.
+         */
+        hardBreaks: Boolean = false,
+    ): String {
         val sb = StringBuilder()
         for (line in lines) {
             val trimmed = line.trim()
@@ -124,8 +135,12 @@ object LineJoiner {
             // A line that stopped mid-word abuts the line that finishes
             // it, and loses its hyphen altogether where the document
             // spells that word without one. Every other line, a hyphen at
-            // its end or not, gets the space between two lines of prose.
-            if (breaksAWord(sb)) {
+            // its end or not, gets the space between two lines of prose —
+            // unless the line before asked to end where it ended.
+            if (hardBreaks && endsInAHardBreak(sb)) {
+                sb.setLength(sb.length - 1)
+                sb.append(LineBreaks.MARK)
+            } else if (breaksAWord(sb)) {
                 if (justifiedHyphen(sb, trimmed, known)) sb.setLength(sb.length - 1)
             } else {
                 sb.append(' ')
@@ -133,6 +148,22 @@ object LineJoiner {
             sb.append(trimmed)
         }
         return sb.toString()
+    }
+
+    /**
+     * Whether [text] ends on the backslash Markdown breaks a line with.
+     *
+     * Counted rather than looked at, because a document whose own words
+     * end a line on a backslash writes it escaped, as two. An odd number
+     * ends in a break; an even number ends in the document's own
+     * backslashes and nothing more. This is CommonMark's own rule, and it
+     * is why the break is written this way rather than as the two trailing
+     * spaces every editor that tidies whitespace throws away.
+     */
+    private fun endsInAHardBreak(text: CharSequence): Boolean {
+        var at = text.length
+        while (at > 0 && text[at - 1] == '\\') at--
+        return (text.length - at) % 2 == 1
     }
 
     /**
