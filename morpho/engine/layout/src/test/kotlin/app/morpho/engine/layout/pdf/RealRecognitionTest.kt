@@ -234,4 +234,32 @@ class RealRecognitionTest {
             "the prose either side of the table came back different",
         )
     }
+
+    @Test
+    fun `the table a scan carries survives being written out`() {
+        // The reading finding a table is half of it. What a reader gets is
+        // a file, so the recognised page is written the whole way through
+        // and the table is looked for there — as a table, with its rows,
+        // and with the prose still round it.
+        val written = app.morpho.engine.layout.MarkdownWriter.write(ruledReadingOf("prose-and-a-table"))
+        val rows = written.lines().filter { it.startsWith("|") }
+        assertTrue(rows.size >= 5, "no table in the Markdown:\n$written")
+        assertTrue(
+            rows[0].contains("Section") && rows[0].contains("Applications"),
+            "the head row is not the head row: ${rows[0]}",
+        )
+        assertTrue(rows[1].contains("---"), "no rule under the head row: ${rows[1]}")
+        for (section in listOf("Design", "Delivery", "Records")) {
+            assertTrue(rows.any { it.contains(section) }, "$section is not a row: $rows")
+        }
+        // The prose is prose, above and below, and not swallowed into cells.
+        assertTrue(
+            written.substringBefore("|").contains("The committee met to consider"),
+            "the prose before the table was lost or pulled into it",
+        )
+        assertTrue(
+            written.substringAfterLast("|").contains("agreed that the figures"),
+            "the prose after the table was lost or pulled into it",
+        )
+    }
 }
