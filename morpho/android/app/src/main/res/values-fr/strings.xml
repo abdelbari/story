@@ -74,7 +74,7 @@
     <string name="pages_body">Indiquez un intervalle, par exemple 5-20, ou une seule page. Laissez vide pour convertir tout le document.</string>
     <string name="pages_label">Pages</string>
     <string name="pages_convert">Convertir</string>
-    <string name="unreadable_picture">Ce téléphone ne sait pas ouvrir ce type d'image. JPEG, PNG, WebP et HEIC fonctionnent ; TIFF non.</string>
+    <string name="unreadable_picture">Ce téléphone ne sait pas ouvrir ce type d\'image. JPEG, PNG, WebP et HEIC fonctionnent ; TIFF non.</string>
     <plurals name="pictures_as_pages">
         <item quantity="one">%1$d image, convertie en un seul document</item>
         <item quantity="other">%1$d images, converties en un seul document</item>

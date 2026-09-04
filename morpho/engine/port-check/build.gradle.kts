@@ -93,4 +93,11 @@ tasks.withType<Test> {
     inputs.file("../../android/app/src/main/kotlin/app/morpho/converter/PdfFileExporter.kt")
         .withPathSensitivity(PathSensitivity.RELATIVE)
         .withPropertyName("pdfExporter")
+    // What the app says, in all five languages. These are compiled by the
+    // Android build and by nothing on this machine, so a mistake in them
+    // is otherwise found minutes away in CI — which it has been, three
+    // times.
+    inputs.dir("../../android/app/src/main/res")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+        .withPropertyName("appStrings")
 }
