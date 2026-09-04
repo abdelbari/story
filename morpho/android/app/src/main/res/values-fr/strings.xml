@@ -46,6 +46,9 @@
     <string name="review_as_h1">T1</string>
     <string name="review_as_h2">T2</string>
     <string name="review_as_h3">T3</string>
+    <string name="review_words_fix">Corriger les mots</string>
+    <string name="review_words_label">Ce qui devrait être écrit</string>
+    <string name="review_words_keep">Terminé</string>
     <string name="about_open">À propos et licences</string>
     <string name="about_title">À propos de Morpho</string>
     <string name="about_version">Version %1$s</string>

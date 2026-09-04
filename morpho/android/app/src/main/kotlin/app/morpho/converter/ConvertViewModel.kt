@@ -11,6 +11,7 @@ import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.FidelityReport
 import app.morpho.engine.layout.HtmlWriter
 import app.morpho.engine.layout.MarkdownWriter
+import app.morpho.engine.layout.ParagraphEdit
 import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.layout.pdf.PageRanges
 import app.morpho.engine.ooxml.DocxReader
@@ -272,7 +273,51 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         if (block.style.kind == kind) return
         val blocks = model.blocks.toMutableList()
         blocks[index] = block.copy(style = block.style.copy(kind = kind))
-        val corrected = model.copy(blocks = blocks)
+        republish(model.copy(blocks = blocks), index)
+    }
+
+    /**
+     * Corrects what a block says — a word recognition read wrong, a line
+     * two pages ran together.
+     *
+     * The words go over the runs rather than replacing them, so the
+     * paragraph keeps its bold, its links and the mark on its note; see
+     * [ParagraphEdit]. Confidence is left alone for the same reason
+     * relabelling leaves it alone: the reader has corrected these
+     * characters and said nothing about the rest, and a report that
+     * quietly grew more confident every time somebody touched it would be
+     * worth nothing.
+     */
+    fun retext(index: Int, text: String) {
+        val model = lastModel ?: return
+        val block = model.blocks.getOrNull(index) as? Paragraph ?: return
+        if (block.text == text) return
+        val blocks = model.blocks.toMutableList()
+        blocks[index] = ParagraphEdit.retext(block, text)
+        republish(model.copy(blocks = blocks), index)
+    }
+
+    /**
+     * The whole of what a block says, for the reader about to correct it.
+     *
+     * The report carries an excerpt — eighty code points, enough to know
+     * one paragraph from another in a list — and handing that to an editor
+     * would save the paragraph back with its tail cut off, which is a
+     * conversion that loses text while looking like a correction. So the
+     * editor asks here instead, and the excerpt stays what it is: a label.
+     */
+    fun textOf(index: Int): String =
+        (lastModel?.blocks?.getOrNull(index) as? Paragraph)?.text.orEmpty()
+
+    /**
+     * A corrected model in place of the one that was there, with
+     * everything that was made from it made again.
+     *
+     * The preview, the pages and the report are all readings of the
+     * model, and a correction that changed the model and left them would
+     * show the reader the document as it was before they corrected it.
+     */
+    private fun republish(corrected: DocumentModel, index: Int) {
         val report = FidelityReport.of(corrected)
         lastModel = corrected
         lastPreviewHtml = HtmlWriter.write(corrected, outputName)

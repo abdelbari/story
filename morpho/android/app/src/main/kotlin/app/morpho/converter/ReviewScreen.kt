@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -22,12 +23,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -58,6 +59,9 @@ import kotlin.math.roundToInt
 fun ReviewScreen(
     state: ReviewState,
     onReclassify: (index: Int, kind: ParagraphKind) -> Unit,
+    // Not the report's excerpt: see [EntryRow].
+    textOf: (index: Int) -> String,
+    onRetext: (index: Int, text: String) -> Unit,
     onSaveCorrected: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -124,6 +128,8 @@ fun ReviewScreen(
                 EntryRow(
                     entry = entry,
                     edited = entry.index in state.edited,
+                    textOf = { textOf(entry.index) },
+                    onRetext = { text -> onRetext(entry.index, text) },
                     onReclassify = { kind -> onReclassify(entry.index, kind) },
                 )
             }
@@ -176,12 +182,34 @@ private fun BandBar(report: FidelityReport.Report) {
     }
 }
 
+/**
+ * One block of the document, said plainly, and correctable two ways: what
+ * it is, and what it says.
+ *
+ * The words shown are the report's excerpt — eighty code points, a label
+ * for a list. What the editor opens on is the block's whole text, asked
+ * for at the moment it opens, because an editor seeded from an excerpt
+ * saves a paragraph back with its tail cut off and calls that a
+ * correction.
+ */
 @Composable
 private fun EntryRow(
     entry: FidelityReport.Entry,
     edited: Boolean,
+    textOf: () -> String,
+    onRetext: (String) -> Unit,
     onReclassify: (ParagraphKind) -> Unit,
 ) {
+    // Null is "not editing", so the draft and the state that it exists are
+    // one thing and cannot disagree. Saveable because a reader retyping a
+    // paragraph off a photograph must not lose it to a turn of the phone.
+    var draft by rememberSaveable { mutableStateOf<String?>(null) }
+    val typing = draft
+    // Only text has words to fix. A table's cells and a picture are edited
+    // where they can be edited honestly, which is not here.
+    val hasWords = entry.kind == FidelityReport.Kind.PARAGRAPH ||
+        entry.kind == FidelityReport.Kind.HEADING
+
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(14.dp),
@@ -214,10 +242,23 @@ private fun EntryRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text(
-                text = entry.excerpt.ifEmpty { stringResource(R.string.review_image) },
-                style = MaterialTheme.typography.bodyMedium,
-            )
+
+            if (typing == null) {
+                Text(
+                    text = entry.excerpt.ifEmpty { stringResource(R.string.review_image) },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                WordEditor(
+                    text = typing,
+                    onText = { draft = it },
+                    onKeep = {
+                        onRetext(typing)
+                        draft = null
+                    },
+                    onLeave = { draft = null },
+                )
+            }
 
             if (edited) {
                 Text(
@@ -227,13 +268,19 @@ private fun EntryRow(
                 )
             }
 
-            // Only text blocks can be relabelled, and only the doubtful ones
-            // are worth the clutter — a block read exactly from the source
-            // has nothing to correct.
-            val correctable = entry.band != FidelityReport.Band.HIGH &&
-                (entry.kind == FidelityReport.Kind.PARAGRAPH ||
-                    entry.kind == FidelityReport.Kind.HEADING)
-            if (correctable) {
+            // The two corrections part company here on purpose. Any words
+            // can be wrong, including a Word document's own — that is what
+            // editing a document is — so fixing them is offered on every
+            // block that has any. Relabelling is offered only where the
+            // label was guessed: a heading level a DOCX states outright is
+            // not the app's to second-guess.
+            if (hasWords && typing == null) {
+                TextButton(onClick = { draft = textOf() }) {
+                    Text(stringResource(R.string.review_words_fix))
+                }
+            }
+            val relabel = entry.band != FidelityReport.Band.HIGH && hasWords
+            if (relabel && typing == null) {
                 Text(
                     text = stringResource(R.string.review_correct_hint),
                     style = MaterialTheme.typography.labelSmall,
@@ -247,6 +294,36 @@ private fun EntryRow(
                 }
             }
         }
+    }
+}
+
+/**
+ * Where the words are put right.
+ *
+ * Capped rather than allowed to grow: a paragraph two pages ran together
+ * is thousands of characters, and a field that tall pushes the rest of the
+ * document off the screen and cannot be got back to. Capped, it scrolls
+ * within itself and the list stays a list.
+ */
+@Composable
+private fun WordEditor(
+    text: String,
+    onText: (String) -> Unit,
+    onKeep: () -> Unit,
+    onLeave: () -> Unit,
+) {
+    OutlinedTextField(
+        value = text,
+        onValueChange = onText,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 96.dp, max = 240.dp),
+        label = { Text(stringResource(R.string.review_words_label)) },
+        textStyle = MaterialTheme.typography.bodyMedium,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        TextButton(onClick = onKeep) { Text(stringResource(R.string.review_words_keep)) }
+        TextButton(onClick = onLeave) { Text(stringResource(R.string.cancel)) }
     }
 }
 

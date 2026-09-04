@@ -127,6 +127,8 @@ fun HomeScreen(viewModel: ConvertViewModel) {
         ReviewScreen(
             state = openReview,
             onReclassify = viewModel::reclassify,
+            textOf = viewModel::textOf,
+            onRetext = viewModel::retext,
             onSaveCorrected = viewModel::saveCorrected,
             onClose = viewModel::hideReview,
         )

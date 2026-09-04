@@ -52,6 +52,9 @@
     <string name="review_as_h1">H1</string>
     <string name="review_as_h2">H2</string>
     <string name="review_as_h3">H3</string>
+    <string name="review_words_fix">Fix the words</string>
+    <string name="review_words_label">What it should say</string>
+    <string name="review_words_keep">Done</string>
     <string name="about_open">About &amp; licenses</string>
     <string name="about_title">About Morpho</string>
     <string name="about_version">Version %1$s</string>

@@ -46,6 +46,9 @@
     <string name="review_as_h1">Ü1</string>
     <string name="review_as_h2">Ü2</string>
     <string name="review_as_h3">Ü3</string>
+    <string name="review_words_fix">Wörter berichtigen</string>
+    <string name="review_words_label">Was dort stehen soll</string>
+    <string name="review_words_keep">Fertig</string>
     <string name="about_open">Über die App und Lizenzen</string>
     <string name="about_title">Über Morpho</string>
     <string name="about_version">Version %1$s</string>
