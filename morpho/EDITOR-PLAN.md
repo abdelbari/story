@@ -319,10 +319,16 @@ Most of this is model → HTML → model plumbing once Stage 1 stands, because
   least miss. What the app still owes: calling `saved()` on every edit
   or at least on `onStop`, writing it to its own files directory, and
   offering `restored()` on the next launch — a few lines, on a device.
-- Review Mode's confidence marks return as a layer over the editor — a
-  band in the margin, a filter that jumps between doubtful blocks —
-  rather than a separate screen. The Fidelity Report was the reason to
-  open this screen; it should not be the casualty of making it an editor.
+- **Review Mode's confidence marks return as a layer over the editor —
+  the engine and page half done 4 September.** The editor's markup
+  carries the report's band on every doubtful block (`data-band`), the
+  page draws it as a band in the margin (amber, red; green once the
+  block is changed, every reply naming the blocks changed), and
+  `doubtful()` / `nextDoubtful()` are the filter that jumps between
+  them. What the app still owes: a button for the jump, and the
+  report's summary somewhere on the screen. The Fidelity Report was the
+  reason to open this screen; it should not be the casualty of making
+  it an editor.
 
 ## Rules that hold across every stage
 

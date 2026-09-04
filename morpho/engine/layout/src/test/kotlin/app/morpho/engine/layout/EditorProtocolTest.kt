@@ -125,6 +125,21 @@ class EditorProtocolTest {
     }
 
     @Test
+    fun `the blocks to doubt are asked for over the bridge, and the ones changed come with every reply`() {
+        val state = open(p("sure"), p("read").copy(confidence = 0.6f))
+        val asked = EditorProtocol.step(state, """{"op":"doubtful"}""")
+        assertSame(state, asked.state)
+        assertEquals(listOf(1.0), reply(asked.reply)["blocks"])
+        assertEquals(emptyList<Any>(), reply(asked.reply)["changed"])
+        val typed = EditorProtocol.step(state.at(1, 4), """{"op":"type","text":"!"}""")
+        assertEquals(listOf(1.0), reply(typed.reply)["changed"])
+        val html = ((reply(typed.reply)["splice"] as Map<*, *>)["blocks"] as List<*>)[0] as String
+        assertTrue(html.startsWith("""<p data-block="1" data-band="medium">"""), "the band on the block's element: $html")
+        assertTrue((reply(EditorProtocol.opening(state))["body"] as String).contains("""<p data-block="0">"""), "and none on a block read for certain")
+        assertTrue(!HtmlWriter.write(state.document).contains("data-band"), "the preview says nothing of it")
+    }
+
+    @Test
     fun `a property set to nothing and a property left out are told apart`() {
         val state = open(Paragraph(listOf(TextRun("the site", link = "https://x", bold = false))))
             .select(Selection(Caret(0, 0), Caret(0, 8)))

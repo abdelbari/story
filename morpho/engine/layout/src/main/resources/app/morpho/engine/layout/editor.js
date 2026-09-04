@@ -182,6 +182,14 @@
     blocks().forEach(function (e, i) { e.setAttribute('data-block', String(i)); });
   }
 
+  // The blocks the reader has changed, marked so, which the band in the
+  // margin beside a doubtful block shows as looked at.
+  function markChanged(changed) {
+    var set = {};
+    (changed || []).forEach(function (i) { set[i] = true; });
+    blocks().forEach(function (e, i) { e.classList.toggle('changed', !!set[i]); });
+  }
+
   function placeCaret(sel) {
     var a = containerOf(sel.anchor), f = containerOf(sel.focus);
     if (!a || !f) return;
@@ -210,6 +218,7 @@
       if (reply.all) doc.innerHTML = reply.body;
       else if (reply.splice) splice(reply.splice);
       renumber();
+      markChanged(reply.changed);
       // A selection the reader made is left where they made it unless the
       // engine moved it — onto a paragraph from a table, say.
       if (!wasSelect || selectionKey(reply.selection) !== lastSelection) placeCaret(reply.selection);
@@ -226,7 +235,7 @@
     queue = queue.then(function () { return send(json); }).then(function (r) {
       var reply;
       try { reply = JSON.parse(r); } catch (e) { return null; }
-      paint(reply, o.op === 'select' || o.op === 'find');
+      paint(reply, o.op === 'select' || o.op === 'find' || o.op === 'doubtful');
       return reply;
     });
     return queue;
@@ -327,6 +336,21 @@
     },
     replaceAll: function (query, replacement, ignoreCase) {
       return op({ op: 'replaceAll', query: query, replacement: replacement, ignoreCase: !!ignoreCase });
+    },
+    // The blocks the reading was not sure of, and the caret put at the
+    // next of them after the one it is in, round to the first.
+    doubtful: function () {
+      return op({ op: 'doubtful' }).then(function (r) { return r && r.blocks ? r.blocks : []; });
+    },
+    nextDoubtful: function () {
+      var here = currentSelection();
+      var at = here ? here.focus[0] : -1;
+      return window.morphoEditor.doubtful().then(function (list) {
+        if (!list.length) return null;
+        var next = list.filter(function (i) { return i > at; })[0];
+        if (next === undefined) next = list[0];
+        return op({ op: 'select', anchor: [next, 0], focus: [next, 0] }).then(function () { return next; });
+      });
     },
     select: function (anchor, focus) { return op({ op: 'select', anchor: anchor, focus: focus || anchor }); },
     settled: function () { return queue; },

@@ -88,7 +88,8 @@ object FidelityReport {
         )
     }
 
-    private fun bandOf(confidence: Float): Band = when {
+    /** How much to worry about a block read with [confidence]; see the bands above. */
+    fun bandOf(confidence: Float): Band = when {
         confidence >= 0.85f -> Band.HIGH
         confidence >= 0.55f -> Band.MEDIUM
         else -> Band.LOW

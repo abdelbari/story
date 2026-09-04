@@ -61,6 +61,7 @@ object EditorProtocol {
         data object MergeCells : Operation
         data object SplitCell : Operation
         data class Find(val query: String, val ignoreCase: Boolean) : Operation
+        data object Doubtful : Operation
         data class ReplaceAll(val query: String, val replacement: String, val ignoreCase: Boolean) : Operation
         data object Undo : Operation
         data object Redo : Operation
@@ -131,6 +132,7 @@ object EditorProtocol {
                 "mergeCells" -> Operation.MergeCells
                 "splitCell" -> Operation.SplitCell
                 "find" -> Operation.Find(typed(map, "query") ?: return null, flag(map, "ignoreCase") ?: false)
+                "doubtful" -> Operation.Doubtful
                 "replaceAll" -> Operation.ReplaceAll(
                     typed(map, "query") ?: return null,
                     typed(map, "replacement") ?: return null,
@@ -165,6 +167,7 @@ object EditorProtocol {
         Operation.MergeCells -> state.mergeCells()
         Operation.SplitCell -> state.splitCell()
         is Operation.Find -> state
+        Operation.Doubtful -> state
         is Operation.ReplaceAll -> state.replaceAll(operation.query, operation.replacement, operation.ignoreCase)
         Operation.Undo -> state.undo()
         Operation.Redo -> state.redo()
@@ -179,12 +182,16 @@ object EditorProtocol {
      */
     fun step(state: EditorState, json: String): Step {
         val operation = operation(json) ?: return Step(state, Json.write(mapOf("error" to "refused")))
-        if (operation is Operation.Find) {
-            // A question, not an edit: nothing to paint, and the places
-            // asked for, each as a selection the screen can hand back.
-            val matches = state.find(operation.query, operation.ignoreCase).take(MOST_MATCHES)
+        if (operation is Operation.Find || operation is Operation.Doubtful) {
+            // A question, not an edit: nothing to paint, and what was
+            // asked for — the places a word is written, each as a
+            // selection the screen can hand back, or the blocks to doubt.
             val painting = mapOf("all" to false, "splice" to mapOf("from" to state.document.blocks.size, "to" to state.document.blocks.size, "blocks" to emptyList<String>()))
-            return Step(state, Json.write(status(state) + painting + mapOf("matches" to matches.map { listOf(caretJson(it.start), caretJson(it.end)) })))
+            val answer = when (operation) {
+                is Operation.Find -> mapOf("matches" to state.find(operation.query, operation.ignoreCase).take(MOST_MATCHES).map { listOf(caretJson(it.start), caretJson(it.end)) })
+                else -> mapOf("blocks" to state.doubtful())
+            }
+            return Step(state, Json.write(status(state) + painting + answer))
         }
         val after = apply(state, operation)
         return Step(after, reply(state, after))
@@ -240,6 +247,7 @@ object EditorProtocol {
     private fun status(state: EditorState): Map<String, Any?> {
         val look = state.lookOf(state.selection)
         val style = state.paragraphAt(state.selection.start).style
+        val modified = state.modified
         return mapOf(
             "selection" to mapOf(
                 "anchor" to caretJson(state.selection.anchor),
@@ -247,7 +255,10 @@ object EditorProtocol {
             ),
             "canUndo" to state.canUndo,
             "canRedo" to state.canRedo,
-            "modified" to state.modified.size,
+            "modified" to modified.size,
+            // Which blocks the reader has changed, for the page to mark
+            // beside the doubt the reading left on them.
+            "changed" to modified.sorted(),
             // The cells selected together, for a toolbar that offers to
             // merge them, and whether the caret's cell could be split.
             "cells" to state.selectedCells().map { listOf(it.row, it.column) },

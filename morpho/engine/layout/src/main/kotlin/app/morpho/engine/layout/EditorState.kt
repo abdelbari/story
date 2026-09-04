@@ -266,6 +266,16 @@ class EditorState private constructor(
             origin == null || document.blocks[at] != opened.blocks[origin]
         }
 
+    /**
+     * The blocks the reading was not sure of — the Fidelity Report's
+     * doubtful bands, by index as the document now stands — for the
+     * filter that jumps between them. A block's doubt is the reading's,
+     * and an edit does not settle it; [modified] says which the reader
+     * has touched.
+     */
+    fun doubtful(): List<Int> =
+        document.blocks.indices.filter { FidelityReport.bandOf(document.blocks[it].confidence) != FidelityReport.Band.HIGH }
+
     /** The paragraph the caret stands in. */
     fun paragraphAt(caret: Caret): Paragraph = document.paragraphAt(normalised(caret))
 

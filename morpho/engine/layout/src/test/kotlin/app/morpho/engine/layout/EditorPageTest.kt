@@ -22,6 +22,7 @@ class EditorPageTest {
             Paragraph(
                 listOf(TextRun("الاستمارة في البحث العلمي"), TextRun(" and English", italic = true)),
                 ParagraphStyle(direction = TextDirection.RTL),
+                confidence = 0.6f,
             ),
             Table(listOf(TableRow(listOf(TableCell(listOf(Paragraph(listOf(TextRun("cell"))))))))),
             Paragraph(listOf(TextRun("last one")), ParagraphStyle(kind = ParagraphKind.HEADING_2)),

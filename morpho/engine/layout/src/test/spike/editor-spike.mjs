@@ -136,6 +136,21 @@ await p.keyboard.press('Enter'); await p.keyboard.type('item two'); await check(
   await p.keyboard.press('Shift+Tab'); await check('and out again');
   assert.equal(await p.evaluate(() => window.morphoEditor.paragraph().listLevel), 0);
 }
+// The doubt the reading left on a block is a band in the margin, green once the block is changed,
+// and the filter jumps between the doubtful blocks.
+{
+  const t0 = await truth();
+  const arabic = t0.texts.findIndex(t => typeof t === 'string' && t.includes('الاستمارة'));
+  assert.deepEqual(await p.evaluate(() => window.morphoEditor.doubtful()), [arabic], 'one block to doubt');
+  const band = await p.evaluate(i => document.querySelectorAll('[data-block]')[i].getAttribute('data-band'), arabic);
+  assert.equal(band, 'medium');
+  const changedBefore = await p.evaluate(i => document.querySelectorAll('[data-block]')[i].classList.contains('changed'), arabic);
+  assert.equal(changedBefore, true, 'changed already, having been typed into earlier');
+  await select([0, 0]);
+  const jumped = await p.evaluate(() => window.morphoEditor.nextDoubtful()); await check('jumped to the next doubtful block');
+  assert.equal(jumped, arabic);
+  assert.deepEqual((await truth()).selection, [[arabic, 0], [arabic, 0]]);
+}
 // Timing: two hundred keystrokes, one round trip each.
 const started = Date.now();
 await p.keyboard.type('abcdefghij'.repeat(20)); await settled();

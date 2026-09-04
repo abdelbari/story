@@ -298,6 +298,17 @@ class EditorStateTest {
     // ---- finding and replacing ----
 
     @Test
+    fun `the blocks to doubt are the report's, as the document now stands, and an edit does not settle one`() {
+        val state = EditorState.open(doc(p("sure"), p("read").copy(confidence = 0.6f), p("guessed").copy(confidence = 0.5f), p("also sure")))
+        assertEquals(listOf(1, 2), state.doubtful())
+        val split = state.at(0, 2).splitParagraph()
+        assertEquals(listOf(2, 3), split.doubtful(), "by index as the document now stands")
+        val fixed = state.at(1, 4).type("!")
+        assertEquals(listOf(1, 2), fixed.doubtful(), "still to doubt, the reading's doubt being the reading's")
+        assertEquals(setOf(1), fixed.modified, "but known to have been touched")
+    }
+
+    @Test
     fun `how a selection is set is what every run of it shares`() {
         val state = EditorState.open(doc(p(r("plain "), r("bold", bold = true), r("", link = "https://x").copy(image = picture())), p(r("also bold", bold = true, link = "https://x"))))
         assertTrue(state.lookOf(Selection(Caret(0, 6), Caret(0, 10))).bold, "bold alone")

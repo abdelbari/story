@@ -92,8 +92,9 @@ object HtmlWriter {
             remarks.set(if (comments) Remarks.of(document) else Remarks.NONE)
             editing.set(true)
             val sb = StringBuilder()
-            val mark = markOf(index)
-            when (val block = document.blocks[index]) {
+            val block = document.blocks[index]
+            val mark = markOf(index, block)
+            when (block) {
                 is Paragraph -> appendParagraph(
                     sb, block, document.defaultDirection, asListItem = block.style.listMarker != null, mark = mark,
                 )
@@ -156,11 +157,19 @@ object HtmlWriter {
         return sb.toString()
     }
 
-    /** What the editor's page needs beyond the document's own style. */
+    /**
+     * What the editor's page needs beyond the document's own style —
+     * among it the band in the margin beside a block the reading was
+     * not sure of, amber for a doubt and red for a recognition, which
+     * turns green once the reader has changed the block.
+     */
     private const val EDITOR_CSS =
         "#doc{outline:none;min-height:60vh;}" +
             "[data-block]:empty{min-height:1.6em;}" +
-            "#doc td,#doc th{min-width:2em;}"
+            "#doc td,#doc th{min-width:2em;}" +
+            "#doc [data-band]{border-inline-start:4px solid #e0a000;padding-inline-start:8px;margin-inline-start:-12px;}" +
+            "#doc [data-band=low]{border-inline-start-color:#d03030;}" +
+            "#doc [data-band].changed{border-inline-start-color:#2a9d4a;}"
 
     /** The editor's script, kept beside the writer that writes the page it runs in. */
     private fun editorScript(): String =
@@ -168,8 +177,19 @@ object HtmlWriter {
             ?.use { it.readBytes().toString(Charsets.UTF_8) }
             ?: throw IllegalStateException("the editor's script is not on the classpath")
 
-    /** The attribute that says which block of the body an element is. */
-    private fun markOf(index: Int): String = """ data-block="$index""""
+    /**
+     * The attributes that say which block of the body an element is —
+     * and, in the editor's markup, how much to doubt it, where there is
+     * doubt: the Fidelity Report's band, for the band the page draws in
+     * the margin and the filter that jumps between doubtful blocks. A
+     * block read for certain says nothing, being most of them.
+     */
+    private fun markOf(index: Int, block: Block): String {
+        val mark = """ data-block="$index""""
+        if (!editing.get()) return mark
+        val band = FidelityReport.bandOf(block.confidence)
+        return if (band == FidelityReport.Band.HIGH) mark else mark + """ data-band="${band.name.lowercase()}""""
+    }
 
     /** A tab the editor's page counts and nobody sees; see [appendTabbed]. */
     private const val HIDDEN_TAB = """<span data-tab style="display:inline-block;width:0;overflow:hidden">""" + "\t</span>"
@@ -385,7 +405,7 @@ object HtmlWriter {
         }
 
         for ((index, block) in blocks.withIndex()) {
-            val mark = if (marked) markOf(index) else ""
+            val mark = if (marked) markOf(index, block) else ""
             // A part of the document set on a sheet of its own opens here
             // and runs to the next one, or to the end.
             val sheet = (block as? Paragraph)?.style?.sectionSetup?.let { shapes[it] }
