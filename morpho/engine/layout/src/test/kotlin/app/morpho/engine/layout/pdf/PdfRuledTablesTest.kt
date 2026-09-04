@@ -343,6 +343,76 @@ class PdfRuledTablesTest {
         )
     }
 
+    /** A two-column grid of [rows] rows between [x0] and [x2], divided at [x1]. */
+    private fun beside(x0: Float, x1: Float, x2: Float, top: Float, rows: Int): List<PdfDrawing> {
+        val out = mutableListOf<PdfDrawing>()
+        for (r in 0..rows) {
+            val y = top + r * 30f
+            out += PdfDrawing(1, x0, y - 0.4f, x2, y + 0.4f)
+        }
+        for (x in listOf(x0, x1, x2)) out += PdfDrawing(1, x - 0.4f, top, x + 0.4f, top + rows * 30f)
+        return out
+    }
+
+    /** One line of text with a piece of it in each of the places given. */
+    private fun across(y: Float, vararg pieces: Triple<String, Float, Float>): PdfLine {
+        val segments = pieces.map { PdfSegment(it.first, it.second, it.third) }
+        return PdfLine(
+            text = segments.joinToString(" ") { it.text },
+            x = segments.first().xStart,
+            baselineY = y,
+            maxFontSize = 11f,
+            page = 1,
+            xEnd = segments.last().xEnd,
+            segments = segments,
+        )
+    }
+
+    @Test
+    fun `two tables set beside each other are two tables, not one with a gap down it`() {
+        // The other way two grids share a page. Their sides stand at the
+        // same height, so reading a grid by the height of its sides puts
+        // both in one band: five columns, the middle one the space between
+        // the tables, empty on every row. What tells them apart is that no
+        // line across reaches from the last side of the first table to the
+        // first side of the second — each table rules its own.
+        val lines = listOf(
+            across(60f, Triple("A heading over the pair of them", 60f, 400f)),
+            across(
+                108f, Triple("Term", 66f, 100f), Triple("Got", 156f, 190f),
+                Triple("Term", 326f, 360f), Triple("Lost", 416f, 450f),
+            ),
+            across(
+                138f, Triple("Autumn", 66f, 110f), Triple("148", 156f, 180f),
+                Triple("Autumn", 326f, 370f), Triple("12", 416f, 440f),
+            ),
+            across(200f, Triple("A closing note under both of the tables", 60f, 420f)),
+        )
+        val drawings = beside(60f, 150f, 240f, 90f, 2) + beside(320f, 410f, 500f, 90f, 2)
+        val model = PdfLayout.reconstruct(lines, confidence = 0.6f, drawings = drawings)
+        assertEquals(
+            listOf("Paragraph", "Table", "Table", "Paragraph"),
+            model.blocks.map { it::class.simpleName },
+            "blocks: " + model.blocks.map { it::class.simpleName },
+        )
+        val tables = model.blocks.filterIsInstance<Table>()
+        assertTrue(
+            tables.all { table -> table.rows.all { it.cells.size == 2 } },
+            "a table gained the space between the two as a column: " +
+                tables.map { t -> t.rows.map { it.cells.size } },
+        )
+        fun cell(table: Table, row: Int, column: Int) = table.rows[row].cells[column]
+            .blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }
+        assertEquals("Got", cell(tables[0], 0, 1), "the left table lost its head")
+        assertEquals("Lost", cell(tables[1], 0, 1), "the right table lost its head")
+        assertEquals("12", cell(tables[1], 1, 1), "the right table lost a figure")
+        // And the lines the two tables share are not written out twice.
+        assertEquals(
+            listOf("A heading over the pair of them", "A closing note under both of the tables"),
+            model.blocks.filterIsInstance<Paragraph>().map { it.text },
+        )
+    }
+
     @Test
     fun `a rule that stands in no grid is not a line of one`() {
         // The other half of reading grids apart: a rule under a heading, or

@@ -115,9 +115,8 @@ object PdfRuledTables {
      * across; one that stands in none — a rule under a heading, the line
      * over a footer — belongs to no table and is left where it is.
      *
-     * Tables set side by side are still read as one, their sides being at
-     * the same height on the page; it is the sides, not the levels, that
-     * say where a grid is.
+     * Tables set beside each other stand at the same height, so their
+     * sides fall in the one band and [apart] divides them again.
      */
     private fun gridsOf(uprights: List<PdfDrawing>, levels: List<PdfDrawing>): List<Grid> {
         if (uprights.isEmpty() || levels.isEmpty()) return emptyList()
@@ -127,18 +126,46 @@ object PdfRuledTables {
             if (last != null && upright.top - last.maxOf { it.bottom } <= SAME_GRID_PT) last += upright
             else bands += mutableListOf(upright)
         }
-        return bands.map { band ->
-            val top = band.minOf { it.top } - SAME_GRID_PT
-            val bottom = band.maxOf { it.bottom } + SAME_GRID_PT
-            val left = band.minOf { it.left } - SAME_GRID_PT
-            val right = band.maxOf { it.right } + SAME_GRID_PT
-            Grid(
-                uprights = band,
-                levels = levels.filter {
-                    (it.top + it.bottom) / 2 in top..bottom && it.right >= left && it.left <= right
-                },
-            )
-        }.filter { it.levels.isNotEmpty() }
+        return bands.flatMap { apart(it, levels) }
+    }
+
+    /**
+     * The grids a [band] of sides at the one height holds.
+     *
+     * One, on nearly every page: a table's lines across run from one of
+     * its sides to the next, so every side is tied to the side beside it
+     * and the whole band is the one grid. Two tables set beside each
+     * other rule their own lines and neither's reach the other's, so
+     * nothing ties the last side of the first to the first side of the
+     * second, and the band divides there.
+     *
+     * It is the reach of the lines across that says this, not the space
+     * between the sides: a table may have a column wider than the gap
+     * between two tables, and a page that rules cell by cell draws each
+     * line across one cell wide, which ties each side to the next just
+     * the same.
+     */
+    private fun apart(band: List<PdfDrawing>, levels: List<PdfDrawing>): List<Grid> {
+        val top = band.minOf { it.top } - SAME_GRID_PT
+        val bottom = band.maxOf { it.bottom } + SAME_GRID_PT
+        val own = levels.filter { (it.top + it.bottom) / 2 in top..bottom }
+        if (own.isEmpty()) return emptyList()
+        val places = merged(band) { (it.left + it.right) / 2 }
+        val cuts = mutableListOf(0)
+        for (at in 1 until places.size) {
+            val tied = own.any {
+                it.left <= places[at - 1] + SAME_GRID_PT && it.right >= places[at] - SAME_GRID_PT
+            }
+            if (!tied) cuts += at
+        }
+        cuts += places.size
+        return (0 until cuts.size - 1).mapNotNull { grid ->
+            val from = places[cuts[grid]] - SAME_GRID_PT
+            val to = places[cuts[grid + 1] - 1] + SAME_GRID_PT
+            val sides = band.filter { (it.left + it.right) / 2 in from..to }
+            val across = own.filter { it.right >= from && it.left <= to }
+            if (sides.isEmpty() || across.isEmpty()) null else Grid(sides, across)
+        }
     }
 
     /** The distinct places [drawn] put a line, near-identical ones counted once. */
