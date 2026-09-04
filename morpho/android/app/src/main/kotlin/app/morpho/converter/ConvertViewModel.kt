@@ -130,6 +130,13 @@ data class ReviewState(
      * then not what sits above it on the page.
      */
     val joinable: Set<Int> = emptySet(),
+    /**
+     * The blocks that can be put back. Not quite every block in [dropped]:
+     * a join is given back from the outside in, so one whose words have
+     * since moved further up waits its turn, and the row says so rather
+     * than offering a button that does nothing.
+     */
+    val restorable: Set<Int> = emptySet(),
 ) {
     /** How many corrections the reader has made, of either kind. */
     val fixes: Int get() = (edited + dropped).size
@@ -303,7 +310,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     fun showReview() {
         val report = lastReport ?: return
         val made = edits ?: return
-        _review.value = ReviewState(report, made.corrected, made.removed, made.joinable)
+        _review.value = ReviewState(report, made.corrected, made.removed, made.joinable, made.restorable)
     }
 
     fun hideReview() = leaveReview()
@@ -363,7 +370,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         lastReport = report
         correctedSinceWrite = true
         previewIsStale = true
-        _review.value = ReviewState(report, now.corrected, now.removed, now.joinable)
+        _review.value = ReviewState(report, now.corrected, now.removed, now.joinable, now.restorable)
     }
 
     /**

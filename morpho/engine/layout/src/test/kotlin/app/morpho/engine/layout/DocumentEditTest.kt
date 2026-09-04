@@ -170,4 +170,112 @@ class DocumentEditTest {
             assertTrue(now.fixes <= size, "more blocks were counted as fixed than there are blocks")
         }
     }
+
+    @Test
+    fun `putting back a block a join took undoes the join`() {
+        // Without this the row's one offer is a trap: a join takes a
+        // block's words into the paragraph above and takes the block out,
+        // so putting the block back on its own would write its words
+        // twice, once above and once alone, with nothing in the file to
+        // say which was meant.
+        val was = edit("The committee found that the form", "had been received in time.", "A separate finding.")
+        val joined = was.joinUp(1)
+        val now = joined.restore(1)
+
+        assertEquals(
+            listOf("The committee found that the form", "had been received in time.", "A separate finding."),
+            texts(now),
+        )
+        assertFalse(now.touched, "undoing a join left the document counted as edited")
+        assertEquals(emptyMap<Int, DocumentEdit.Join>(), now.joins)
+    }
+
+    @Test
+    fun `undoing a join keeps a correction the block above already had`() {
+        val was = edit("The frst half", "and the second.").retext(0, "The first half")
+        val now = was.joinUp(1).restore(1)
+        assertEquals(listOf("The first half", "and the second."), texts(now))
+        assertEquals(setOf(0), now.corrected, "the correction made before the join was lost with it")
+    }
+
+    @Test
+    fun `a block taken out by hand comes back without disturbing anything`() {
+        val was = edit("one", "two", "three")
+        assertEquals(listOf("one", "three"), texts(was.remove(1)))
+        assertEquals(listOf("one", "two", "three"), texts(was.remove(1).restore(1)))
+    }
+
+    @Test
+    fun `a join cannot be given back while its words have moved further up`() {
+        // Found by the fuzz below, not by hand. Joining the third block
+        // into the second and then the second into the first leaves the
+        // third block's words in the first. Putting the third back on its
+        // own would then say them twice, once where they ended up and once
+        // alone, and nothing in the file would say which was meant.
+        val was = edit("one", "two", "three")
+        val joined = was.joinUp(2).joinUp(1)
+        assertEquals(listOf("one two three"), texts(joined))
+        assertSame(joined, joined.restore(2), "the inner join was given back out of order")
+        // Undone from the outside in, both come back.
+        val now = joined.restore(1).restore(2)
+        assertEquals(listOf("one", "two", "three"), texts(now))
+        assertFalse(now.touched)
+    }
+
+    @Test
+    fun `a join cannot be given back once the same block has taken another`() {
+        // The other way the fuzz found, and the one that loses text rather
+        // than doubling it: two blocks joined into the same one, in the
+        // order a reader mending a paragraph broken over two pages would.
+        // Giving back the first would put back the paragraph as it was
+        // before it, over the second join's words, and they would be gone.
+        val was = edit("one", "two", "three")
+        val joined = was.joinUp(1).joinUp(2)
+        assertEquals(listOf("one two three"), texts(joined))
+        assertSame(joined, joined.restore(1), "the first join was given back over the second")
+        val now = joined.restore(2).restore(1)
+        assertEquals(listOf("one", "two", "three"), texts(now))
+        assertFalse(now.touched)
+    }
+
+    @Test
+    fun `joining and undoing in any order leaves the words said once`() {
+        // The property the whole thing exists for: however a reader joins
+        // and puts back, no block's words appear twice in what is written.
+        val rng = kotlin.random.Random(20260907)
+        repeat(2000) {
+            val size = rng.nextInt(2, 6)
+            var now = DocumentEdit(DocumentModel(List(size) { body("block $it") }))
+            repeat(rng.nextInt(1, 8)) {
+                val at = rng.nextInt(0, size)
+                now = if (rng.nextBoolean()) now.joinUp(at) else now.restore(at)
+            }
+            val written = now.asWritten.blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }
+            for (block in 0 until size) {
+                assertEquals(
+                    1, Regex("block $block\\b").findAll(written).count(),
+                    "\"block $block\" is not said exactly once in \"$written\"",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `what can be put back is exactly what putting back would change`() {
+        val was = edit("one", "two", "three", "four")
+        assertEquals(emptySet<Int>(), was.restorable, "nothing was taken out")
+        assertEquals(setOf(2), was.remove(2).restorable)
+        // Two joins into the same block: only the later one can be given
+        // back, and once it is, the earlier one can.
+        val joined = was.joinUp(1).joinUp(2)
+        assertEquals(setOf(2), joined.restorable, "the screen would offer a button that does nothing")
+        assertEquals(setOf(1), joined.restore(2).restorable)
+        // And it never claims more than it can do.
+        for (at in joined.removed) {
+            assertEquals(
+                at in joined.restorable, joined.restore(at) !== joined,
+                "block $at is offered and refused, or refused and taken",
+            )
+        }
+    }
 }

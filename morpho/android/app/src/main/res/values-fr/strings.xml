@@ -52,6 +52,7 @@
     <string name="review_remove">Retirer</string>
     <string name="review_put_back">Le remettre</string>
     <string name="review_removed">Retiré</string>
+    <string name="review_joined">Joint à celui du dessus</string>
     <string name="review_join_up">Joindre à celui du dessus</string>
     <string name="about_open">À propos et licences</string>
     <string name="about_title">À propos de Morpho</string>

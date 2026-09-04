@@ -58,6 +58,7 @@
     <string name="review_remove">Remove</string>
     <string name="review_put_back">Put it back</string>
     <string name="review_removed">Removed</string>
+    <string name="review_joined">Joined into the one above</string>
     <string name="review_join_up">Join to the one above</string>
     <string name="about_open">About &amp; licenses</string>
     <string name="about_title">About Morpho</string>

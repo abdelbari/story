@@ -52,6 +52,7 @@
     <string name="review_remove">Entfernen</string>
     <string name="review_put_back">Zurückholen</string>
     <string name="review_removed">Entfernt</string>
+    <string name="review_joined">Mit dem darüber verbunden</string>
     <string name="review_join_up">Mit dem darüber verbinden</string>
     <string name="about_open">Über die App und Lizenzen</string>
     <string name="about_title">Über Morpho</string>

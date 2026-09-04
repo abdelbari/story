@@ -29,7 +29,29 @@ data class DocumentEdit(
     val corrected: Set<Int> = emptySet(),
     /** Blocks the reader took out. Still here; left out of [asWritten]. */
     val removed: Set<Int> = emptySet(),
+    /**
+     * What each join took, kept so that a join can be undone.
+     *
+     * A join takes one block's words into the block above and takes the
+     * first block out — so putting that block back, which is the one thing
+     * the row offers, would put its words in the document twice, once in
+     * the paragraph above and once on their own. Nothing in the file would
+     * say which was meant. So a block a join consumed remembers what the
+     * block above looked like before, and putting it back puts that back
+     * too.
+     */
+    val joins: Map<Int, Join> = emptyMap(),
 ) {
+
+    /** What a join took from the block above it, so it can be given back. */
+    data class Join(
+        /** The block the words went into. */
+        val into: Int,
+        /** That block as it was before they did. */
+        val before: Paragraph,
+        /** Whether it was already marked corrected, so undoing does not unmark it. */
+        val wasCorrected: Boolean,
+    )
 
     /** How many blocks the reader has changed, of either kind. */
     val fixes: Int get() = (corrected + removed).size
@@ -48,6 +70,17 @@ data class DocumentEdit(
         get() =
             if (removed.isEmpty()) document
             else document.copy(blocks = document.blocks.filterIndexed { at, _ -> at !in removed })
+
+    /**
+     * The blocks that can be put back, which is not quite every block
+     * taken out: a join can only be given back from the outside in.
+     *
+     * Defined by asking the operation itself, so a screen offering to put
+     * a block back cannot come to disagree with what putting it back
+     * actually does — and a button that does nothing when pressed is
+     * worse than no button.
+     */
+    val restorable: Set<Int> get() = removed.filterTo(mutableSetOf()) { restore(it) !== this }
 
     /** The whole of what the block at [index] says, or "" where it says nothing. */
     fun textOf(index: Int): String = paragraphAt(index)?.text.orEmpty()
@@ -91,9 +124,46 @@ data class DocumentEdit(
         return copy(removed = removed + index)
     }
 
-    /** The block at [index] put back. */
-    fun restore(index: Int): DocumentEdit =
-        if (index in removed) copy(removed = removed - index) else this
+    /**
+     * The block at [index] put back — and, where a join took it, the join
+     * undone with it.
+     *
+     * Undoing rather than refusing, because the row offers to put it back
+     * and a reader who joined the wrong two paragraphs has no other way
+     * out. What comes back is what was there: the words on their own, and
+     * the paragraph above as it stood before it took them.
+     */
+    fun restore(index: Int): DocumentEdit {
+        if (index !in removed) return this
+        val join = joins[index] ?: return copy(removed = removed - index)
+        // A join can only be given back while it is still the last thing
+        // that happened to the block it gave its words to. Both ways that
+        // stops being true lose text, and the fuzz found both:
+        //
+        //  - the block it gave to has since been joined away itself, so
+        //    the words are a level further up and putting this one back
+        //    would say them twice, once there and once alone;
+        //  - the block it gave to has since taken a second join, so the
+        //    paragraph remembered from before this one would be put back
+        //    over the later join's words and lose them outright.
+        //
+        // Undoing from the outside in is the order anybody undoes anything
+        // in, and it is the only order that gives everything back. A later
+        // join into the same block always comes from a higher block than
+        // an earlier one, because everything between them has to be gone
+        // for the join to have reached it — so "later" is "higher up the
+        // document" and needs nothing counted.
+        if (join.into in removed) return this
+        if (joins.any { (at, other) -> other.into == join.into && at > index }) return this
+        val blocks = document.blocks.toMutableList()
+        blocks[join.into] = join.before
+        return copy(
+            document = document.copy(blocks = blocks),
+            corrected = if (join.wasCorrected) corrected else corrected - join.into,
+            removed = removed - index,
+            joins = joins - index,
+        )
+    }
 
     /**
      * Whether the block at [index] has a paragraph directly above it to be
@@ -133,6 +203,7 @@ data class DocumentEdit(
             document = document.copy(blocks = blocks),
             corrected = corrected + at,
             removed = removed + index,
+            joins = joins + (index to Join(at, first, wasCorrected = at in corrected)),
         )
     }
 

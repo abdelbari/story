@@ -52,6 +52,7 @@
     <string name="review_remove">احذف</string>
     <string name="review_put_back">أعده</string>
     <string name="review_removed">محذوف</string>
+    <string name="review_joined">مضموم إلى ما فوقه</string>
     <string name="review_join_up">ضمّه إلى ما فوقه</string>
     <string name="about_open">حول التطبيق والتراخيص</string>
     <string name="about_title">حول مورفو</string>

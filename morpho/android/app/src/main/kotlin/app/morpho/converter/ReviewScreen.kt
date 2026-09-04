@@ -135,6 +135,7 @@ fun ReviewScreen(
                     entry = entry,
                     edited = entry.index in state.edited,
                     dropped = entry.index in state.dropped,
+                    restorable = entry.index in state.restorable,
                     canJoinUp = entry.index in state.joinable,
                     textOf = { textOf(entry.index) },
                     onRetext = { text -> onRetext(entry.index, text) },
@@ -214,6 +215,7 @@ private fun EntryRow(
     entry: FidelityReport.Entry,
     edited: Boolean,
     dropped: Boolean,
+    restorable: Boolean,
     canJoinUp: Boolean,
     textOf: () -> String,
     onRetext: (String) -> Unit,
@@ -299,12 +301,20 @@ private fun EntryRow(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = stringResource(R.string.review_removed),
+                        text = stringResource(
+                            if (restorable) R.string.review_removed else R.string.review_joined
+                        ),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    TextButton(onClick = onRestore) {
-                        Text(stringResource(R.string.review_put_back))
+                    // Offered only where it would do something. A join is
+                    // given back from the outside in, so one whose words
+                    // have since moved further up says where they went
+                    // instead of offering a button that does nothing.
+                    if (restorable) {
+                        TextButton(onClick = onRestore) {
+                            Text(stringResource(R.string.review_put_back))
+                        }
                     }
                 }
             } else {
