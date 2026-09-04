@@ -7,8 +7,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.ui.graphics.Color
 import com.kinetic.editor.ui.EditorScreen
+import com.kinetic.editor.ui.theme.Ink
 import com.kinetic.editor.ui.EditorViewModel
 
 class MainActivity : ComponentActivity() {
@@ -21,11 +21,22 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
+            // Most of the interface is painted from Ink directly; this scheme
+            // exists for the few Material components still in use (the text
+            // field, its cursor and label) so they belong to the same palette.
             MaterialTheme(
                 colorScheme = darkColorScheme(
-                    primary = Color(0xFF35C4B5),
-                    surface = Color(0xFF0E0F13),
-                    background = Color(0xFF0E0F13),
+                    primary = Ink.accent,
+                    onPrimary = Ink.window,
+                    secondary = Ink.accent,
+                    background = Ink.window,
+                    onBackground = Ink.text,
+                    surface = Ink.surface,
+                    onSurface = Ink.text,
+                    surfaceVariant = Ink.raised,
+                    onSurfaceVariant = Ink.textMuted,
+                    outline = Ink.hairline,
+                    error = Ink.danger,
                 ),
             ) {
                 EditorScreen(editor)

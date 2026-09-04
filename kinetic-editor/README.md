@@ -437,6 +437,31 @@ with the process and a restored project could not reopen its own media.
 
 ---
 
+## 7b. The look
+
+An editor is a dark room. The interface should recede so the footage is the
+only saturated thing on screen, which is why `ui/theme/Design.kt` is near-black
+neutrals, one accent, and no Material colour scheme — Material's roles (primary
+container, tertiary) describe a form, not an editing surface, so the tokens
+here are the roles this app actually has: `window`, `surface`, `raised`,
+`hairline`, `accent`, `danger`.
+
+The accent is a warm sand rather than the electric blue every editor reaches
+for. That is a working decision as much as a stylistic one: it sits next to
+skin tones and graded footage without arguing with them, and it stays legible
+as the selection colour on a timeline full of thumbnails.
+
+Two things are drawn rather than depended on. The **icons** are line vectors on
+one 24-unit grid at one stroke weight (`KineticIcons`) — `material-icons-extended`
+is thousands of vectors to use fifteen, and its shapes would not match this
+language anyway. The **slider** is a 3dp track with a small thumb
+(`ValueSlider`), because Material's is built for a settings screen and its thumb
+is taller than some of this app's rows; the touch target is still full height,
+so it is thin to look at, not to hit.
+
+The timeline cannot reach Compose's theme machinery from inside a `Canvas`, so
+its `Palette` object is the seam: every value borrowed from the same tokens.
+
 ## 8. Project map
 
 ```
@@ -463,6 +488,7 @@ kinetic-editor/
         │   ├── model/MediaProbe.kt      import-time metadata probe
         │   └── mvi/                     EditorIntent, reduce(), EditorStore+undo
         ├── ui/
+        │   ├── theme/                   palette, type scale, icons, controls
         │   ├── timeline/                ViewportState, Geometry, Gestures, Canvas
         │   ├── preview/PreviewSurface.kt SurfaceView, PiP layer, overlay layer
         │   ├── EditorViewModel.kt       commit router (the decoupling contract)

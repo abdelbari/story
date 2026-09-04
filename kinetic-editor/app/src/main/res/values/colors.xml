@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Mirrors the Compose Palette in TimelineCanvas.kt / MainActivity.kt. -->
-    <color name="kinetic_background">#FF0E0F13</color>
-    <color name="kinetic_accent">#FF35C4B5</color>
-    <color name="kinetic_on_background">#FFEDEDF2</color>
+    <!-- Mirrors Ink in ui/theme/Design.kt. Only the window colour really
+         matters here: it is what the system paints before the first frame,
+         so a mismatch shows as a flash on launch. -->
+    <color name="kinetic_background">#FF0B0B0E</color>
+    <color name="kinetic_accent">#FFE8B87D</color>
+    <color name="kinetic_on_background">#FFECECF0</color>
 </resources>

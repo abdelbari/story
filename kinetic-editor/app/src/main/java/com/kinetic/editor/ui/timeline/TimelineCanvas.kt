@@ -43,24 +43,34 @@ import kotlinx.collections.immutable.toPersistentList
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlin.math.ceil
 import kotlin.math.max
+import androidx.compose.ui.graphics.Path
+import com.kinetic.editor.ui.theme.Ink
+import com.kinetic.editor.ui.theme.Lane
 
+/**
+ * The timeline's colours, borrowed from the app's palette rather than restated.
+ * A Canvas cannot reach Compose's theme machinery, so this object is the seam:
+ * one place, every value from [Ink] and [Lane].
+ */
 private object Palette {
-    val background = Color(0xFF0E0F13)
-    val lane = Color(0xFF191B21)
-    val clipPlaceholder = Color(0xFF2A2E38)
-    val audioFill = Color(0xFF11333A)
-    val audioWave = Color(0xFF35C4B5)
-    val textChip = Color(0xFF3A2E55)
-    val stickerChip = Color(0xFF4A3320)
-    val selection = Color(0xFFFFFFFF)
-    val handleGlyph = Color(0xFF15161A)
-    val playhead = Color(0xFFFFFFFF)
-    val rulerText = Color(0xBBFFFFFF)
-    val tick = Color(0x33FFFFFF)
-    val ghost = Color(0x66FFFFFF)
-    val transitionBadge = Color(0xFFFFC145)
-    val label = Color(0xFFEDEDF2)
-    val laneLabel = Color(0x55EDEDF2)
+    val background = Ink.window
+    val lane = Lane.bed
+    val clipPlaceholder = Lane.videoClip
+    val audioFill = Lane.audioFill
+    val audioWave = Lane.audioWave
+    val textChip = Lane.textChip
+    val stickerChip = Lane.stickerChip
+
+    /** Selection is the accent; white would compete with the playhead. */
+    val selection = Ink.accent
+    val handleGlyph = Ink.window
+    val playhead = Lane.playhead
+    val rulerText = Lane.ruler
+    val tick = Lane.tick
+    val ghost = Lane.ghost
+    val transitionBadge = Lane.transitionBadge
+    val label = Ink.text
+    val laneLabel = Ink.textFaint
 }
 
 /** What an empty lane is for. Drawn only while it is empty, so it never hides a clip. */
@@ -369,7 +379,7 @@ private fun DrawScope.drawClip(
             topLeft = rect.topLeft,
             size = rect.size,
             cornerRadius = CornerRadius(geometry.clipCornerPx),
-            style = Stroke(width = 4f),
+            style = Stroke(width = 2f * geometry.dpScale),
         )
         drawTrimHandle(rect.left, rect, geometry, leading = true)
         drawTrimHandle(rect.right, rect, geometry, leading = false)
@@ -396,8 +406,14 @@ private fun DrawScope.drawTrimHandle(x: Float, rect: Rect, geometry: TimelineGeo
 
 private fun DrawScope.drawPlayhead(geometry: TimelineGeometry) {
     val x = size.width / 2f
-    drawLine(Palette.playhead, Offset(x, 0f), Offset(x, size.height), strokeWidth = 3f)
-    drawCircle(Palette.playhead, radius = 7f, center = Offset(x, 7f))
+    val dp = geometry.dpScale
+    drawLine(Palette.playhead, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1.5f * dp)
+    // A diamond rather than a dot: it points at the frame it is sitting on.
+    val r = 5f * dp
+    val head = Path().apply {
+        moveTo(x, 0f); lineTo(x + r, r); lineTo(x, 2f * r); lineTo(x - r, r); close()
+    }
+    drawPath(head, Palette.playhead)
 }
 
 /* -------------------------------- helpers -------------------------------- */

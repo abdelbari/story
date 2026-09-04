@@ -21,6 +21,9 @@ class TimelineGeometry(
     private val dp: Float,
 ) {
 
+    /** Pixels per dp, for the few places that size a stroke rather than a box. */
+    val dpScale: Float get() = dp
+
     val rulerHeightPx = 28f * dp
     val laneGapPx = 3f * dp
     val handleWidthPx = 14f * dp
