@@ -94,6 +94,89 @@ object RecognizedText {
     }
 
     /** Whether the words of a line are read right to left. */
+    /**
+     * The cells of a ruled table gathered back into rows.
+     *
+     * Recognition reads a page that is nothing but a table as a page of
+     * text columns, and hands its cells over column by column — the whole
+     * of the rightmost column top to bottom, then the next, then the
+     * next. The same table with prose above and below it comes back a row
+     * at a time, which is why one of them reads and the other does not.
+     * This puts the first into the shape the second already has.
+     *
+     * Only inside the rectangle recognition itself ruled, and that is
+     * what makes it safe. Gathering lines by their baselines across a
+     * whole page was measured here and is ruinous: it turns a real
+     * two-column page into a bogus eight-row table and loses 134 of its
+     * 150 words. Confined to a grid the page drew, it cannot reach a page
+     * that drew none — such a page has no rules, so it comes back
+     * untouched by construction rather than by judgement.
+     *
+     * The pieces matter as much as the order. A row of a table is one
+     * line with a piece of it in each cell, and the ruled reader places
+     * the pieces rather than the line — so a row gathered without its
+     * pieces lands wholly in whichever column its middle falls in, and
+     * every other cell of that row comes back empty.
+     */
+    fun rowed(lines: List<PdfLine>, rules: List<PdfDrawing>): List<PdfLine> {
+        if (lines.isEmpty() || rules.isEmpty()) return lines
+        var out = lines
+        for ((page, drawn) in rules.groupBy { it.page }) out = rowedOnPage(out, page, drawn)
+        return out
+    }
+
+    private fun rowedOnPage(lines: List<PdfLine>, page: Int, rules: List<PdfDrawing>): List<PdfLine> {
+        val down = rules.filter { it.widthPt > 0f && it.heightPt >= LEAST_GRID_SIDE_PT }
+        if (down.size < LEAST_GRID_SIDES) return lines
+        val left = down.minOf { it.left }
+        val right = down.maxOf { it.right }
+        val top = rules.minOf { it.top }
+        val bottom = rules.maxOf { it.bottom }
+        fun inside(line: PdfLine) = line.page == page &&
+            line.x >= left - GRID_SLACK_PT && line.xEnd <= right + GRID_SLACK_PT &&
+            line.baselineY >= top - GRID_SLACK_PT && line.baselineY <= bottom + GRID_SLACK_PT
+        val within = lines.filter(::inside)
+        if (within.size < LEAST_GRID_CELLS) return lines
+        val rows = mutableListOf<MutableList<PdfLine>>()
+        for (line in within.sortedBy { it.baselineY }) {
+            val last = rows.lastOrNull()
+            if (last != null && kotlin.math.abs(last.first().baselineY - line.baselineY) <= SAME_ROW_PT) {
+                last += line
+            } else {
+                rows += mutableListOf(line)
+            }
+        }
+        // Already a line a row: recognition read this page the other way,
+        // and there is nothing to gather.
+        if (rows.size == within.size) return lines
+        val gathered = rows.map { row ->
+            val across = row.sortedBy { it.x }
+            across.first().copy(
+                text = across.joinToString(" ") { it.text },
+                xEnd = across.maxOf { it.xEnd },
+                segments = across.flatMap { line ->
+                    line.segments.ifEmpty { listOf(PdfSegment(line.text, line.x, line.xEnd)) }
+                },
+                runs = across.flatMap { it.runs },
+            )
+        }
+        return (lines.filterNot(::inside) + gathered)
+            .sortedWith(compareBy({ it.page }, { it.baselineY }, { it.x }))
+    }
+
+    /** Two sides down the page at least, or there is no grid to speak of. */
+    private const val LEAST_GRID_SIDES = 2
+    private const val LEAST_GRID_SIDE_PT = 20f
+
+    /** Fewer cells than this inside the rules and there is no table to gather. */
+    private const val LEAST_GRID_CELLS = 4
+
+    /** How far outside the rules a line may sit and still be in the table. */
+    private const val GRID_SLACK_PT = 2f
+
+    /** Baselines this close together are one row of the table. */
+    private const val SAME_ROW_PT = 6f
+
     private fun readsRightToLeft(words: List<RecognizedWord>): Boolean =
         Bidi.dominantDirection(words.joinToString(" ") { it.text }) == TextDirection.RTL
 

@@ -26,8 +26,17 @@ import kotlin.math.abs
  */
 object PdfRuledTables {
 
-    /** Thicker than this and a drawn thing is a box, not a line of a grid. */
-    private const val THIN_PT = 3f
+    /**
+     * Thicker than this and a drawn thing is a box, not a line of a grid.
+     *
+     * Public because recognition has to know it. A rule a page drew is
+     * measured here off the PDF's own path, where its thickness is what
+     * the producer asked for; a rule recognition found is the ink it saw
+     * on a rendered page, which anti-aliasing makes thicker than the rule
+     * underneath. So the hOCR reading caps its own rules at this rather
+     * than letting a number about drawn ink decide about seen ink.
+     */
+    const val THIN_PT = 3f
 
     /** Shorter than this and a drawn line is a tick, not a side of a cell. */
     private const val LEAST_SIDE_PT = 8f

@@ -357,7 +357,11 @@ class AndroidOcrReader(private val context: Context) {
             )
         }
         val model = PdfLayout.reconstruct(
-            lines = RecognizedText.linesOf(words),
+            // Gathered into rows inside whatever recognition ruled: it
+            // hands a page that is nothing but a table over column by
+            // column, and the ruled reader needs a row at a time. See
+            // [RecognizedText.rowed] for why that is safe.
+            lines = RecognizedText.rowed(RecognizedText.linesOf(words), rules),
             confidence = OCR_CONFIDENCE,
             sheets = sheets,
             drawings = rules,

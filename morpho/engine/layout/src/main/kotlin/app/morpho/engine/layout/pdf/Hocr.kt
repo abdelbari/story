@@ -155,8 +155,32 @@ object Hocr {
                 bottom = box[3] * scale,
             )
         }
-        return reaching(boxes)
+        return reaching(boxes).map(::thinned)
     }
+
+    /**
+     * A rule no thicker than the reader admits.
+     *
+     * What recognition reports is the ink it saw on a page rendered at
+     * two hundred to the inch, and anti-aliasing makes that wider than
+     * the rule underneath it — the same rules measure 1.1 points on one
+     * of these pages and 3.2 on another, drawn at 0.9 and 1.0. The
+     * reader's limit is about telling a rule from a filled box in a PDF,
+     * where the thickness is the number the producer asked for and means
+     * something. Here it does not, so a rule that is long in one
+     * direction is thinned in the other rather than thrown away for
+     * being a shade too fat.
+     */
+    private fun thinned(box: PdfDrawing): PdfDrawing = when {
+        box.widthPt >= LEAST_RULE_PT && box.heightPt > PdfRuledTables.THIN_PT ->
+            box.copy(bottom = box.top + PdfRuledTables.THIN_PT)
+        box.heightPt >= LEAST_RULE_PT && box.widthPt > PdfRuledTables.THIN_PT ->
+            box.copy(right = box.left + PdfRuledTables.THIN_PT)
+        else -> box
+    }
+
+    /** Long enough in one direction to be a side of a cell rather than a mark. */
+    private const val LEAST_RULE_PT = 20f
 
     /** The rules across the page given the reach of the rules down it. */
     private fun reaching(boxes: List<PdfDrawing>): List<PdfDrawing> {

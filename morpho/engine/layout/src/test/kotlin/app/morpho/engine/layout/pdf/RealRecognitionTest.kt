@@ -1,5 +1,6 @@
 package app.morpho.engine.layout.pdf
 
+import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.ParagraphKind
 import app.morpho.engine.layout.Table
@@ -115,13 +116,19 @@ class RealRecognitionTest {
         assertTrue(words.all { it.sizePt != null }, "recognition measured every line, and one was dropped")
     }
 
-    /** The reading with recognition's own rules handed to it. */
-    private fun ruledReadingOf(name: String) = PdfLayout.reconstruct(
-        lines = RecognizedText.linesOf(Hocr.wordsOf(page(name), page = 1, dpi = dpi)),
-        confidence = 0.5f,
-        sheets = listOf(PdfPageSheet(1, 595.3f, 841.9f)),
-        drawings = Hocr.rulesOf(page(name), page = 1, dpi = dpi),
-    )
+    /** The reading with recognition's own rules handed to it, as the app does it. */
+    private fun ruledReadingOf(name: String): DocumentModel {
+        val rules = Hocr.rulesOf(page(name), page = 1, dpi = dpi)
+        return PdfLayout.reconstruct(
+            lines = RecognizedText.rowed(
+                RecognizedText.linesOf(Hocr.wordsOf(page(name), page = 1, dpi = dpi)),
+                rules,
+            ),
+            confidence = 0.5f,
+            sheets = listOf(PdfPageSheet(1, 595.3f, 841.9f)),
+            drawings = rules,
+        )
+    }
 
     @Test
     fun `a ruled table on a page of prose comes back a table`() {
@@ -260,6 +267,53 @@ class RealRecognitionTest {
         assertTrue(
             written.substringAfterLast("|").contains("agreed that the figures"),
             "the prose after the table was lost or pulled into it",
+        )
+    }
+
+    @Test
+    fun `a table alone on a page is gathered back into its rows`() {
+        // The page that was lost, and the reason it was: recognition reads
+        // a page that is nothing but a table as a page of text columns and
+        // hands its cells over column by column. Gathered back into rows
+        // inside the rectangle it ruled, it reads.
+        val table = ruledReadingOf("a-ruled-table").blocks.filterIsInstance<Table>().singleOrNull()
+        assertTrue(table != null, "no table on a page that is nothing but one")
+        assertEquals(5, table!!.rows.size, "the table did not come back with its five rows")
+        fun cell(row: Int, column: Int) = table.rows[row].cells.getOrNull(column)
+            ?.blocks?.filterIsInstance<Paragraph>()?.joinToString(" ") { it.text }?.trim().orEmpty()
+        assertEquals("Section", cell(0, 0))
+        assertEquals("Item", cell(0, 1))
+        assertEquals("Share", cell(0, 2))
+        assertEquals("Design", cell(1, 0))
+        assertEquals("80%", cell(1, 2))
+        // The cell under Design is the same cell: the page ruled it once
+        // and wrote in it once, so the row below carries no heading of its
+        // own and comes back empty rather than repeating it.
+        assertEquals("", cell(2, 0), "a merged cell was filled in twice")
+        assertEquals("Vague", cell(2, 1))
+    }
+
+    @Test
+    fun `gathering rows cannot reach a page that drew no rules`() {
+        // The safety of it, by construction rather than by judgement:
+        // gathering lines by their baselines across a whole page is
+        // ruinous — measured here at 134 of 150 words lost on a real
+        // two-column page — so it happens only inside a rectangle
+        // recognition ruled, and a page with no rules has none.
+        for (name in listOf("two-columns", "three-columns")) {
+            val lines = RecognizedText.linesOf(Hocr.wordsOf(page(name), page = 1, dpi = dpi))
+            assertEquals(
+                lines, RecognizedText.rowed(lines, Hocr.rulesOf(page(name), page = 1, dpi = dpi)),
+                "$name was gathered, and it has no grid to gather inside",
+            )
+        }
+        // And a page whose table recognition already read a row at a time
+        // is left alone too: there is nothing to gather.
+        val prose = RecognizedText.linesOf(Hocr.wordsOf(page("prose-and-a-table"), page = 1, dpi = dpi))
+        assertEquals(
+            prose.size,
+            RecognizedText.rowed(prose, Hocr.rulesOf(page("prose-and-a-table"), page = 1, dpi = dpi)).size,
+            "a page already read a row at a time was gathered again",
         )
     }
 }
