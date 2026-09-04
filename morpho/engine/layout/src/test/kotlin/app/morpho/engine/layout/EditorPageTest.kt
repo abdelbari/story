@@ -25,6 +25,7 @@ class EditorPageTest {
             ),
             Table(listOf(TableRow(listOf(TableCell(listOf(Paragraph(listOf(TextRun("cell"))))))))),
             Paragraph(listOf(TextRun("last one")), ParagraphStyle(kind = ParagraphKind.HEADING_2)),
+            Paragraph(listOf(TextRun("Name:\tvalue")), ParagraphStyle(tabStopsPt = listOf(100f))),
         ),
         comments = listOf(Comment(1, "a remark")),
     )

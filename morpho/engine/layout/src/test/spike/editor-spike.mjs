@@ -62,6 +62,54 @@ await p.keyboard.press('Enter'); await p.keyboard.type('item two'); await check(
   await p.evaluate(() => window.morphoEditor.replaceAll('Now', 'Then')); const t2 = await check('replaced everywhere');
   assert.ok(t2.texts[0].endsWith('Then'), 'replaced in the first paragraph');
 }
+// Cells selected together are whole cells: Backspace empties them, typing fills the first,
+// Tab moves on with the next cell selected whole, and two cells become one and two again.
+{
+  const before = await truth();
+  const tb = before.texts.findIndex(t => Array.isArray(t) && t.length >= 2 && t[0].length >= 2);
+  assert.ok(tb >= 0, 'a table of two rows and two columns to work in');
+  const rows = before.texts[tb].length;
+  await select([tb, 0, 0, 0, 0], [tb, 0, 1, 1, 0]); const s1 = await check('a selection across cells');
+  assert.deepEqual(s1.selection, [[tb, 0, 0, 0, 0], [tb, 0, 1, 1, 0]], 'the selection stands as it was made');
+  await p.keyboard.press('Backspace'); const s2 = await check('Backspace empties the cells');
+  assert.deepEqual(s2.texts[tb].slice(0, 2).map(r => r.slice(0, 2)), [[[''], ['']], [[''], ['']]]);
+  await p.keyboard.type('one'); await check('typed into the first of them');
+  await p.keyboard.press('Tab'); const s3 = await check('Tab selects the next cell whole');
+  assert.deepEqual(s3.selection, [[tb, 0, 0, 1, 0], [tb, 0, 0, 1, 0]], 'an empty cell, so the selection is a caret');
+  await p.keyboard.type('two'); await p.keyboard.press('Shift+Tab'); const s4 = await check('Shift+Tab back, the cell selected whole');
+  assert.deepEqual(s4.selection, [[tb, 0, 0, 0, 0], [tb, 3, 0, 0, 0]]);
+  await p.keyboard.type('uno'); await check('typed over the cell');
+  await select([tb, 0, 0, 0, 0], [tb, 0, 0, 1, 0]); await p.evaluate(() => window.morphoEditor.mergeCells()); const s5 = await check('two cells merged');
+  assert.equal(s5.texts[tb][0].length, s1.texts[tb][0].length - 1, 'one cell fewer in the row');
+  assert.deepEqual(s5.texts[tb][0][0], ['uno', 'two'], 'holding both their paragraphs');
+  await p.keyboard.type('!'); await check('typed in the merged cell');
+  await p.evaluate(() => window.morphoEditor.splitCell()); const s6 = await check('split again');
+  assert.equal(s6.texts[tb][0].length, s1.texts[tb][0].length);
+  const lastRow = s6.texts[tb].length - 1, lastCell = s6.texts[tb][lastRow].length - 1;
+  await select([tb, 0, lastRow, lastCell, 0]); await p.keyboard.press('Tab'); const s7 = await check('Tab from the last cell adds a row');
+  assert.equal(s7.texts[tb].length, rows + 1);
+}
+// A tab typed into a paragraph set to tab stops is a character the page counts.
+{
+  const tabbed = (await truth()).texts.findIndex(t => typeof t === 'string' && t.startsWith('Name:'));
+  assert.ok(tabbed >= 0, 'the tab-stopped paragraph');
+  await select([tabbed, 5]); await p.keyboard.press('Tab'); const s = await check('a tab typed at a stop');
+  assert.equal(s.texts[tabbed], 'Name:\t\tvalue');
+  await p.keyboard.type('x'); const s2 = await check('typed after the tab');
+  assert.equal(s2.texts[tabbed], 'Name:\tx\tvalue');
+  await select([tabbed, 1]); await p.keyboard.type('a'); await check('typed before the tabs');
+}
+// Tab at the head of an item of a list moves it a level in, and Shift+Tab out.
+{
+  const one = (await truth()).texts.findIndex(t => t === ' one');
+  assert.ok(one >= 0, 'the paragraph to make an item of');
+  await select([one, 0]); await p.evaluate(() => window.morphoEditor.restyle({ listMarker: 'NUMBERED' })); await check('made a numbered item');
+  await p.keyboard.press('Tab'); const s1 = await check('an item moved a level in');
+  assert.equal(s1.texts[one], ' one', 'no tab typed into it');
+  assert.equal(await p.evaluate(() => window.morphoEditor.paragraph().listLevel), 1);
+  await p.keyboard.press('Shift+Tab'); await check('and out again');
+  assert.equal(await p.evaluate(() => window.morphoEditor.paragraph().listLevel), 0);
+}
 // Timing: two hundred keystrokes, one round trip each.
 const started = Date.now();
 await p.keyboard.type('abcdefghij'.repeat(20)); await settled();

@@ -39,6 +39,13 @@ object HtmlWriter {
     private val remarks = ThreadLocal<Remarks>()
 
     /**
+     * Whether the markup being written is the editor's, in which every
+     * character of a paragraph must be present to be counted — a tab a
+     * stop places included; see [appendTabbed]. The preview's is not.
+     */
+    private val editing = ThreadLocal.withInitial { false }
+
+    /**
      * [document] as a page.
      *
      * With [comments] false the notes people left about it are left out —
@@ -83,6 +90,7 @@ object HtmlWriter {
         try {
             noteNumbers.set(numberNotes(document.blocks))
             remarks.set(if (comments) Remarks.of(document) else Remarks.NONE)
+            editing.set(true)
             val sb = StringBuilder()
             val mark = markOf(index)
             when (val block = document.blocks[index]) {
@@ -96,6 +104,7 @@ object HtmlWriter {
         } finally {
             noteNumbers.remove()
             remarks.remove()
+            editing.remove()
         }
 
     /**
@@ -108,12 +117,14 @@ object HtmlWriter {
         try {
             noteNumbers.set(numberNotes(document.blocks))
             remarks.set(if (comments) Remarks.of(document) else Remarks.NONE)
+            editing.set(true)
             val sb = StringBuilder()
             appendBlocks(sb, document.blocks, document.defaultDirection, sectionShapes(document), marked = true)
             sb.toString()
         } finally {
             noteNumbers.remove()
             remarks.remove()
+            editing.remove()
         }
 
     /**
@@ -159,6 +170,9 @@ object HtmlWriter {
 
     /** The attribute that says which block of the body an element is. */
     private fun markOf(index: Int): String = """ data-block="$index""""
+
+    /** A tab the editor's page counts and nobody sees; see [appendTabbed]. */
+    private const val HIDDEN_TAB = """<span data-tab style="display:inline-block;width:0;overflow:hidden">""" + "\t</span>"
 
     /**
      * What was said about the document, numbered in the order the text
@@ -544,7 +558,7 @@ object HtmlWriter {
         }
         val stops = paragraph.style.tabStopsPt?.filter { it > 0f }?.sorted().orEmpty()
         if (stops.isNotEmpty() && paragraph.runs.any { '\t' in it.text }) {
-            appendTabbed(sb, paragraph.runs, stops, effective)
+            appendTabbed(sb, paragraph.runs, stops, effective, kept = editing.get())
         } else {
             for (run in paragraph.runs) appendRun(sb, run, effective)
         }
@@ -558,12 +572,19 @@ object HtmlWriter {
      * edge, which is where a tab takes the text in Word. HTML has no tab
      * stops of its own; a stretch past the last stop follows the one
      * before it.
+     *
+     * The tab character has no place in the preview's markup. In the
+     * editor's, every character of the paragraph must be there to be
+     * counted, since the page and the engine agree on where a caret is
+     * by counting; so there each tab is [kept], out of sight, where the
+     * stretch after it begins.
      */
     private fun appendTabbed(
         sb: StringBuilder,
         runs: List<TextRun>,
         stops: List<Float>,
         paragraphDirection: TextDirection,
+        kept: Boolean,
     ) {
         val segments = mutableListOf<MutableList<TextRun>>(mutableListOf())
         for (run in runs) {
@@ -587,8 +608,9 @@ object HtmlWriter {
                 sb.append(
                     """<span style="position:absolute;white-space:pre;inset-inline-start:${pt(stop)}">"""
                 )
+                if (kept) sb.append(HIDDEN_TAB)
             } else if (index > 0) {
-                sb.append(" ")
+                sb.append(if (kept) """<span style="white-space:pre">""" + "\t</span>" else " ")
             }
             for (run in segment) appendRun(sb, run, paragraphDirection)
             if (index > 0 && stop != null) sb.append("</span>")

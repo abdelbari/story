@@ -12,6 +12,7 @@
   var composing = false;
   var lastSelection = '';
   var look = {};
+  var paragraph = {};
   var queue = Promise.resolve();
 
   // The bridge. On the phone it is an object the app gives the page,
@@ -111,7 +112,10 @@
     var c, seen = 0, lastText = null;
     while ((c = w.nextNode())) {
       if (c.nodeType === 3) {
-        if (seen + c.data.length >= offset) return [c, offset - seen];
+        // A tab kept out of sight for the count's sake is no place to
+        // leave a caret; the text after it is.
+        var hidden = c.parentNode && c.parentNode.hasAttribute && c.parentNode.hasAttribute('data-tab');
+        if (seen + c.data.length > offset || (seen + c.data.length === offset && !hidden)) return [c, offset - seen];
         seen += c.data.length;
         lastText = c;
       } else if (c.tagName === 'BR') {
@@ -190,9 +194,11 @@
 
   function tell(reply) {
     look = reply.look || {};
+    paragraph = reply.paragraph || {};
     if (window.Morpho && typeof window.Morpho.status === 'function') {
       window.Morpho.status(JSON.stringify({
         look: reply.look, paragraph: reply.paragraph, canUndo: reply.canUndo, canRedo: reply.canRedo, modified: reply.modified,
+        cells: reply.cells, canMerge: reply.canMerge, canSplit: reply.canSplit,
       }));
     }
   }
@@ -279,8 +285,15 @@
     }
   });
 
-  // A keyboard with modifier keys, for a tablet or a desk.
+  // A keyboard with modifier keys, for a tablet or a desk. Tab is the
+  // engine's — between cells, into a list, or a tab — and never the
+  // browser's, which would move the focus out of the page.
   doc.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Tab' && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+      ev.preventDefault();
+      op({ op: 'tab', back: ev.shiftKey });
+      return;
+    }
     if (!(ev.ctrlKey || ev.metaKey)) return;
     var k = ev.key.toLowerCase();
     if (k === 'b') { ev.preventDefault(); op({ op: 'format', bold: !look.bold }); }
@@ -303,6 +316,9 @@
     insertColumn: function (after) { return op({ op: 'insertColumn', after: after !== false }); },
     deleteColumn: function () { return op({ op: 'deleteColumn' }); },
     removeBlock: function (block) { return op({ op: 'removeBlock', block: block }); },
+    tab: function (back) { return op({ op: 'tab', back: !!back }); },
+    mergeCells: function () { return op({ op: 'mergeCells' }); },
+    splitCell: function () { return op({ op: 'splitCell' }); },
     find: function (query, ignoreCase) {
       return op({ op: 'find', query: query, ignoreCase: !!ignoreCase }).then(function (r) { return r && r.matches ? r.matches : []; });
     },
@@ -329,6 +345,7 @@
       });
     },
     look: function () { return look; },
+    paragraph: function () { return paragraph; },
   };
 
   doc.focus();

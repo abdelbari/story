@@ -1154,6 +1154,7 @@ object DocxWriter {
                     )
                     is TableGrid.Covered -> appendCell(
                         sb, TableCell(emptyList()), document, numbering, images, links, part, width, notes, comments,
+                        span = place.span,
                         merge = Merge.CONTINUE,
                     )
                     is TableGrid.Empty -> appendCell(

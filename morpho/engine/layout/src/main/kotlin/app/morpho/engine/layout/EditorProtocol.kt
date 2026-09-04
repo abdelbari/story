@@ -56,6 +56,9 @@ object EditorProtocol {
         data class InsertColumn(val after: Boolean) : Operation
         data object DeleteColumn : Operation
         data class RemoveBlock(val block: Int) : Operation
+        data class Tab(val back: Boolean) : Operation
+        data object MergeCells : Operation
+        data object SplitCell : Operation
         data class Find(val query: String, val ignoreCase: Boolean) : Operation
         data class ReplaceAll(val query: String, val replacement: String, val ignoreCase: Boolean) : Operation
         data object Undo : Operation
@@ -122,6 +125,9 @@ object EditorProtocol {
                 "insertColumn" -> Operation.InsertColumn(flag(map, "after") ?: true)
                 "deleteColumn" -> Operation.DeleteColumn
                 "removeBlock" -> Operation.RemoveBlock(whole(map["block"] as? Double ?: return null, 0, Int.MAX_VALUE))
+                "tab" -> Operation.Tab(flag(map, "back") ?: false)
+                "mergeCells" -> Operation.MergeCells
+                "splitCell" -> Operation.SplitCell
                 "find" -> Operation.Find(typed(map, "query") ?: return null, flag(map, "ignoreCase") ?: false)
                 "replaceAll" -> Operation.ReplaceAll(
                     typed(map, "query") ?: return null,
@@ -152,6 +158,9 @@ object EditorProtocol {
         is Operation.InsertColumn -> state.insertColumn(operation.after)
         Operation.DeleteColumn -> state.deleteColumn()
         is Operation.RemoveBlock -> state.removeBlock(operation.block)
+        is Operation.Tab -> state.tab(operation.back)
+        Operation.MergeCells -> state.mergeCells()
+        Operation.SplitCell -> state.splitCell()
         is Operation.Find -> state
         is Operation.ReplaceAll -> state.replaceAll(operation.query, operation.replacement, operation.ignoreCase)
         Operation.Undo -> state.undo()
@@ -236,6 +245,11 @@ object EditorProtocol {
             "canUndo" to state.canUndo,
             "canRedo" to state.canRedo,
             "modified" to state.modified.size,
+            // The cells selected together, for a toolbar that offers to
+            // merge them, and whether the caret's cell could be split.
+            "cells" to state.selectedCells().map { listOf(it.row, it.column) },
+            "canMerge" to state.canMergeCells,
+            "canSplit" to state.canSplitCell,
             "look" to mapOf(
                 "bold" to look.bold,
                 "italic" to look.italic,

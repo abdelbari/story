@@ -253,10 +253,25 @@ Most of this is model → HTML → model plumbing once Stage 1 stands, because
   `cellIndex`, which are the indices the model stores cells by, spans
   and all. Driven in Chromium: a click into a cell, typing, Return,
   rows, columns, undo, and a selection dragged out of a cell.
-- Still to do: a selection across cells (Word selects whole cells);
-  splitting and merging cells, which the model carries as spans and
-  the row and column operations refuse for now; moving between cells
-  by Tab.
+- **Done 4 September, in the engine and the page:** a selection from
+  one cell to another is of whole cells — the rectangle between them,
+  grown to hold whole any merged cell it cuts through, as Word selects
+  cells — and Backspace empties every one, typing empties them and
+  writes in the first, formatting and styling reach every one, and
+  deleting a row or a column takes every row or column selected. Tab
+  moves to the next cell with the whole of it selected, from the last
+  cell to a new row, and back with Shift; outside a table it moves an
+  item of a list a level in or out, or types a tab. Cells selected are
+  merged into one, holding their paragraphs, and a merged cell is split
+  into the cells it covered. Over the bridge the status names the cells
+  selected and whether they can be merged or the caret's cell split, so
+  a toolbar's buttons are the engine's decision. Driven in Chromium: a
+  drag across cells, Backspace over them, Tab and Shift+Tab, a merge, a
+  split, and a table grown by Tab. Still refused: a row or a column put
+  into or taken out of a table with a merged cell.
+- The editor's markup keeps every tab a tab stop places, out of sight,
+  so a caret in a form's `Name:<tab>value` line is counted right; the
+  preview's markup is as it was.
 - Insert an image, resize it, give it alt text — the model has alt text
   already, and it is the accessibility feature competitors mostly skip.
   The bytes are the app's to supply, so the operation is the app's to

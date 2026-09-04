@@ -44,6 +44,8 @@ class EditorProtocolTest {
                 it.insertBlock(Table(List(2) { TableRow(List(3) { TableCell(listOf(Paragraph(listOf(TextRun(""))))) }) }))
             },
             """{"op":"removeBlock","block":3}""" to { it.removeBlock(3) },
+            """{"op":"tab"}""" to { it.tab(back = false) },
+            """{"op":"tab","back":true}""" to { it.tab(back = true) },
             """{"op":"undo"}""" to { it.undo() },
             """{"op":"redo"}""" to { it.redo() },
         )
@@ -77,6 +79,31 @@ class EditorProtocolTest {
         assertEquals(2, (EditorProtocol.step(columned.state, """{"op":"deleteColumn"}""").state.document.blocks[1] as Table).rows[0].cells.size)
         assertEquals(1, (EditorProtocol.step(columned.state, """{"op":"deleteRow"}""").state.document.blocks[1] as Table).rows.size)
         assertNull(EditorProtocol.operation("""{"op":"select","anchor":[1,1,0],"focus":[1,1,0]}"""), "three numbers are not a caret")
+    }
+
+    @Test
+    fun `cells selected together cross the bridge, and are merged and split over it`() {
+        val table = Table(listOf(TableRow(listOf(TableCell(listOf(p("ab"))), TableCell(listOf(p("cd"))))), TableRow(listOf(TableCell(listOf(p("e"))), TableCell(listOf(p("f")))))))
+        val state = open(p("before"), table)
+        val across = EditorProtocol.step(state, """{"op":"select","anchor":[1,1,0,0,0],"focus":[1,0,1,1,0]}""")
+        assertEquals(Selection(Caret(1, 1, Cell(0, 0, 0)), Caret(1, 0, Cell(1, 1, 0))), across.state.selection)
+        val status = reply(across.reply)
+        assertEquals(listOf(listOf(0.0, 0.0), listOf(0.0, 1.0), listOf(1.0, 0.0), listOf(1.0, 1.0)), status["cells"], "the cells selected, for the toolbar")
+        assertEquals(true, status["canMerge"])
+        assertEquals(false, status["canSplit"])
+        val merged = EditorProtocol.step(across.state, """{"op":"mergeCells"}""")
+        assertEquals(merged.state.document, across.state.mergeCells().document)
+        assertEquals(listOf(1, 0), (merged.state.document.blocks[1] as Table).rows.map { it.cells.size })
+        assertEquals(true, reply(merged.reply)["canSplit"])
+        assertEquals(emptyList<Any>(), reply(merged.reply)["cells"])
+        val html = ((reply(merged.reply)["splice"] as Map<*, *>)["blocks"] as List<*>)[0] as String
+        assertTrue(html.contains("""<td colspan="2" rowspan="2">"""), html)
+        assertTrue(html.contains("<tr></tr>"), "the covered row is still a row of the page: $html")
+        val split = EditorProtocol.step(merged.state, """{"op":"splitCell"}""")
+        assertEquals(listOf(2, 2), (split.state.document.blocks[1] as Table).rows.map { it.cells.size })
+        val tabbed = EditorProtocol.step(split.state, """{"op":"tab"}""")
+        assertEquals(Selection(Caret(1, 0, Cell(0, 1, 0)), Caret(1, 0, Cell(0, 1, 0))), tabbed.state.selection, "Tab to the next cell, which is empty now")
+        assertNull(EditorProtocol.operation("""{"op":"tab","back":"yes"}"""))
     }
 
     @Test
@@ -202,7 +229,10 @@ class EditorProtocolTest {
 
     private fun operation(random: Random, state: EditorState): String {
         val n = state.document.blocks.size
-        return when (random.nextInt(20)) {
+        return when (random.nextInt(23)) {
+            20 -> """{"op":"tab","back":${random.nextBoolean()}}"""
+            21 -> """{"op":"mergeCells"}"""
+            22 -> """{"op":"splitCell"}"""
             14 -> """{"op":"select","anchor":[${random.nextInt(n)},${random.nextInt(4)},${random.nextInt(-1, 3)},${random.nextInt(-1, 3)},${random.nextInt(-1, 2)}],"focus":[${random.nextInt(n)},${random.nextInt(4)},${random.nextInt(3)},${random.nextInt(3)},0]}"""
             15 -> """{"op":"insertRow","below":${random.nextBoolean()}}"""
             16 -> """{"op":"insertColumn","after":${random.nextBoolean()}}"""

@@ -1,5 +1,6 @@
 package app.morpho.engine.layout
 
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -36,22 +37,26 @@ class HtmlLookTest {
 
     @Test
     fun `text after a tab is placed at its stop`() {
-        val html = HtmlWriter.write(
-            DocumentModel(
-                blocks = listOf(
-                    Paragraph(
-                        runs = listOf(TextRun("تاريخ الاستلام:2022-04-21\tتاريخ القبول: 2022-05-19\tتاريخ النشر: 2022-06-03")),
-                        style = ParagraphStyle(direction = TextDirection.RTL, tabStopsPt = listOf(182.5f, 346.5f)),
-                    )
-                ),
-                defaultDirection = TextDirection.RTL,
-            )
+        val document = DocumentModel(
+            blocks = listOf(
+                Paragraph(
+                    runs = listOf(TextRun("تاريخ الاستلام:2022-04-21\tتاريخ القبول: 2022-05-19\tتاريخ النشر: 2022-06-03")),
+                    style = ParagraphStyle(direction = TextDirection.RTL, tabStopsPt = listOf(182.5f, 346.5f)),
+                )
+            ),
+            defaultDirection = TextDirection.RTL,
         )
+        val html = HtmlWriter.write(document)
         // The paragraph, whatever else its element says about itself — which block it is, for one.
         assertTrue(Regex("""<p[^>]*style="position:relative">""").containsMatchIn(html), html)
         assertTrue(html.contains("""<span style="position:absolute;white-space:pre;inset-inline-start:182.5pt">"""), html)
         assertTrue(html.contains("""<span style="position:absolute;white-space:pre;inset-inline-start:346.5pt">"""), html)
         assertTrue(!html.contains("\t"), "the tab character itself has no place in the markup: $html")
+        // In the editor's markup it has: every character is counted there.
+        val marked = HtmlWriter.writeBlock(document, 0)
+        assertEquals(2, marked.count { it == '\t' }, "each tab kept once, out of sight: $marked")
+        assertTrue(marked.contains("""<span data-tab style="display:inline-block;width:0;overflow:hidden">""" + "\t</span>"), marked)
+        assertEquals(2, Regex("inset-inline-start").findAll(marked).count(), "and the stretches are still placed at their stops")
     }
 
     @Test

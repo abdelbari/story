@@ -15,7 +15,7 @@ class TableGridTest {
                 when (place) {
                     is TableGrid.Filled -> (place.cell.blocks.single() as Paragraph).text +
                         "@${place.column}+${place.span}" + if (place.rowSpan > 1) "v${place.rowSpan}" else ""
-                    is TableGrid.Covered -> "covered@${place.column}"
+                    is TableGrid.Covered -> "covered@${place.column}" + if (place.span > 1) "+${place.span}" else ""
                     is TableGrid.Empty -> "empty@${place.column}"
                 }
             }
@@ -49,6 +49,19 @@ class TableGridTest {
             )
         )
         assertEquals(listOf("side@0+1v2 first@1+1", "covered@0 second@1+1"), shape(table))
+    }
+
+    @Test
+    fun `a cell over two columns and two rows covers one place under it, as wide as itself`() {
+        val table = Table(
+            listOf(
+                TableRow(listOf(cell("corner", columnSpan = 2, rowSpan = 2), cell("first"))),
+                TableRow(listOf(cell("second"))),
+                TableRow(listOf(cell("a"), cell("b"), cell("c"))),
+            )
+        )
+        assertEquals(3, TableGrid.of(table).columns)
+        assertEquals(listOf("corner@0+2v2 first@2+1", "covered@0+2 second@2+1", "a@0+1 b@1+1 c@2+1"), shape(table))
     }
 
     @Test

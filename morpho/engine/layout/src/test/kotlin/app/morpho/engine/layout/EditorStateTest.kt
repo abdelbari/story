@@ -2,6 +2,7 @@ package app.morpho.engine.layout
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -379,9 +380,155 @@ class EditorStateTest {
         val reaching = state.select(Selection(Caret(0, 1, Cell(0, 0, 0)), Caret(1, 3)))
         assertTrue(reaching.selection.collapsed)
         assertEquals(Caret(0, 1, Cell(0, 0, 0)), reaching.selection.anchor)
-        val across = state.select(Selection(Caret(0, 0, Cell(0, 0, 0)), Caret(0, 1, Cell(0, 1, 0))))
-        assertTrue(across.selection.collapsed, "two cells are not one selection yet")
-        assertEquals(listOf("after"), texts(across.type("X")).drop(1))
+        val outward = state.select(Selection(Caret(1, 2), Caret(0, 1, Cell(0, 0, 0))))
+        assertEquals(Selection.at(1, 2), outward.selection, "nor into one")
+    }
+
+    @Test
+    fun `a selection from one cell to another is of whole cells, and what is done to it is done to every one`() {
+        val state = EditorState.open(doc(grid(listOf("ab", "cd", "ef"), listOf("gh", "ij", "kl"), listOf("mn", "op", "qr")), p("after")))
+        val across = state.select(Selection(Caret(0, 1, Cell(0, 1, 0)), Caret(0, 2, Cell(1, 0, 0))))
+        assertEquals(Selection(Caret(0, 1, Cell(0, 1, 0)), Caret(0, 2, Cell(1, 0, 0))), across.selection, "the selection stands as it was made")
+        assertEquals(listOf(Cell(0, 0), Cell(0, 1), Cell(1, 0), Cell(1, 1)), across.selectedCells(), "the rectangle between the two, whichever way it was dragged")
+        assertTrue(across.canMergeCells)
+        assertFalse(across.canSplitCell)
+        val emptied = across.erase()
+        assertEquals(listOf(listOf(""), listOf(""), listOf("ef")), cells(emptied, 0)[0])
+        assertEquals(listOf(listOf(""), listOf(""), listOf("kl")), cells(emptied, 0)[1])
+        assertEquals(listOf(listOf("mn"), listOf("op"), listOf("qr")), cells(emptied, 0)[2], "a cell outside the rectangle is as it was")
+        assertEquals(Selection(Caret(0, 0, Cell(0, 0, 0))), emptied.selection, "the caret lands in the first of them")
+        assertEquals(state.document, emptied.undo().document)
+        val typed = across.type("X")
+        assertEquals(listOf(listOf("X"), listOf(""), listOf("ef")), cells(typed, 0)[0], "typing empties them and writes in the first")
+        assertEquals(listOf(listOf(""), listOf(""), listOf("kl")), cells(typed, 0)[1])
+        val bold = across.format(RunChange(bold = true))
+        val table = bold.document.blocks[0] as Table
+        for (row in 0..1) for (column in 0..1) assertTrue((table.rows[row].cells[column].blocks[0] as Paragraph).runs.all { it.bold }, "$row,$column is bold")
+        assertFalse((table.rows[0].cells[2].blocks[0] as Paragraph).runs.any { it.bold })
+        assertEquals(across.selection, bold.selection, "and the cells stay selected")
+        val headed = across.restyle(ParagraphChange(kind = ParagraphKind.HEADING_2))
+        assertEquals(ParagraphKind.HEADING_2, ((headed.document.blocks[0] as Table).rows[1].cells[1].blocks[0] as Paragraph).style.kind)
+        assertEquals(ParagraphKind.BODY, ((headed.document.blocks[0] as Table).rows[2].cells[1].blocks[0] as Paragraph).style.kind)
+        assertEquals(listOf(listOf(listOf("mn"), listOf("op"), listOf("qr"))), cells(across.deleteRow(), 0), "the rows selected go together")
+        assertEquals(Caret(0, 0, Cell(0, 0, 0)), across.deleteRow().selection.anchor)
+        assertEquals(listOf(listOf("ef")), cells(across.deleteColumn(), 0)[0], "and so do the columns")
+        val whole = state.select(Selection(Caret(0, 0, Cell(0, 0, 0)), Caret(0, 0, Cell(2, 2, 0))))
+        assertEquals(listOf("after"), texts(whole.deleteRow()), "every row selected takes the table")
+        assertEquals(listOf("after"), texts(whole.deleteColumn()))
+        assertSame(state, state.mergeCells(), "one cell is not a selection of cells")
+        assertSame(state, state.splitCell(), "and a cell that covers one place is not split")
+    }
+
+    @Test
+    fun `a selection across cells grows to hold a merged cell whole`() {
+        // a covers two columns over c and d, so a selection that takes half of it takes all of it.
+        val table = Table(
+            listOf(
+                TableRow(listOf(TableCell(listOf(p("a")), columnSpan = 2), TableCell(listOf(p("b"))))),
+                TableRow(listOf(TableCell(listOf(p("c"))), TableCell(listOf(p("d"))), TableCell(listOf(p("e"))))),
+            ),
+        )
+        val state = EditorState.open(doc(table))
+        fun selected(from: Cell, to: Cell) = state.select(Selection(Caret(0, 0, from), Caret(0, 0, to))).selectedCells()
+        assertEquals(listOf(Cell(1, 0), Cell(1, 1)), selected(Cell(1, 0), Cell(1, 1)), "c to d reaches nothing above")
+        assertEquals(listOf(Cell(0, 0), Cell(1, 0), Cell(1, 1)), selected(Cell(1, 1), Cell(0, 0)), "d to a reaches c, under a, and not b or e")
+        assertEquals(listOf(Cell(0, 0), Cell(0, 1), Cell(1, 0), Cell(1, 1), Cell(1, 2)), selected(Cell(0, 1), Cell(1, 0)), "b to c reaches everything")
+        assertEquals(listOf(Cell(0, 1), Cell(1, 2)), selected(Cell(1, 2), Cell(0, 1)), "e to b is the last column")
+        assertTrue(state.inCell(0, 0, 0, 0, 0).canSplitCell)
+        assertFalse(state.inCell(0, 0, 1, 0, 0).canSplitCell)
+    }
+
+    @Test
+    fun `Tab moves from cell to cell with the whole cell selected, and grows the table from the last one`() {
+        val two = TableCell(listOf(p("one"), p("two")))
+        val table = Table(listOf(TableRow(listOf(TableCell(listOf(p("a"))), two)), TableRow(listOf(TableCell(listOf(p("c"))), TableCell(listOf(p("d")))))))
+        val state = EditorState.open(doc(table, p("after"))).inCell(0, 0, 0, 0, 1)
+        val second = state.tab(back = false)
+        assertEquals(Selection(Caret(0, 0, Cell(0, 1, 0)), Caret(0, 3, Cell(0, 1, 1))), second.selection, "the whole of the next cell, both its paragraphs")
+        assertEquals(listOf(listOf("a"), listOf("X")), cells(second.type("X"), 0)[0], "and typing writes over it")
+        val third = second.tab(back = false)
+        assertEquals(Selection(Caret(0, 0, Cell(1, 0, 0)), Caret(0, 1, Cell(1, 0, 0))), third.selection, "on to the next row")
+        val last = third.tab(back = false)
+        val grown = last.tab(back = false)
+        assertEquals(3, (grown.document.blocks[0] as Table).rows.size, "Tab from the last cell adds a row")
+        assertEquals(Selection(Caret(0, 0, Cell(2, 0, 0))), grown.selection)
+        assertEquals(Selection(Caret(0, 0, Cell(1, 1, 0)), Caret(0, 1, Cell(1, 1, 0))), grown.tab(back = true).selection, "and Shift+Tab goes back")
+        assertEquals(2, (grown.undo().document.blocks[0] as Table).rows.size)
+        val first = state.inCell(0, 0, 0, 0, 0)
+        assertSame(first, first.tab(back = true), "there is nothing before the first cell")
+        assertEquals(state.document, last.document, "moving changes nothing")
+    }
+
+    @Test
+    fun `Tab outside a table types a tab, and at the head of an item of a list moves it a level`() {
+        val state = EditorState.open(doc(p("ab"), p(r("item"), style = ParagraphStyle(listMarker = ListMarker.BULLET)))).at(0, 1)
+        assertEquals("a\tb", texts(state.tab(back = false))[0])
+        assertSame(state, state.tab(back = true))
+        val item = state.at(1, 0)
+        val deeper = item.tab(back = false)
+        assertEquals(1, (deeper.document.blocks[1] as Paragraph).style.listLevel)
+        assertEquals("item", texts(deeper)[1])
+        assertEquals(0, (deeper.tab(back = true).document.blocks[1] as Paragraph).style.listLevel)
+        assertSame(item, item.tab(back = true), "an item at the first level stays there")
+        assertEquals("i\ttem", texts(item.at(1, 1).tab(back = false))[1], "inside the item's words a tab is a tab")
+        var deepest = item
+        repeat(12) { deepest = deepest.tab(back = false) }
+        assertEquals(EditorState.MOST_LIST_LEVEL, (deepest.document.blocks[1] as Paragraph).style.listLevel)
+    }
+
+    @Test
+    fun `cells merged are one cell holding their paragraphs, and split are cells again`() {
+        val state = EditorState.open(doc(grid(listOf("a", "b"), listOf("c", ""))))
+        val row = state.select(Selection(Caret(0, 0, Cell(0, 0, 0)), Caret(0, 0, Cell(0, 1, 0)))).mergeCells()
+        val merged = (row.document.blocks[0] as Table).rows[0]
+        assertEquals(1, merged.cells.size)
+        assertEquals(2, merged.cells[0].columnSpan)
+        assertEquals(1, merged.cells[0].rowSpan)
+        assertEquals(listOf(listOf("a", "b")), cells(row, 0)[0], "their paragraphs one after another")
+        assertEquals(listOf(listOf("c"), listOf("")), cells(row, 0)[1])
+        assertEquals(Selection(Caret(0, 0, Cell(0, 0, 0))), row.selection)
+        assertTrue(row.canSplitCell)
+        assertFalse(row.canMergeCells)
+        assertSame(row, row.insertRow(true), "a table with a merged cell keeps its shape")
+        val split = row.splitCell()
+        assertEquals(listOf(listOf("a", "b"), listOf("")), cells(split, 0)[0], "split, the first keeps what the cell held")
+        assertEquals(listOf(1, 1), (split.document.blocks[0] as Table).rows[0].cells.map { it.columnSpan })
+        assertEquals(Selection(Caret(0, 0, Cell(0, 0, 0))), split.selection)
+        assertEquals(state.document, row.undo().document)
+        // All four: the second row is left with no cell of its own, covered whole.
+        val all = state.select(Selection(Caret(0, 0, Cell(1, 1, 0)), Caret(0, 0, Cell(0, 0, 0)))).mergeCells()
+        val table = all.document.blocks[0] as Table
+        assertEquals(listOf(1, 0), table.rows.map { it.cells.size })
+        assertEquals(2, table.rows[0].cells[0].rowSpan)
+        assertEquals(2, table.rows[0].cells[0].columnSpan)
+        assertEquals(listOf(listOf("a", "b", "c")), cells(all, 0)[0], "and the empty cell's paragraph is left out")
+        assertEquals(Caret(0, 0, Cell(0, 0, 0)), all.inCell(0, 1, 1, 0, 0).selection.anchor, "a caret sent to the covered row stands in the cell that covers it")
+        val back = all.splitCell()
+        assertEquals(listOf(listOf(listOf("a", "b", "c"), listOf("")), listOf(listOf(""), listOf(""))), cells(back, 0))
+        assertEquals(listOf(2, 2), (back.document.blocks[0] as Table).rows.map { it.cells.size })
+        val blank = EditorState.open(doc(grid(listOf("", "")))).select(Selection(Caret(0, 0, Cell(0, 0, 0)), Caret(0, 0, Cell(0, 1, 0)))).mergeCells()
+        assertEquals(listOf(listOf(listOf(""))), cells(blank, 0), "two empty cells merged hold one empty paragraph")
+        // Merged, typed into, merged again with a neighbour: the spans add up.
+        val wide = EditorState.open(doc(grid(listOf("a", "b", "c"), listOf("d", "e", "f"))))
+            .select(Selection(Caret(0, 0, Cell(0, 0, 0)), Caret(0, 0, Cell(0, 1, 0)))).mergeCells()
+            .select(Selection(Caret(0, 0, Cell(0, 0, 0)), Caret(0, 0, Cell(1, 0, 0)))).mergeCells()
+        val corner = (wide.document.blocks[0] as Table).rows[0].cells[0]
+        assertEquals(listOf(2, 2), listOf(corner.columnSpan, corner.rowSpan))
+        assertEquals(listOf(listOf(listOf("a", "b", "d", "e"), listOf("c")), listOf(listOf("f"))), cells(wide, 0))
+    }
+
+    @Test
+    fun `a row a merged cell reaches is left without a cell, and one nobody filled is given one`() {
+        val covered = Table(listOf(TableRow(listOf(TableCell(listOf(p("tall")), rowSpan = 2))), TableRow(emptyList())))
+        val state = EditorState.open(doc(covered))
+        assertEquals(listOf(1, 0), (state.document.blocks[0] as Table).rows.map { it.cells.size })
+        assertEquals(emptySet<Int>(), state.modified)
+        // Reached in part: the row is the merged cell's, ragged or not, as
+        // a merge in a ragged table leaves it.
+        val partly = Table(listOf(TableRow(listOf(TableCell(listOf(p("tall")), rowSpan = 2), TableCell(listOf(p("short"))))), TableRow(emptyList())))
+        assertEquals(listOf(2, 0), (EditorState.open(doc(partly)).document.blocks[0] as Table).rows.map { it.cells.size })
+        val unfilled = Table(listOf(TableRow(listOf(TableCell(listOf(p("a"))))), TableRow(emptyList())))
+        assertEquals(listOf(1, 1), (EditorState.open(doc(unfilled)).document.blocks[0] as Table).rows.map { it.cells.size })
     }
 
     @Test
@@ -438,8 +585,28 @@ class EditorStateTest {
             for (step in 1..random.nextInt(1, 20)) {
                 val where = "seed $seed step $step"
                 val before = state
-                when (random.nextInt(11)) {
+                val selected = state.selectedCells()
+                val was = state.document.blocks.getOrNull(1) as? Table
+                val op = random.nextInt(16)
+                when (op) {
                     0, 1 -> state = state.select(Selection(Caret(1, random.nextInt(-1, 6), Cell(random.nextInt(-1, 4), random.nextInt(-1, 4), random.nextInt(-1, 3)))))
+                    11 -> state = state.select(
+                        Selection(
+                            Caret(1, random.nextInt(-1, 6), Cell(random.nextInt(-1, 4), random.nextInt(-1, 4), random.nextInt(-1, 3))),
+                            Caret(1, random.nextInt(-1, 6), Cell(random.nextInt(-1, 4), random.nextInt(-1, 4), random.nextInt(-1, 3))),
+                        ),
+                    )
+                    12 -> state = state.tab(random.nextBoolean())
+                    13 -> {
+                        state = state.mergeCells()
+                        if (selected.isNotEmpty() && was != null) {
+                            assertNotSame(before, state, "$where: cells selected and not merged")
+                            val now = state.document.blocks[1] as Table
+                            assertEquals(was.rows.sumOf { it.cells.size } - selected.size + 1, now.rows.sumOf { it.cells.size }, "$where: merged into one")
+                        }
+                    }
+                    14 -> state = state.splitCell()
+                    15 -> state = state.format(RunChange(bold = random.nextBoolean(), italic = if (random.nextBoolean()) true else null))
                     2, 3 -> {
                         val at = state.selection.start
                         val word = words[random.nextInt(words.size)]
@@ -450,8 +617,23 @@ class EditorStateTest {
                             assertEquals(before.paragraphAt(at).text.length + word.length, text.length, where)
                         }
                     }
-                    4 -> state = state.erase()
-                    5 -> state = state.eraseForward()
+                    4, 5 -> {
+                        state = if (op == 4) state.erase() else state.eraseForward()
+                        if (selected.isNotEmpty() && was != null) {
+                            // Every cell selected is one empty paragraph; every other is as it was.
+                            val now = state.document.blocks[1] as Table
+                            for ((row, held) in was.rows.withIndex()) for ((column, cell) in held.cells.withIndex()) {
+                                val after = now.rows[row].cells[column]
+                                if (Cell(row, column) in selected) {
+                                    assertEquals(1, after.blocks.size, "$where: a cell emptied holds more than one paragraph")
+                                    assertEquals("", (after.blocks[0] as Paragraph).text, "$where: a cell selected was not emptied")
+                                } else {
+                                    assertEquals(cell, after, "$where: a cell not selected changed")
+                                }
+                            }
+                            assertEquals(Selection(Caret(1, 0, selected.first().copy(paragraph = 0))), state.selection, "$where: the caret is not in the first cell emptied")
+                        }
+                    }
                     6 -> state = state.splitParagraph()
                     7 -> state = state.insertRow(random.nextBoolean())
                     8 -> state = state.insertColumn(random.nextBoolean())
@@ -461,8 +643,10 @@ class EditorStateTest {
                 assertSound(state, where)
                 for (block in state.document.blocks) {
                     if (block !is Table) continue
-                    for (row in block.rows) {
-                        assertTrue(row.cells.isNotEmpty(), "$where: a row with no cells")
+                    val layout = TableGrid.of(block)
+                    for ((index, row) in block.rows.withIndex()) {
+                        assertEquals(row.cells.size, layout.rows[index].count { it is TableGrid.Filled }, "$where: a cell without a place on the grid")
+                        assertTrue(row.cells.isNotEmpty() || layout.rows[index].any { it is TableGrid.Covered }, "$where: a row with no cells that nothing covers")
                         for (cell in row.cells) assertTrue(cell.blocks.any { it is Paragraph }, "$where: a cell with nothing to stand in")
                     }
                 }

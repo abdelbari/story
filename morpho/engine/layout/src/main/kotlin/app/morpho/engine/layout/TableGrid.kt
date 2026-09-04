@@ -30,10 +30,12 @@ object TableGrid {
         val rowSpan: Int,
     ) : Place
 
-    /** A place a cell in an earlier row covers. */
-    data class Covered(override val column: Int) : Place {
-        override val span: Int get() = 1
-    }
+    /**
+     * A place a cell in an earlier row covers — as wide as that cell,
+     * since a cell over two columns and two rows covers two places under
+     * it that are one continuation of it, not two.
+     */
+    data class Covered(override val column: Int, override val span: Int = 1) : Place
 
     /** A place no cell reaches: a row shorter than the table is wide. */
     data class Empty(override val column: Int) : Place {
@@ -45,15 +47,19 @@ object TableGrid {
 
     fun of(table: Table): Layout {
         val columns = widthOf(table)
+        // For each column, how many rows further down a cell above still
+        // covers it, and — at the column a cover begins — how wide it is.
         val covered = IntArray(columns)
+        val coverSpan = IntArray(columns)
         val rows = table.rows.map { row ->
             val places = mutableListOf<Place>()
             var column = 0
             fun fillCovered() {
                 while (column < columns && covered[column] > 0) {
-                    covered[column]--
-                    places += Covered(column)
-                    column++
+                    val span = coverSpan[column].coerceIn(1, columns - column)
+                    for (c in column until column + span) covered[c]--
+                    places += Covered(column, span)
+                    column += span
                 }
             }
             for (cell in row.cells) {
@@ -62,7 +68,13 @@ object TableGrid {
                 val span = cell.columnSpan.coerceIn(1, columns - column)
                 val rowSpan = cell.rowSpan.coerceAtLeast(1)
                 places += Filled(cell, column, span, rowSpan)
-                if (rowSpan > 1) covered[column] = rowSpan - 1
+                if (rowSpan > 1) {
+                    for (c in column until column + span) {
+                        covered[c] = rowSpan - 1
+                        coverSpan[c] = 0
+                    }
+                    coverSpan[column] = span
+                }
                 column += span
             }
             fillCovered()
@@ -113,8 +125,9 @@ object TableGrid {
             var column = 0
             for (cell in row.cells) {
                 column = skipCovered(column)
-                if (cell.rowSpan > 1) covered[column] = cell.rowSpan - 1
-                column += cell.columnSpan.coerceAtLeast(1)
+                val span = cell.columnSpan.coerceAtLeast(1)
+                if (cell.rowSpan > 1) for (c in column until column + span) covered[c] = cell.rowSpan - 1
+                column += span
             }
             column = skipCovered(column)
             widest = maxOf(widest, column)
