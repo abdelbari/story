@@ -1,6 +1,8 @@
 package app.morpho.pdf
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
@@ -9,6 +11,7 @@ import app.morpho.engine.layout.Paragraph
 import app.morpho.engine.layout.PlainTextImporter
 import app.morpho.engine.layout.Table
 import app.morpho.engine.layout.pdf.Hocr
+import app.morpho.engine.layout.pdf.ImagePage
 import app.morpho.engine.layout.pdf.PdfLayout
 import app.morpho.engine.layout.pdf.PdfPageSheet
 import app.morpho.engine.layout.pdf.RecognizedText
@@ -18,6 +21,7 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import com.tom_roush.pdfbox.rendering.PDFRenderer
 import java.io.File
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -81,29 +85,8 @@ class AndroidOcrReader(private val context: Context) {
         var sheet: PageSetup? = null
         AndroidPdfReader.load(bytes, password).use { doc ->
             val renderer = PDFRenderer(doc)
-            val tess = TessBaseAPI()
+            val tess = started(dataParent, languages)
             try {
-                check(tess.init(dataParent.absolutePath, languages)) {
-                    "Tesseract failed to initialize for $languages"
-                }
-                // Work the page out before reading it. Left unasked,
-                // recognition reads the whole image as ONE BLOCK of text
-                // and does no layout analysis at all — that is the
-                // library's default, stated in its own documentation for
-                // this call and set in Tesseract's own source. A two-column
-                // page then reads straight across the gutter, half a
-                // sentence from each column at a time, and nothing is
-                // classified, so a heading, a caption and a line of body
-                // text all come back alike. Every scan this app has ever
-                // read was read that way.
-                tess.setPageSegMode(PAGE_SEGMENTATION)
-                // Ask for the font of every word as well as its box. The
-                // fast models this app ships answer nothing — the newer
-                // recogniser reports no font at all — but it is one call,
-                // it cannot fail, and a model that does answer is the
-                // difference between finding a paper's bold headings and
-                // missing them.
-                tess.setVariable(FONT_INFO, "1")
                 // Reading a page takes seconds, so a reader who asked for
                 // one chapter waits for that chapter and no longer.
                 val wanted = (pages ?: 1..doc.numberOfPages)
@@ -125,16 +108,7 @@ class AndroidOcrReader(private val context: Context) {
                     val dpi = dpiFor(doc, index)
                     val bitmap = renderer.renderImageWithDPI(index, dpi)
                     try {
-                        tess.setImage(bitmap)
-                        // What the page was rendered at, which recognition
-                        // otherwise has to guess from the image: its own
-                        // default for this is nothing, and a wrong guess
-                        // moves every threshold it works out a text line
-                        // from. This reader knows the number exactly — it
-                        // just chose it — so it is the same value the
-                        // bitmap was made with and not a second opinion.
-                        tess.setVariable(SOURCE_DPI, dpi.toInt().toString())
-                        words += Hocr.wordsOf(tess.getHOCRText(index).orEmpty(), ordinal + 1, dpi)
+                        words += read(tess, bitmap, ordinal + 1, dpi)
                         // Recognition's plain text, kept only while its
                         // hOCR has yielded nothing at all: a build whose
                         // hOCR this cannot read must still convert the
@@ -153,6 +127,187 @@ class AndroidOcrReader(private val context: Context) {
                 tess.recycle()
             }
         }
+        return modelOf(words, pageTexts, sheets, sheet)
+    }
+
+    /**
+     * Recognizes a document that was photographed or scanned as pictures
+     * rather than made into a PDF: [images] in the order they are pages.
+     *
+     * A photograph of a page is the commonest document there is and the
+     * one this converter had no way in for. A reader who took one had to
+     * find something that would turn it into a PDF first, and most of what
+     * does that on a phone sends the page away to do it — which is the one
+     * thing this app exists not to do.
+     *
+     * Everything past the decoding is what a scanned PDF already goes
+     * through, because a rendered page and a photographed one are the same
+     * thing to recognition. What is different is that a PDF states the
+     * size of its paper and a photograph states nothing, so the page each
+     * picture stands for is worked out from its shape — see [ImagePage].
+     *
+     * [onPage] and [shouldContinue] mean what they mean for a PDF: a
+     * picture takes seconds, and a reader who picked forty of them can
+     * watch and can stop.
+     */
+    fun recognizeImages(
+        images: List<ByteArray>,
+        languages: String = DEFAULT_LANGUAGES,
+        onPage: (page: Int, pageCount: Int) -> Unit = { _, _ -> },
+        shouldContinue: () -> Boolean = { true },
+    ): DocumentModel {
+        require(images.isNotEmpty()) { "no pictures to read" }
+        val dataParent = ensureTrainedData(languages)
+        val words = mutableListOf<RecognizedWord>()
+        val sheets = mutableListOf<PdfPageSheet>()
+        val pageTexts = mutableListOf<String>()
+        var sheet: PageSetup? = null
+        val tess = started(dataParent, languages)
+        try {
+            for ((at, bytes) in images.withIndex()) {
+                val page = at + 1
+                if (!shouldContinue()) throw Cancelled()
+                onPage(page, images.size)
+                val bitmap = decoded(bytes)
+                    ?: throw UnreadablePicture(page)
+                try {
+                    // Nothing is asked of the file about its own
+                    // resolution. A flatbed writes one worth believing, but
+                    // reading it needs a library of its own and a stub
+                    // beside it, and what it would buy is the size of a
+                    // page cropped out of a scan — where the type still
+                    // comes out at the right sizes, since those are taken
+                    // from the document's own middle rather than from any
+                    // resolution. The way in is kept open in [ImagePage]
+                    // for when it is worth the weight.
+                    val stood = ImagePage.of(page, bitmap.width, bitmap.height)
+                        ?: throw UnreadablePicture(page)
+                    sheets += stood.sheet
+                    // The first picture sets the paper the document is laid
+                    // out on, the way the first page of a PDF does.
+                    if (sheet == null) sheet = PageSetup(
+                        widthPt = stood.sheet.widthPt,
+                        heightPt = stood.sheet.heightPt,
+                        marginTopPt = 0f,
+                        marginBottomPt = 0f,
+                        marginLeftPt = 0f,
+                        marginRightPt = 0f,
+                    )
+                    words += read(tess, bitmap, page, stood.dpi)
+                    if (words.isEmpty()) pageTexts += tess.getUTF8Text().orEmpty()
+                } finally {
+                    bitmap.recycle()
+                }
+                if (!shouldContinue()) throw Cancelled()
+            }
+        } finally {
+            tess.recycle()
+        }
+        return modelOf(words, pageTexts, sheets, sheet)
+    }
+
+    /** Raised where a picked picture is one nothing on the device decodes. */
+    class UnreadablePicture(val page: Int) : Exception("picture $page could not be decoded")
+
+    /**
+     * [bytes] as a bitmap no larger than the budget a phone can hold.
+     *
+     * A photograph off a modern phone runs to a hundred megapixels, which
+     * is four hundred megabytes laid out as pixels and the end of the
+     * process. It is read at its size first and then decoded at a fraction
+     * of it, which the decoder does while reading rather than afterwards,
+     * so the large one never exists.
+     *
+     * Null where nothing on the device decodes the file: a TIFF, a
+     * truncated download, something named `.jpg` that is not one.
+     */
+    private fun decoded(bytes: ByteArray): Bitmap? {
+        val measuring = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, measuring)
+        val wide = measuring.outWidth
+        val high = measuring.outHeight
+        if (wide < 1 || high < 1) return null
+        var sample = 1
+        while (wide.toLong() * high / (sample.toLong() * sample) > MAX_PAGE_PIXELS) sample *= 2
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sample
+            // Recognition reads greys, and a photograph held as four bytes
+            // a pixel is four times the room for nothing it will use.
+            inPreferredConfig = Bitmap.Config.RGB_565
+        }
+        return runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) }.getOrNull()
+    }
+
+    /**
+     * Recognition, told what it needs to be told before it is given
+     * anything to read.
+     *
+     * Both ways in ask for the same two things, and a reader that asked
+     * for them in one place and not the other would be a converter that
+     * read a photograph well and a scan badly, or the other way about,
+     * for no reason anybody could see.
+     */
+    private fun started(dataParent: File, languages: String): TessBaseAPI {
+        val tess = TessBaseAPI()
+        try {
+            check(tess.init(dataParent.absolutePath, languages)) {
+                "Tesseract failed to initialize for $languages"
+            }
+            // Work the page out before reading it. Left unasked,
+            // recognition reads the whole image as ONE BLOCK of text and
+            // does no layout analysis at all — that is the library's
+            // default, stated in its own documentation for this call and
+            // set in Tesseract's own source. A two-column page then reads
+            // straight across the gutter, half a sentence from each column
+            // at a time, and nothing is classified, so a heading, a
+            // caption and a line of body text all come back alike.
+            tess.setPageSegMode(PAGE_SEGMENTATION)
+            // Ask for the font of every word as well as its box. The fast
+            // models this app ships answer nothing — the newer recogniser
+            // reports no font at all — but it is one call, it cannot fail,
+            // and a model that does answer is the difference between
+            // finding a paper's bold headings and missing them.
+            tess.setVariable(FONT_INFO, "1")
+            return tess
+        } catch (e: Throwable) {
+            // A recogniser that started and then failed to be told
+            // something still holds native memory until it is let go.
+            tess.recycle()
+            throw e
+        }
+    }
+
+    /**
+     * The words of one [bitmap], which is [page] of the document and was
+     * made at [dpi].
+     *
+     * The resolution is passed on rather than left to be guessed at:
+     * recognition takes it from the image, a bitmap made here carries
+     * none, and every threshold it works a text line out from is in real
+     * units. This reader knows the number exactly — it chose it — so what
+     * is passed is the same value the bitmap was made with and not a
+     * second opinion about it.
+     */
+    private fun read(tess: TessBaseAPI, bitmap: Bitmap, page: Int, dpi: Float): List<RecognizedWord> {
+        tess.setImage(bitmap)
+        tess.setVariable(SOURCE_DPI, dpi.roundToInt().coerceAtLeast(1).toString())
+        return Hocr.wordsOf(tess.getHOCRText(page).orEmpty(), page, dpi)
+    }
+
+    /**
+     * What recognition found, as the document it stands for.
+     *
+     * [words] where its hOCR could be read, and [pageTexts] where none of
+     * it could: a build whose hOCR this cannot parse must still convert
+     * the document the way it always did rather than hand back an empty
+     * file.
+     */
+    private fun modelOf(
+        words: List<RecognizedWord>,
+        pageTexts: List<String>,
+        sheets: List<PdfPageSheet>,
+        sheet: PageSetup?,
+    ): DocumentModel {
         fun scored(blocks: List<Block>) = blocks.map { block ->
             when (block) {
                 is Paragraph -> block.copy(confidence = OCR_CONFIDENCE)
@@ -177,8 +332,8 @@ class AndroidOcrReader(private val context: Context) {
             sheets = sheets,
         )
         // The body is left as the reading scored it: it knows more about
-        // each block than this does, and moved every score up or down
-        // from [OCR_CONFIDENCE] for a reason. A running head is not scored
+        // each block than this does, and moved every score up or down from
+        // [OCR_CONFIDENCE] for a reason. A running head is not scored
         // there, because a PDF that spells one out is certain of it — and
         // a scan is a guess like everything else recognition hands back.
         return model.copy(
@@ -345,6 +500,7 @@ class AndroidOcrReader(private val context: Context) {
         private const val MAX_PAGE_PIXELS = 8_000_000f
         private const val POINTS_PER_INCH = 72f
         private const val TESSDATA_DIR = "tessdata"
+
         private const val TRAINED_DATA_SUFFIX = ".traineddata"
     }
 }

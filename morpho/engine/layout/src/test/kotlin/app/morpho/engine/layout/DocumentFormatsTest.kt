@@ -167,6 +167,58 @@ class DocumentFormatsTest {
     }
 
     @Test
+    fun `a picture of a page is known by its name or by its type`() {
+        for (name in listOf(
+            "page.jpg", "PAGE.JPEG", "scan.png", "shot.webp", "IMG_0421.HEIC",
+            "photo.heif", "new.avif", "old.bmp", "animated.gif",
+        )) {
+            assertTrue(DocumentFormats.isImage(name), "\"$name\" is a picture")
+        }
+        // A provider that names the type is believed whatever the file is
+        // called: a camera roll hands over a content URI with no name at
+        // all worth reading.
+        assertTrue(DocumentFormats.isImage("00001", "image/jpeg"))
+        assertTrue(DocumentFormats.isImage("", "image/heic"))
+        assertTrue(DocumentFormats.isImage("x", "image/some-format-from-2031"))
+    }
+
+    @Test
+    fun `a document is not a picture, whatever it is called`() {
+        for ((name, mime) in listOf(
+            "report.pdf" to DocumentFormats.PDF_MIME,
+            "notes.docx" to DocumentFormats.WORD_MIME,
+            "readme.md" to "text/markdown",
+            "plain.txt" to "text/plain",
+            // The trap: a name that ends in a picture's letters without
+            // being one, and a picture's name on a Word document.
+            "not-a.jpg.docx" to DocumentFormats.WORD_MIME,
+        )) {
+            assertFalse(DocumentFormats.isImage(name, mime), "\"$name\" is not a picture")
+        }
+        // And the other way: a picture is none of the other three, or the
+        // conversion would go down a path with nothing to read.
+        for (picture in listOf("page.jpg" to "image/jpeg", "scan.png" to "image/png")) {
+            val (name, mime) = picture
+            assertFalse(DocumentFormats.isWord(name, mime))
+            assertFalse(DocumentFormats.isPdf(name, mime))
+            assertFalse(DocumentFormats.isPlainText(name, mime))
+        }
+    }
+
+    @Test
+    fun `a picture is a type the picker offers`() {
+        // The other half of the same decision, and the half that is quietly
+        // wrong on its own: a picker that does not offer pictures never
+        // shows the reader one, so a converter that reads them changes
+        // nothing anybody can see.
+        assertTrue(
+            DocumentFormats.IMAGE_WILDCARD in DocumentFormats.PICKABLE_MIME_TYPES,
+            "the picker offers ${DocumentFormats.PICKABLE_MIME_TYPES}",
+        )
+        assertTrue(DocumentFormats.isImage("anything.jpg", DocumentFormats.IMAGE_WILDCARD.dropLast(1) + "jpeg"))
+    }
+
+    @Test
     fun `a file that is all extension still gets called something`() {
         // A hidden file picked from a folder of them would otherwise be
         // saved as a file named ".docx", which is another hidden file.

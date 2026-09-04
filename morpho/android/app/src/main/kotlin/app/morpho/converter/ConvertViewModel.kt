@@ -37,6 +37,18 @@ sealed interface ConvertUiState {
         val isWordDocument: Boolean,
         /** True when the input is a PDF (conversion targets Word; no PDF export). */
         val isPdf: Boolean,
+        /**
+         * True when the input is a picture of a document — a photograph of
+         * a page, a scan saved as an image. There is nothing to read but
+         * what recognition finds, so this goes straight to it rather than
+         * offering a conversion that would come back empty.
+         */
+        val isImage: Boolean = false,
+        /**
+         * How many pictures were handed over together, which are between
+         * them one document. One for everything else.
+         */
+        val pictures: Int = 1,
     ) : ConvertUiState
 
     /** Page counts are 0 for work that is not page-by-page (everything but OCR). */
@@ -92,7 +104,7 @@ sealed interface ConvertUiState {
 }
 
 enum class FailReason {
-    UNSUPPORTED_TYPE, SCANNED_PDF, OCR_EMPTY, TOO_LARGE, READ_ERROR, WRITE_ERROR
+    UNSUPPORTED_TYPE, SCANNED_PDF, OCR_EMPTY, UNREADABLE_PICTURE, TOO_LARGE, READ_ERROR, WRITE_ERROR
 }
 
 /** What Review Mode shows: the report, and which blocks the reader corrected. */
@@ -118,11 +130,19 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     val state: StateFlow<ConvertUiState> = _state.asStateFlow()
 
     /**
-     * The picked document and its metadata, published as one reference so a
-     * second pick racing in (share sheet vs. picker result) can never pair
-     * one file's bytes with another file's type routing.
+     * What the reader picked, published as one reference so a second pick
+     * racing in (share sheet vs. picker result) can never pair one file's
+     * bytes with another file's type routing.
+     *
+     * One document, or the several pictures that are between them one
+     * document. [uri] is the first of them, which is the one everything but
+     * recognition reads: a Word file or a PDF arrives on its own, and a
+     * reader who somehow sent several gets the first converted rather than
+     * nothing at all.
      */
-    private data class PickedFile(val uri: Uri, val meta: ConvertUiState.Picked)
+    private data class PickedFile(val uris: List<Uri>, val meta: ConvertUiState.Picked) {
+        val uri: Uri get() = uris.first()
+    }
 
     private var pickedFile: PickedFile? = null
 
@@ -292,7 +312,20 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun onPicked(uri: Uri) {
+    /** One document, picked or opened or shared. */
+    fun onPicked(uri: Uri) = onPickedAll(listOf(uri))
+
+    /**
+     * Several pictures, shared together, which are between them one
+     * document: a reader photographs the four pages of a form and shares
+     * all four at once.
+     *
+     * The first names the result and decides what kind of thing this is.
+     * The rest are pages of it, in the order they were handed over, which
+     * is the order the sharing app showed them in.
+     */
+    fun onPickedAll(uris: List<Uri>) {
+        if (uris.isEmpty()) return
         // Synchronously, before the IO hop: a new document supersedes
         // whatever was in flight. The epoch bump makes a running conversion
         // discard its result rather than publish it over the new pick, and
@@ -311,6 +344,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         _review.value = null
 
         val epoch = pickEpoch
+        val uri = uris.first()
         viewModelScope.launch(Dispatchers.IO) {
             // DocumentsProviders can be slow (cloud providers, network
             // shares); never query them on the main thread.
@@ -323,15 +357,23 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                     }
             }
             val mime = runCatching { resolver.getType(uri) }.getOrNull()
+            val picture = DocumentFormats.isImage(name, mime)
+            // Several files are several pages only where they are pictures.
+            // Two Word documents are two documents, and converting the
+            // first while silently dropping the second is the sort of thing
+            // a reader finds out about much later.
+            val theseOnes = if (picture) uris else listOf(uri)
             val state = ConvertUiState.Picked(
                 fileName = name,
                 mime = mime,
                 isWordDocument = DocumentFormats.isWord(name, mime),
                 isPdf = DocumentFormats.isPdf(name, mime),
+                isImage = picture,
+                pictures = theseOnes.size,
             )
             // A newer pick while this query was in flight wins outright.
             if (epoch != pickEpoch) return@launch
-            pickedFile = PickedFile(uri, state)
+            pickedFile = PickedFile(theseOnes, state)
             _state.value = state
         }
     }
@@ -366,7 +408,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         // at once, for no benefit and to the user's confusion.
         if (_state.value is ConvertUiState.Converting) return
 
-        val (uri, source) = pickedFile ?: return
+        val picked = pickedFile ?: return
+        val uri = picked.uri
+        val source = picked.meta
         lastOperation = again
         _state.value = ConvertUiState.Converting()
         val epoch = pickEpoch
@@ -385,6 +429,20 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                         if (!hasText) throw UnconvertibleContent(FailReason.SCANNED_PDF)
                         model
                     },
+                    write = { model ->
+                        if (asMarkdown) MarkdownWriter.write(model).toByteArray(Charsets.UTF_8)
+                        else DocxWriter.toByteArray(model)
+                    },
+                )
+                // A picture holds no text to find, so there is no reading
+                // to try before recognition and nothing to be gained by
+                // offering one: it goes where a scanned PDF goes after the
+                // reader has been told it is a scan.
+                source.isImage -> convertPicked(
+                    epoch, uri, source,
+                    if (asMarkdown) "md" else "docx",
+                    if (asMarkdown) MARKDOWN_MIME else DocxWriter.MIME_TYPE,
+                    read = { bytes -> recognizedPictures(epoch, bytes, picked.uris.drop(1)) },
                     write = { model ->
                         if (asMarkdown) MarkdownWriter.write(model).toByteArray(Charsets.UTF_8)
                         else DocxWriter.toByteArray(model)
@@ -505,7 +563,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         // at once, for no benefit and to the user's confusion.
         if (_state.value is ConvertUiState.Converting) return
 
-        val (uri, source) = pickedFile ?: return
+        val picked = pickedFile ?: return
+        val uri = picked.uri
+        val source = picked.meta
         lastOperation = ::convertWithOcr
         _state.value = ConvertUiState.Converting()
         cancelled.set(false)
@@ -543,6 +603,49 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
+     * One picture, recognised — the same reading a scanned PDF gets, since
+     * a rendered page and a photographed one are the same thing to
+     * recognition once they are pixels.
+     */
+    private fun recognizedPictures(epoch: Int, first: ByteArray, rest: List<Uri>): DocumentModel {
+        // The first is already in hand; the others are read as they are
+        // reached rather than all at once, so forty photographs are forty
+        // pages of work and not forty pictures held in memory together.
+        val pages = buildList {
+            add(first)
+            for (uri in rest) {
+                add(bytesOf(uri) ?: throw UnconvertibleContent(FailReason.READ_ERROR))
+            }
+        }
+        val model = try {
+            AndroidOcrReader(getApplication()).recognizeImages(
+                images = pages,
+                languages = ocrLanguages(),
+                onPage = { page, pageCount ->
+                    publish(epoch, ConvertUiState.Converting(page, pageCount))
+                },
+                shouldContinue = { !cancelled.get() },
+            )
+        } catch (e: AndroidOcrReader.UnreadablePicture) {
+            // Named rather than lumped in with a read error: a reader whose
+            // TIFF will not open needs to know it is the kind of picture
+            // and not the picture.
+            throw UnconvertibleContent(FailReason.UNREADABLE_PICTURE)
+        }
+        // Recognising nothing is a real outcome — a photograph of a wall,
+        // a page too dark to read. Saying so beats saving an empty
+        // document that looks like a conversion that worked.
+        val recognized = model.blocks.filterIsInstance<Paragraph>().any { it.text.isNotBlank() }
+        if (!recognized) throw UnconvertibleContent(FailReason.OCR_EMPTY)
+        return model
+    }
+
+    /** [uri] read whole, or null where the provider would not open it. */
+    private fun bytesOf(uri: Uri): ByteArray? = runCatching {
+        getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() }
+    }.getOrNull()
+
+    /**
      * The OCR language set follows the app language. Which set that is
      * belongs beside the packs it names, where a test can hold the two to
      * each other: a set naming a pack the app does not ship fails nowhere
@@ -557,7 +660,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         // at once, for no benefit and to the user's confusion.
         if (_state.value is ConvertUiState.Converting) return
 
-        val (uri, source) = pickedFile ?: return
+        val picked = pickedFile ?: return
+        val uri = picked.uri
+        val source = picked.meta
         lastOperation = ::exportPdf
         _state.value = ConvertUiState.Converting()
         val epoch = pickEpoch
@@ -576,7 +681,9 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         // at once, for no benefit and to the user's confusion.
         if (_state.value is ConvertUiState.Converting) return
 
-        val (uri, source) = pickedFile ?: return
+        val picked = pickedFile ?: return
+        val uri = picked.uri
+        val source = picked.meta
         lastOperation = ::printPdf
         _state.value = ConvertUiState.Converting()
         val epoch = pickEpoch

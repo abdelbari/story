@@ -62,8 +62,11 @@ fun HomeScreen(viewModel: ConvertViewModel) {
     var showPreview by remember(state is ConvertUiState.Converted) { mutableStateOf(true) }
 
     val openLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri -> if (uri != null) viewModel.onPicked(uri) }
+        // Several at once, because several photographs of a form are one
+        // document. One file picked is a list of one and behaves as it
+        // always did.
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris -> if (!uris.isNullOrEmpty()) viewModel.onPickedAll(uris) }
 
     val saveDocxLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument(DocxWriter.MIME_TYPE)
@@ -231,8 +234,16 @@ private fun StateContent(state: ConvertUiState) {
         is ConvertUiState.Idle ->
             Text(stringResource(R.string.empty_hint))
 
-        is ConvertUiState.Picked ->
+        is ConvertUiState.Picked -> {
             Text(state.fileName, style = MaterialTheme.typography.titleMedium)
+            if (state.pictures > 1) {
+                Text(
+                    text = stringResource(R.string.pictures_as_pages, state.pictures),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
 
         is ConvertUiState.NeedsPassword -> {
             Text(state.fileName, style = MaterialTheme.typography.titleMedium)
@@ -560,6 +571,7 @@ private fun FailReason.messageRes(): Int = when (this) {
     FailReason.UNSUPPORTED_TYPE -> R.string.unsupported_type
     FailReason.SCANNED_PDF -> R.string.scanned_pdf
     FailReason.OCR_EMPTY -> R.string.ocr_empty
+    FailReason.UNREADABLE_PICTURE -> R.string.unreadable_picture
     FailReason.TOO_LARGE -> R.string.too_large
     FailReason.READ_ERROR -> R.string.read_error
     FailReason.WRITE_ERROR -> R.string.write_error

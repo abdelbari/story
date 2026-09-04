@@ -34,14 +34,27 @@ class MainActivity : AppCompatActivity() {
         handleIncoming(intent)
     }
 
-    /** A document arriving via the share sheet or an "Open with" tap. */
+    /**
+     * A document arriving via the share sheet or an "Open with" tap.
+     *
+     * Several at once where they are pictures: a reader photographs the
+     * four pages of a form and shares all four, which are between them one
+     * document and convert as one. The order is the one the sharing app
+     * handed them over in, which is the order it showed them in.
+     */
     private fun handleIncoming(intent: Intent?) {
-        val uri: Uri? = when (intent?.action) {
+        val uris: List<Uri> = when (intent?.action) {
             Intent.ACTION_SEND ->
-                IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
-            Intent.ACTION_VIEW -> intent.data
-            else -> null
+                listOfNotNull(
+                    IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                )
+            Intent.ACTION_SEND_MULTIPLE ->
+                IntentCompat.getParcelableArrayListExtra(
+                    intent, Intent.EXTRA_STREAM, Uri::class.java
+                ).orEmpty()
+            Intent.ACTION_VIEW -> listOfNotNull(intent.data)
+            else -> emptyList()
         }
-        if (uri != null) viewModel.onPicked(uri)
+        if (uris.isNotEmpty()) viewModel.onPickedAll(uris)
     }
 }

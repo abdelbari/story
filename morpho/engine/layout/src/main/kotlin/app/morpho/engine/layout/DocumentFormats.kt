@@ -64,6 +64,28 @@ object DocumentFormats {
     private val TEXT_SUFFIXES = listOf(".txt", ".md", ".markdown")
 
     /**
+     * A picture of a document: a photograph of a page, a scan saved as an
+     * image rather than a PDF, a screenshot of one.
+     *
+     * These are the formats the platform itself decodes, which is the only
+     * list worth offering: a reader shown a type the decoder cannot open
+     * picks it, waits, and is told the file is unreadable. TIFF is the
+     * notable absence — a great deal of scanning software still writes it,
+     * and nothing on the device will open one.
+     *
+     * AVIF is here although only the newer half of supported devices
+     * decodes it: a phone that cannot returns nothing from the decoder,
+     * which is the same answer it gives for a truncated JPEG and is
+     * already handled. Refusing it outright would keep it from the phones
+     * that can.
+     */
+    private val IMAGE_SUFFIXES =
+        listOf(".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".avif", ".bmp", ".gif")
+
+    /** What a provider calls a picture. Every one of them starts this way. */
+    private const val IMAGE_PREFIX = "image/"
+
+    /**
      * The types the app offers the system file picker.
      *
      * This is the other half of the same decision, and the half that was
@@ -77,7 +99,11 @@ object DocumentFormats {
      * one that does not still shows the two.
      */
     val PICKABLE_MIME_TYPES: List<String> =
-        listOf("text/plain", MARKDOWN_MIME, "text/*") + WORD_MIMES + PDF_MIME
+        listOf("text/plain", MARKDOWN_MIME, "text/*") + WORD_MIMES + PDF_MIME +
+            listOf(IMAGE_WILDCARD)
+
+    /** What a picker is offered for pictures, which every provider understands. */
+    const val IMAGE_WILDCARD: String = "image/*"
 
     /** Whether [fileName] with [mimeType] is a Word document this can read. */
     fun isWord(fileName: String, mimeType: String? = null): Boolean =
@@ -86,6 +112,17 @@ object DocumentFormats {
     /** Whether [fileName] with [mimeType] is a PDF. */
     fun isPdf(fileName: String, mimeType: String? = null): Boolean =
         mimeType in PDF_MIMES || named(fileName, PDF_SUFFIXES)
+
+    /**
+     * Whether [fileName] with [mimeType] is a picture of a document.
+     *
+     * A photograph of a page is the most common document there is, and the
+     * one the converter had no way in for: a reader who took one had to
+     * find something that would make a PDF of it first, and most of what
+     * does that on a phone sends the page away to do it.
+     */
+    fun isImage(fileName: String, mimeType: String? = null): Boolean =
+        mimeType.orEmpty().startsWith(IMAGE_PREFIX) || named(fileName, IMAGE_SUFFIXES)
 
     /**
      * Whether [fileName] with [mimeType] is text this can import.

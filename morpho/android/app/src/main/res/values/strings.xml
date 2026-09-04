@@ -16,7 +16,9 @@
     <string name="retry">Try again</string>
     <string name="scanned_pdf">This looks like a scanned PDF with no text layer. You can read it with fully on-device OCR.</string>
     <string name="convert_with_ocr">Read with OCR and convert</string>
-    <string name="unsupported_type">Morpho converts PDF, Word (.docx), text and Markdown files. That one is something else.</string>
+    <string name="unsupported_type">Morpho converts PDF, Word (.docx), text, Markdown and pictures of pages. That one is something else.</string>
+    <string name="pictures_as_pages">%1$d pictures, converted as one document</string>
+    <string name="unreadable_picture">This phone cannot open that kind of picture. JPEG, PNG, WebP and HEIC all work; TIFF does not.</string>
     <string name="read_error">Couldn’t read that file. It may be damaged, or not the kind of file its name says it is.</string>
     <string name="write_error">Couldn’t save the converted file.</string>
     <string name="privacy_line">On-device only — conversions on this screen never touch the network.</string>
