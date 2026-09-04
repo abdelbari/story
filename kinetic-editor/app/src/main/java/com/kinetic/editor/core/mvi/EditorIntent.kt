@@ -99,6 +99,11 @@ sealed interface EditorIntent {
     /** A move that runs across the whole clip, on top of its transform. */
     data class SetMotion(val clipId: ClipId, val motion: ClipMotion) : EditorIntent
 
+    /** Where the clip's move ends, or null to stop it travelling. */
+    data class SetTransformEnd(val clipId: ClipId, val transform: TransformSpec?) : EditorIntent {
+        override val coalesceKey get() = "xformEnd:${clipId.value}"
+    }
+
     /** Pan, zoom and rotate the picture inside its frame. */
     data class SetTransform(val clipId: ClipId, val transform: TransformSpec) : EditorIntent {
         override val coalesceKey get() = "xform:${clipId.value}"

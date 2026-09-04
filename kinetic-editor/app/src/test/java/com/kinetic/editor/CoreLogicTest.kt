@@ -31,6 +31,7 @@ import com.kinetic.editor.core.model.VolumeKeyframe
 import com.kinetic.editor.core.model.audioStructureHash
 import com.kinetic.editor.core.model.overlayStructureHash
 import com.kinetic.editor.core.model.motionAt
+import com.kinetic.editor.core.model.transformAt
 import com.kinetic.editor.core.model.gainAt
 import com.kinetic.editor.core.model.layoutKey
 import com.kinetic.editor.core.model.overlayAnimAt
@@ -588,6 +589,46 @@ class CoreLogicTest {
             assertTrue("$name is not declared in the shader", src.contains("uniform") && uses > 0)
             assertTrue("$name is declared but never read", uses > 1)
         }
+    }
+
+    @Test
+    fun aHandSetMoveTravelsAndOutranksAPreset() {
+        val start = TransformSpec(scale = 1f, offsetX = -0.4f)
+        val finish = TransformSpec(scale = 2f, offsetX = 0.4f)
+
+        assertEquals(start, transformAt(start, finish, ClipMotion.NONE, 0f))
+        assertEquals(finish, transformAt(start, finish, ClipMotion.NONE, 1f))
+        val half = transformAt(start, finish, ClipMotion.NONE, 0.5f)
+        assertEquals(1.5f, half.scale, 1e-4f)
+        assertEquals(0f, half.offsetX, 1e-4f)
+
+        // A move set by hand beats a preset: offering both would let two
+        // sources of movement fight over the same frame.
+        assertEquals(finish, transformAt(start, finish, ClipMotion.ZOOM_IN, 1f))
+        // With no end framing the preset supplies the move, as before.
+        assertEquals(
+            motionAt(start, ClipMotion.ZOOM_IN, 0.5f),
+            transformAt(start, null, ClipMotion.ZOOM_IN, 0.5f),
+        )
+        // Progress is clamped at both ends, so a stray timestamp cannot
+        // overshoot the framing the user set.
+        assertEquals(finish, transformAt(start, finish, ClipMotion.NONE, 4f))
+        assertEquals(start, transformAt(start, finish, ClipMotion.NONE, -4f))
+    }
+
+    @Test
+    fun theEndFramingIsClampedLikeTheStartAndOmittedWhenAbsent() {
+        val c = clip("a", 4_000)
+        val s0 = stateWith(listOf(c))
+        val wild = reduce(
+            s0,
+            EditorIntent.SetTransformEnd(c.id, TransformSpec(scale = 99f, offsetX = -9f)),
+        ).mainTrack.clips[0].transformEnd!!
+        assertEquals(8f, wild.scale, 1e-4f)
+        assertEquals(-2f, wild.offsetX, 1e-4f)
+
+        assertNull(reduce(s0, EditorIntent.SetTransformEnd(c.id, null)).mainTrack.clips[0].transformEnd)
+        assertFalse(ProjectCodec.encode(s0).contains("transformEnd"))
     }
 
     @Test

@@ -302,6 +302,30 @@ private const val MOTION_PAN_ZOOM = 1.15f
  * with the manual transform rather than replacing it, so a clip that has been
  * reframed by hand can still be given a push.
  */
+/**
+ * The clip's transform partway through it, from whichever source supplies a
+ * move: a hand-set [end] frame if there is one, otherwise a [motion] preset.
+ *
+ * One function so the two cannot both apply and fight. A move set by hand wins,
+ * because the user was being more specific than a preset.
+ */
+fun transformAt(
+    base: TransformSpec,
+    end: TransformSpec?,
+    motion: ClipMotion,
+    progress: Float,
+): TransformSpec =
+    if (end != null) lerpTransform(base, end, progress.coerceIn(0f, 1f))
+    else motionAt(base, motion, progress)
+
+/** Straight-line travel between two framings; rotation takes the direct path. */
+private fun lerpTransform(a: TransformSpec, b: TransformSpec, t: Float) = TransformSpec(
+    scale = a.scale + (b.scale - a.scale) * t,
+    offsetX = a.offsetX + (b.offsetX - a.offsetX) * t,
+    offsetY = a.offsetY + (b.offsetY - a.offsetY) * t,
+    rotationDeg = a.rotationDeg + (b.rotationDeg - a.rotationDeg) * t,
+)
+
 fun motionAt(base: TransformSpec, motion: ClipMotion, progress: Float): TransformSpec {
     if (motion == ClipMotion.NONE) return base
     val t = progress.coerceIn(0f, 1f)

@@ -104,6 +104,7 @@ import com.kinetic.editor.ui.theme.ValueSlider
 import com.kinetic.editor.core.model.StickerSpec
 import com.kinetic.editor.core.model.PipSpec
 import com.kinetic.editor.core.model.ChromaKeySpec
+import androidx.compose.runtime.mutableStateOf
 
 /**
  * Screen-level wiring. The two LaunchedEffects below are the ENTIRE
@@ -804,32 +805,72 @@ private fun LookSection(clip: ClipModel, dispatch: (EditorIntent) -> Unit) {
     }
 }
 
-/** Geometry: where the picture sits in the frame, and how it moves. */
+/**
+ * Geometry: where the picture sits in the frame, and how it moves.
+ *
+ * A move is either a preset or a pair of framings the clip travels between.
+ * The sliders edit one end at a time, chosen by the Start/End chips, because
+ * two sets of four sliders would not fit and would be worse if they did.
+ */
 @Composable
 private fun FrameSection(clip: ClipModel, dispatch: (EditorIntent) -> Unit) {
-    val xf = clip.transform
+    // Reset per clip: switching selection must not leave you editing the far
+    // end of a move belonging to a clip you can no longer see.
+    var editingEnd by remember(clip.id) { mutableStateOf(false) }
+    val end = clip.transformEnd
+    val travelling = end != null
+    val editing = if (travelling && editingEnd) end else clip.transform
+
+    fun set(next: TransformSpec) {
+        if (travelling && editingEnd) dispatch(EditorIntent.SetTransformEnd(clip.id, next))
+        else dispatch(EditorIntent.SetTransform(clip.id, next))
+    }
+
     Row(horizontalArrangement = Arrangement.spacedBy(Dim.sm)) {
-        ValueSlider("Zoom", xf.scale, 0.2f..4f, Modifier.weight(1f)) {
-            dispatch(EditorIntent.SetTransform(clip.id, xf.copy(scale = it)))
+        ValueSlider("Zoom", editing.scale, 0.2f..4f, Modifier.weight(1f)) {
+            set(editing.copy(scale = it))
         }
-        ValueSlider("Turn", xf.rotationDeg, -180f..180f, Modifier.weight(1f)) {
-            dispatch(EditorIntent.SetTransform(clip.id, xf.copy(rotationDeg = it)))
+        ValueSlider("Turn", editing.rotationDeg, -180f..180f, Modifier.weight(1f)) {
+            set(editing.copy(rotationDeg = it))
         }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(Dim.sm)) {
-        ValueSlider("Pan X", xf.offsetX, -1f..1f, Modifier.weight(1f)) {
-            dispatch(EditorIntent.SetTransform(clip.id, xf.copy(offsetX = it)))
+        ValueSlider("Pan X", editing.offsetX, -1f..1f, Modifier.weight(1f)) {
+            set(editing.copy(offsetX = it))
         }
-        ValueSlider("Pan Y", xf.offsetY, -1f..1f, Modifier.weight(1f)) {
-            dispatch(EditorIntent.SetTransform(clip.id, xf.copy(offsetY = it)))
+        ValueSlider("Pan Y", editing.offsetY, -1f..1f, Modifier.weight(1f)) {
+            set(editing.copy(offsetY = it))
         }
     }
-    ChipRow("Motion") {
-        for (move in ClipMotion.entries) {
-            Chip(move.label, clip.motion == move) { dispatch(EditorIntent.SetMotion(clip.id, move)) }
+    ChipRow("Move") {
+        Chip("Start", travelling && !editingEnd) {
+            editingEnd = false
         }
-        if (!xf.isIdentity) {
-            Chip("Reset", false) { dispatch(EditorIntent.SetTransform(clip.id, TransformSpec.NONE)) }
+        Chip("End", travelling && editingEnd) {
+            // Starting from the current framing, so the move begins as a hold
+            // and the user drags one end of it away.
+            if (!travelling) dispatch(EditorIntent.SetTransformEnd(clip.id, clip.transform))
+            editingEnd = true
+        }
+        if (travelling) {
+            Chip("Clear", false) {
+                dispatch(EditorIntent.SetTransformEnd(clip.id, null))
+                editingEnd = false
+            }
+        }
+        if (!editing.isIdentity) {
+            Chip("Reset", false) { set(TransformSpec.NONE) }
+        }
+    }
+    // A hand-set move takes precedence over a preset, so offering both at once
+    // would be offering one that does nothing.
+    if (!travelling) {
+        ChipRow("Motion") {
+            for (move in ClipMotion.entries) {
+                Chip(move.label, clip.motion == move) {
+                    dispatch(EditorIntent.SetMotion(clip.id, move))
+                }
+            }
         }
     }
 }

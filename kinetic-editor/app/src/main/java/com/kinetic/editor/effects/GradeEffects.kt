@@ -16,6 +16,7 @@ import com.kinetic.editor.core.model.ClipMotion
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.TransformSpec
 import com.kinetic.editor.core.model.motionAt
+import com.kinetic.editor.core.model.transformAt
 import com.kinetic.editor.core.model.TransitionType
 
 /**
@@ -244,6 +245,7 @@ class ClipGradeProvider(
     private val grade: ColorGradeSpec,
     private val chroma: ChromaKeySpec?,
     private val transform: TransformSpec,
+    private val transformEnd: TransformSpec?,
     private val motion: ClipMotion,
     /** The clip's own span, so a motion knows how far through it the frame is. */
     private val spanUs: Long,
@@ -266,7 +268,9 @@ class ClipGradeProvider(
         out.setGrade(grade)
         out.setChroma(chroma)
         out.seedGrainAt(presentationTimeUs)
-        out.setTransform(motionAt(transform, motion, progressOf(localUs, spanUs)))
+        out.setTransform(
+            transformAt(transform, transformEnd, motion, progressOf(localUs, spanUs)),
+        )
         out.lutBitmap = lutBitmap
         out.lutIntensity = lutIntensity
 
@@ -313,8 +317,9 @@ class PreviewFxProvider : GradeUniformsProvider {
         out.setChroma(seg.chroma)
         out.seedGrainAt(presentationTimeUs)
         out.setTransform(
-            motionAt(
+            transformAt(
                 seg.transform,
+                seg.transformEnd,
                 seg.motion,
                 progressOf(presentationTimeUs - seg.startUs, seg.endUs - seg.startUs),
             ),
@@ -376,6 +381,7 @@ class FxSegment(
     val startUs: Long,
     val endUs: Long,
     val transform: TransformSpec,
+    val transformEnd: TransformSpec?,
     val motion: ClipMotion,
     val chroma: ChromaKeySpec?,
     val grain: Float,

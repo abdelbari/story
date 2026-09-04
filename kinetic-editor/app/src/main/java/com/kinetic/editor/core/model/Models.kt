@@ -286,6 +286,13 @@ data class ClipModel(
     val transform: TransformSpec = TransformSpec.NONE,
     val motion: ClipMotion = ClipMotion.NONE,
     val chroma: ChromaKeySpec? = null,
+    /**
+     * Where the picture ends up, when the user wants a move of their own.
+     * Null means the clip does not travel: [motion] supplies the move, or
+     * nothing does. Non-null takes precedence — a move set by hand beats a
+     * preset, because the user was more specific.
+     */
+    val transformEnd: TransformSpec? = null,
 ) {
     /** Source-domain span (what the decoder actually reads). */
     val sourceSpanMs: Long get() = trimOutMs - trimInMs

@@ -3,6 +3,7 @@ package com.kinetic.editor.core.mvi
 import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ClipModel
 import com.kinetic.editor.core.model.TimelineState
+import com.kinetic.editor.core.model.TransformSpec
 import com.kinetic.editor.core.model.Track
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.snapToFrame
@@ -61,18 +62,11 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
         )
     }
     is EditorIntent.SetMotion -> replaceClip(state, intent.clipId) { it.copy(motion = intent.motion) }
+    is EditorIntent.SetTransformEnd -> replaceClip(state, intent.clipId) {
+        it.copy(transformEnd = intent.transform?.let(::clampTransform))
+    }
     is EditorIntent.SetTransform -> replaceClip(state, intent.clipId) {
-        it.copy(
-            transform = intent.transform.copy(
-                // A zero or negative scale divides the sampling coordinate by
-                // nothing; the offsets bound how far off-frame a clip can be
-                // pushed before it is simply gone.
-                scale = intent.transform.scale.coerceIn(0.1f, 8f),
-                offsetX = intent.transform.offsetX.coerceIn(-2f, 2f),
-                offsetY = intent.transform.offsetY.coerceIn(-2f, 2f),
-                rotationDeg = intent.transform.rotationDeg.coerceIn(-180f, 180f),
-            ),
-        )
+        it.copy(transform = clampTransform(intent.transform))
     }
     is EditorIntent.SetTransition -> replaceClip(state, intent.clipId) {
         it.copy(transitionOut = intent.transition)
@@ -287,6 +281,18 @@ private fun reduceDuplicate(state: TimelineState, id: ClipId): TimelineState {
         }
     }
 }
+
+/**
+ * Bounds a framing to what the shader can sample: a zero or negative scale
+ * divides the sampling coordinate by nothing, and the offsets bound how far
+ * off-frame a clip can be pushed before it is simply gone.
+ */
+private fun clampTransform(t: TransformSpec) = t.copy(
+    scale = t.scale.coerceIn(0.1f, 8f),
+    offsetX = t.offsetX.coerceIn(-2f, 2f),
+    offsetY = t.offsetY.coerceIn(-2f, 2f),
+    rotationDeg = t.rotationDeg.coerceIn(-180f, 180f),
+)
 
 private inline fun mapTracks(state: TimelineState, transform: (Track) -> Track): TimelineState {
     var changed = false
