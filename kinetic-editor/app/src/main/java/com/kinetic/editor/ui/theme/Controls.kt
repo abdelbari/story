@@ -4,6 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
@@ -66,15 +67,11 @@ fun IconAction(
         modifier
             .clip(RoundedCornerShape(Dim.radiusSm))
             .background(if (active) Ink.accentFill else Color.Transparent)
-            .pointerInput(enabled) {
-                if (!enabled) return@pointerInput
-                awaitEachGesture {
-                    awaitFirstDown()
-                    // Fire on press, not on release: an editor's tools should
-                    // feel like keys, and the gesture layer owns the timeline.
-                    onClick()
-                }
-            }
+            // clickable, not a raw pointer handler: it fires on release inside
+            // the target, so a press dragged away is cancelled — which matters
+            // most for the one that deletes a clip — and it carries the button
+            // role, so the control is reachable by a screen reader.
+            .clickable(enabled = enabled, onClickLabel = label, onClick = onClick)
             .width(56.dp)
             .padding(vertical = Dim.sm),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -103,7 +100,7 @@ fun Chip(
                 if (active) Ink.accent.copy(alpha = 0.5f) else Color.Transparent,
                 RoundedCornerShape(Dim.radiusSm),
             )
-            .pointerInput(Unit) { awaitEachGesture { awaitFirstDown(); onClick() } }
+            .clickable(onClickLabel = label, onClick = onClick)
             .padding(horizontal = Dim.md, vertical = Dim.sm),
         contentAlignment = Alignment.Center,
     ) {
@@ -131,7 +128,7 @@ fun ChipBox(
                 if (active) Ink.accent.copy(alpha = 0.5f) else Color.Transparent,
                 RoundedCornerShape(Dim.radiusSm),
             )
-            .pointerInput(Unit) { awaitEachGesture { awaitFirstDown(); onClick() } }
+            .clickable(onClick = onClick)
             .padding(horizontal = Dim.md, vertical = Dim.sm),
         contentAlignment = Alignment.Center,
     ) { content() }

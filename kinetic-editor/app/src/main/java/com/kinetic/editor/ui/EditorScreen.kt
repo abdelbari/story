@@ -87,8 +87,6 @@ import com.kinetic.editor.ui.timeline.TrimGhost
 import com.kinetic.editor.ui.timeline.DragGhost
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
@@ -103,7 +101,6 @@ import com.kinetic.editor.ui.theme.KineticIcons
 import com.kinetic.editor.ui.theme.SectionLabel
 import com.kinetic.editor.ui.theme.Type
 import com.kinetic.editor.ui.theme.ValueSlider
-import androidx.compose.ui.input.pointer.pointerInput
 import com.kinetic.editor.core.model.StickerSpec
 import com.kinetic.editor.core.model.PipSpec
 
@@ -355,7 +352,7 @@ private fun TransportBar(
                 .size(40.dp)
                 .clip(CircleShape)
                 .background(Ink.accent)
-                .pointerInput(Unit) { awaitEachGesture { awaitFirstDown(); onTogglePlay() } },
+                .clickable(onClickLabel = "Play or pause", onClick = onTogglePlay),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -379,10 +376,7 @@ private fun TransportIcon(
         Modifier
             .size(Dim.touch)
             .clip(CircleShape)
-            .pointerInput(enabled) {
-                if (!enabled) return@pointerInput
-                awaitEachGesture { awaitFirstDown(); onClick() }
-            },
+            .clickable(enabled = enabled, onClickLabel = label, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
