@@ -75,7 +75,8 @@ class NumberedHeadingTest {
         // chapter's title should not be set in the body's face for having
         // a number in front of it.
         val html = HtmlWriter.write(document, "t")
-        assertTrue(html.contains("<li><h1>Method</h1></li>"), html)
-        assertTrue(html.contains("<li>An ordinary item</li>"), html)
+        // The item, whatever else its element says about itself — which block it is, for one.
+        assertTrue(Regex("<li[^>]*><h1>Method</h1></li>").containsMatchIn(html), html)
+        assertTrue(Regex("<li[^>]*>An ordinary item</li>").containsMatchIn(html), html)
     }
 }

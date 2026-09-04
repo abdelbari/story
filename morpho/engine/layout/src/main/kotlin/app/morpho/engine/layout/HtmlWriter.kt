@@ -59,6 +59,49 @@ object HtmlWriter {
         }
 
     /**
+     * The one block at [index] of [document], as the element the page
+     * writes for it.
+     *
+     * Every block of the body says which block it is — `data-block="12"`
+     * on its outermost element, the item where it is an item of a list —
+     * so that an edit can name a place in the document and the screen
+     * can find the element it means, and so that after an edit the
+     * engine can hand the screen just the blocks that changed, rendered
+     * the same way the page rendered them, for the screen to put in
+     * place of the old. That is the whole of the transport between the
+     * two: the document is the truth here, and the page is a picture of
+     * it that is repainted a block at a time.
+     *
+     * The element alone: a list item comes without the list round it,
+     * and a block on a sheet of its own without the sheet, since both
+     * belong to the blocks either side as much as to this one. A block
+     * that has joined or left a list is put back by writing the page
+     * again, which is what a screen does when what changed is not one
+     * block's own element.
+     */
+    fun writeBlock(document: DocumentModel, index: Int, comments: Boolean = true): String =
+        try {
+            noteNumbers.set(numberNotes(document.blocks))
+            remarks.set(if (comments) Remarks.of(document) else Remarks.NONE)
+            val sb = StringBuilder()
+            val mark = markOf(index)
+            when (val block = document.blocks[index]) {
+                is Paragraph -> appendParagraph(
+                    sb, block, document.defaultDirection, asListItem = block.style.listMarker != null, mark = mark,
+                )
+                is Table -> appendTable(sb, block, document.defaultDirection, mark)
+                is ImageBlock -> appendImage(sb, block, mark)
+            }
+            sb.toString()
+        } finally {
+            noteNumbers.remove()
+            remarks.remove()
+        }
+
+    /** The attribute that says which block of the body an element is. */
+    private fun markOf(index: Int): String = """ data-block="$index""""
+
+    /**
      * What was said about the document, numbered in the order the text
      * meets it, and where each note stops.
      *
@@ -160,7 +203,7 @@ object HtmlWriter {
             appendBlocks(sb, heads, defaultDirection)
             sb.append("</header>\n")
         }
-        appendBlocks(sb, document.blocks, defaultDirection, shapes)
+        appendBlocks(sb, document.blocks, defaultDirection, shapes, marked = true)
         appendNotes(sb, document.blocks, defaultDirection)
         appendComments(sb, defaultDirection)
         if (feet.isNotEmpty()) {
@@ -253,6 +296,8 @@ object HtmlWriter {
         defaultDirection: TextDirection,
         /** The sheets the document is set on, by the shape each is; empty for one sheet throughout. */
         shapes: Map<PageSetup, Int> = emptyMap(),
+        /** Whether each block's element is to say which block it is; see [writeBlock]. */
+        marked: Boolean = false,
     ) {
         // The lists standing open, outermost first: a list inside a list is
         // a list inside a list item, which is how HTML nests them.
@@ -266,7 +311,8 @@ object HtmlWriter {
             while (open.isNotEmpty()) sb.append("</" + tagOf(open.removeLast()) + ">\n")
         }
 
-        for (block in blocks) {
+        for ((index, block) in blocks.withIndex()) {
+            val mark = if (marked) markOf(index) else ""
             // A part of the document set on a sheet of its own opens here
             // and runs to the next one, or to the end.
             val sheet = (block as? Paragraph)?.style?.sectionSetup?.let { shapes[it] }
@@ -300,15 +346,15 @@ object HtmlWriter {
                             open.addLast(marker)
                         }
                     }
-                    appendParagraph(sb, block, defaultDirection, asListItem = marker != null)
+                    appendParagraph(sb, block, defaultDirection, asListItem = marker != null, mark = mark)
                 }
                 is Table -> {
                     closeList()
-                    appendTable(sb, block, defaultDirection)
+                    appendTable(sb, block, defaultDirection, mark)
                 }
                 is ImageBlock -> {
                     closeList()
-                    appendImage(sb, block)
+                    appendImage(sb, block, mark)
                 }
             }
         }
@@ -365,6 +411,8 @@ object HtmlWriter {
         paragraph: Paragraph,
         defaultDirection: TextDirection,
         asListItem: Boolean,
+        /** What says which block this is, on the outermost element — the item, where it is one. */
+        mark: String = "",
     ) {
         val effective = paragraph.style.direction ?: defaultDirection
         val dirAttr =
@@ -428,7 +476,7 @@ object HtmlWriter {
         val idAttr = paragraph.bookmarks.firstNotNullOfOrNull(::anchorId)
             ?.let { """ id="$it"""" }
             .orEmpty()
-        sb.append("<").append(tag)
+        sb.append("<").append(tag).append(mark)
         if (inner == null) sb.append(classAttr).append(idAttr).append(dirAttr).append(styleAttr)
         sb.append(">")
         if (inner != null) {
@@ -696,7 +744,7 @@ object HtmlWriter {
 
     private fun pt(points: Float): String = "%.1fpt".format(java.util.Locale.ROOT, points)
 
-    private fun appendTable(sb: StringBuilder, table: Table, defaultDirection: TextDirection) {
+    private fun appendTable(sb: StringBuilder, table: Table, defaultDirection: TextDirection, mark: String = "") {
         if (table.rows.isEmpty()) return
         // The widths a reader measured, and the rules the page drew — a
         // table found by the alignment of its columns has none, and lines
@@ -709,7 +757,7 @@ object HtmlWriter {
         // A table of Arabic runs from the right, whatever the page does.
         val tableDirection = table.direction ?: defaultDirection
         val dir = if (tableDirection == TextDirection.RTL) """ dir="rtl"""" else ""
-        sb.append("""<table$dir style="${styles.joinToString(";")}">""").append("\n")
+        sb.append("""<table$mark$dir style="${styles.joinToString(";")}">""").append("\n")
         if (widths != null) {
             for (width in widths) sb.append("""<col style="width:${pt(width)}">""")
             sb.append("\n")
@@ -742,8 +790,8 @@ object HtmlWriter {
         sb.append("</table>\n")
     }
 
-    private fun appendImage(sb: StringBuilder, image: ImageBlock) {
-        sb.append("""<p class="image">""").append(imageTag(image, inline = false)).append("</p>\n")
+    private fun appendImage(sb: StringBuilder, image: ImageBlock, mark: String = "") {
+        sb.append("""<p$mark class="image">""").append(imageTag(image, inline = false)).append("</p>\n")
     }
 
     /** A picture as a data URI, shown at the size the reader measured when it did. */

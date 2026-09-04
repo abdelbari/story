@@ -47,7 +47,8 @@ class HtmlLookTest {
                 defaultDirection = TextDirection.RTL,
             )
         )
-        assertTrue(html.contains("""<p style="position:relative">"""), html)
+        // The paragraph, whatever else its element says about itself — which block it is, for one.
+        assertTrue(Regex("""<p[^>]*style="position:relative">""").containsMatchIn(html), html)
         assertTrue(html.contains("""<span style="position:absolute;white-space:pre;inset-inline-start:182.5pt">"""), html)
         assertTrue(html.contains("""<span style="position:absolute;white-space:pre;inset-inline-start:346.5pt">"""), html)
         assertTrue(!html.contains("\t"), "the tab character itself has no place in the markup: $html")
@@ -83,7 +84,7 @@ class HtmlLookTest {
     @Test
     fun `a tab without stops keeps its white space`() {
         val html = HtmlWriter.write(DocumentModel(listOf(Paragraph(listOf(TextRun("a\tb"))))))
-        assertTrue(html.contains("""<p style="white-space:pre-wrap">a	b</p>"""), html)
+        assertTrue(Regex("""<p[^>]*style="white-space:pre-wrap">a	b</p>""").containsMatchIn(html), html)
     }
     @Test
     fun `a run keeps its colour on the page`() {

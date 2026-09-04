@@ -78,7 +78,7 @@ class TableDirectionTest {
     @Test
     fun `the preview lays an Arabic table out from the right`() {
         val html = HtmlWriter.write(arabicTable, "table")
-        assertTrue(html.contains("""<table dir="rtl""""), html.take(600))
+        assertTrue(Regex("""<table[^>]*dir="rtl"""").containsMatchIn(html), html.take(600))
     }
 
     @Test

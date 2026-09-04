@@ -286,9 +286,12 @@ Stage 0's engine half is done. What is left of Stage 0 needs a device:
    decision that goes with it.
 2. The bridge, wired to `EditorState`, and the timing question above.
 
-Before either, the two engine pieces Stage 1 needs and a machine can do:
-block ids in `HtmlWriter`, and the operations' wire format with its own
-fuzz, so that what the device spike sends has something to land on.
+Before either, the engine piece Stage 1 still needs and a machine can do:
+the operations' wire format with its own fuzz, so that what the device
+spike sends has something to land on. The other one is done: every block
+of the body carries `data-block="N"` on its outermost element, and
+`HtmlWriter.writeBlock(document, n)` renders one block alone, the same
+element the page wrote for it, for the bridge to hand back after an edit.
 
 Then hold at the gate and decide between routes A and B on what the two
 spikes actually measured, rather than on what this document expects them

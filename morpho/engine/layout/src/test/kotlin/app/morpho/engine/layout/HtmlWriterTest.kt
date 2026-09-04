@@ -216,4 +216,57 @@ class HtmlWriterTest {
         assertTrue(html.contains("<title>Document</title>"))
         assertFalse(html.contains("""<meta name="author"""))
     }
+
+    /** Every element of [doc] that says which block it is, in the order the page has them. */
+    private fun marked(doc: Document): List<Element> {
+        val all = doc.getElementsByTagName("*")
+        return (0 until all.length).map { all.item(it) as Element }.filter { it.hasAttribute("data-block") }
+    }
+
+    private fun editable(): DocumentModel {
+        val item = ParagraphStyle(listMarker = ListMarker.BULLET)
+        return DocumentModel(
+            blocks = listOf(
+                body("A paragraph"),
+                Paragraph(listOf(TextRun("first point")), item),
+                Paragraph(listOf(TextRun("second point")), item),
+                Table(listOf(TableRow(listOf(TableCell(listOf(body("in a cell"))))))),
+                ImageBlock(ByteArray(4), "image/png", 1, 1),
+                Paragraph(listOf(TextRun("with a note"), TextRun("1", superscript = true, note = listOf(body("the note"))))),
+            ),
+            header = listOf(body("running head")),
+            footer = listOf(body("running foot")),
+        )
+    }
+
+    @Test
+    fun `every block of the body says which block it is, and nothing else does`() {
+        // What an edit names a place by, and what the screen finds the
+        // element to repaint by. On the outermost element — the item, for
+        // an item of a list — and on the body's blocks only: a cell's
+        // paragraph, a note, a running head are not blocks an edit can
+        // name yet, and an element that claimed to be one would be
+        // repainted with the wrong block.
+        val doc = parse(HtmlWriter.write(editable()))
+        val marks = marked(doc)
+        assertEquals(listOf("0", "1", "2", "3", "4", "5"), marks.map { it.getAttribute("data-block") })
+        assertEquals(listOf("p", "li", "li", "table", "p", "p"), marks.map { it.tagName })
+        assertEquals("ul", marks[1].parentNode.nodeName, "the item is marked, not the list round it")
+    }
+
+    @Test
+    fun `a block written on its own is the element the page wrote for it`() {
+        val document = editable()
+        val page = parse(HtmlWriter.write(document))
+        for (index in document.blocks.indices) {
+            val alone = parse(HtmlWriter.writeBlock(document, index)).documentElement
+            val onPage = marked(page)[index]
+            assertEquals(onPage.tagName, alone.tagName, "block $index")
+            assertEquals(index.toString(), alone.getAttribute("data-block"), "block $index")
+            assertEquals(onPage.textContent, alone.textContent, "block $index")
+        }
+        // The item comes without its list: the list belongs to its
+        // neighbours as much as to it.
+        assertEquals("li", parse(HtmlWriter.writeBlock(document, 1)).documentElement.tagName)
+    }
 }
