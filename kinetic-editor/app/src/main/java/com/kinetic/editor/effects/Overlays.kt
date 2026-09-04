@@ -4,17 +4,10 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Typeface
-import android.text.Spannable
-import android.text.SpannableString
-import android.text.style.AbsoluteSizeSpan
-import android.text.style.ForegroundColorSpan
-import android.text.style.StyleSpan
-import android.text.style.TypefaceSpan
 import androidx.media3.common.OverlaySettings
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.StaticOverlaySettings
-import androidx.media3.effect.TextOverlay
 import androidx.media3.effect.TextureOverlay
 import com.google.common.collect.ImmutableList
 import com.kinetic.editor.core.model.StickerSpec
@@ -25,6 +18,15 @@ import com.kinetic.editor.core.model.overlayAnimAt
 import com.kinetic.editor.core.model.overlayScaleFor
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TrackType
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
+import androidx.media3.effect.CanvasOverlay
+import kotlin.math.ceil
 
 /**
  * EXPORT-side text & sticker rendering: one OverlayEffect at the Composition
@@ -77,71 +79,123 @@ object OverlayFactory {
 
 }
 
+/**
+ * EXPORT-side text, drawn onto a canvas rather than handed to media3 as a
+ * SpannableString.
+ *
+ * `TextOverlay` builds its own `TextPaint`, so an outline, a drop shadow or a
+ * backing box — the three things that make a caption legible over footage —
+ * are simply not reachable through it. `CanvasOverlay` hands over a `Canvas`
+ * instead, which also means type-on draws a substring rather than needing a
+ * pre-built string per character count, and an empty frame is a canvas nobody
+ * drew on rather than a zero-width bitmap that throws.
+ *
+ * The canvas is sized to the text block once, at construction, and never
+ * resized: a caption that grew its own bitmap as characters appeared would
+ * shift on screen while it typed.
+ */
 private class TimedTextOverlay(
     private val spec: TextSpec,
     private val startUs: Long,
     private val endUs: Long,
-) : TextOverlay() {
+) : CanvasOverlay(/* useInputFrameSize= */ false) {
 
-    private val anchorX = spec.anchorX
-    private val anchorY = spec.anchorY
-
-    // Built once; getText must not allocate per frame.
-    private val styled = SpannableString(spec.text).apply {
-        fun span(what: Any) = setSpan(what, 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-        span(ForegroundColorSpan(spec.argb.toInt()))
-        span(AbsoluteSizeSpan(spec.textSizePx.toInt()))
-        // The family name Compose resolves its own FontFamily from, so preview
-        // and render land on the same face rather than two similar ones.
-        span(TypefaceSpan(spec.font.androidFamily))
-        span(
-            StyleSpan(
-                when {
-                    spec.bold && spec.italic -> Typeface.BOLD_ITALIC
-                    spec.bold -> Typeface.BOLD
-                    spec.italic -> Typeface.ITALIC
-                    else -> Typeface.NORMAL
-                },
-            ),
+    private val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = spec.textSizePx
+        typeface = Typeface.create(
+            Typeface.create(spec.font.androidFamily, Typeface.NORMAL),
+            when {
+                spec.bold && spec.italic -> Typeface.BOLD_ITALIC
+                spec.bold -> Typeface.BOLD
+                spec.italic -> Typeface.ITALIC
+                else -> Typeface.NORMAL
+            },
         )
     }
 
-    /**
-     * Every prefix of the styled text, built up front. Typing has to hand back a
-     * different string each frame, and getText runs on the GL thread: better a
-     * few dozen small objects at export start than an allocation per frame.
-     */
-    private val prefixes: List<SpannableString>? =
-        if (spec.anim == OverlayAnim.TYPE && spec.text.length in 1..MAX_TYPED) {
-            (0..spec.text.length).map { n -> SpannableString(styled.subSequence(0, n)) }
-        } else {
-            null
+    private val pad = spec.decorationPadPx
+
+    // Measured once, from the FULL text: the block keeps its size while type-on
+    // fills it, so a caption does not shift on screen as characters appear.
+    private val blockWidth = maxOf(1, ceil(measureWidest(spec.text, paint)).toInt())
+    private val full = layoutFor(spec.text)
+
+    init {
+        setCanvasSize(blockWidth + (pad * 2).toInt(), full.height + (pad * 2).toInt())
+    }
+
+    /** One layout per distinct visible length; type-on only ever asks for a few. */
+    private var cachedChars = -1
+    private var cached: StaticLayout = full
+
+    private fun layoutFor(text: String): StaticLayout =
+        StaticLayout.Builder.obtain(text, 0, text.length, paint, blockWidth)
+            .setAlignment(Layout.Alignment.ALIGN_CENTER)
+            .build()
+
+    private fun visibleLayout(chars: Int): StaticLayout {
+        if (chars < 0) return full
+        if (chars == cachedChars) return cached
+        cachedChars = chars
+        cached = layoutFor(spec.text.take(chars))
+        return cached
+    }
+
+    override fun onDraw(canvas: Canvas, presentationTimeUs: Long) {
+        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        val anim = overlayAnimAt(spec.anim, presentationTimeUs, startUs, endUs, spec.text.length)
+        if (anim.alpha <= 0f) return
+        val layout = visibleLayout(anim.visibleChars)
+
+        canvas.save()
+        canvas.translate(pad, pad)
+
+        val box = spec.boxArgb.toInt()
+        if (box ushr 24 != 0) {
+            val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = box }
+            val inset = spec.textSizePx * 0.18f
+            canvas.drawRoundRect(
+                -inset, -inset,
+                blockWidth + inset, layout.height + inset,
+                inset, inset, fill,
+            )
         }
 
-    private fun stateAt(timeUs: Long): OverlayAnimState =
-        overlayAnimAt(spec.anim, timeUs, startUs, endUs, spec.text.length)
+        // Stroke first, fill over it, so the outline sits behind the letterform
+        // rather than eating into it.
+        if (spec.outlinePx > 0f) {
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = spec.outlinePx * 2f
+            paint.strokeJoin = Paint.Join.ROUND
+            paint.color = spec.outlineArgb.toInt()
+            paint.clearShadowLayer()
+            layout.draw(canvas)
+        }
 
-    override fun getText(presentationTimeUs: Long): SpannableString {
-        val chars = stateAt(presentationTimeUs).visibleChars
-        if (chars < 0 || prefixes == null) return styled
-        // Never index 0: see OverlayAnim.TYPE for why an empty layout is fatal.
-        return prefixes[chars.coerceIn(1, prefixes.size - 1)]
+        paint.style = Paint.Style.FILL
+        paint.color = spec.argb.toInt()
+        if (spec.shadowPx > 0f) {
+            paint.setShadowLayer(spec.shadowPx, 0f, spec.shadowPx, 0xC0000000.toInt())
+        } else {
+            paint.clearShadowLayer()
+        }
+        layout.draw(canvas)
+        canvas.restore()
     }
 
     override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
-        val anim = stateAt(presentationTimeUs)
+        val anim = overlayAnimAt(spec.anim, presentationTimeUs, startUs, endUs, spec.text.length)
         return StaticOverlaySettings.Builder()
-            .setBackgroundFrameAnchor(anchorX, anchorY + anim.dy)
+            .setBackgroundFrameAnchor(spec.anchorX, spec.anchorY + anim.dy)
             .setScale(anim.scale, anim.scale)
             .setAlphaScale(anim.alpha)
             .build()
     }
-
-    private companion object {
-        /** Beyond this, typing shows everything rather than pre-building a novel. */
-        const val MAX_TYPED = 240
-    }
 }
+
+/** Widest line, so a multi-line caption is not clipped to its first line. */
+private fun measureWidest(text: String, paint: TextPaint): Float =
+    text.split('\n').maxOf { paint.measureText(it) }
 
 private class TimedStickerOverlay(
     private val bitmap: Bitmap,

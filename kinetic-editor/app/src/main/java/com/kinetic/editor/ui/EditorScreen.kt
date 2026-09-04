@@ -672,6 +672,32 @@ private fun TextSection(clip: ClipModel, spec: TextSpec, dispatch: (EditorIntent
             )
         }
     }
+    // Legibility over footage is what a caption is for, and these are the four
+    // ways it gets it. Each writes the same fields the sliders below edit.
+    ChipRow("Style") {
+        for (style in CAPTION_STYLES) {
+            val active = spec.outline == style.outline &&
+                spec.shadow == style.shadow &&
+                spec.boxArgb == style.boxArgb
+            Chip(style.label, active) {
+                edit(
+                    spec.copy(
+                        outline = style.outline,
+                        shadow = style.shadow,
+                        boxArgb = style.boxArgb,
+                    ),
+                )
+            }
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(Dim.sm)) {
+        ValueSlider("Outline", spec.outline, 0f..0.2f, Modifier.weight(1f)) {
+            edit(spec.copy(outline = it))
+        }
+        ValueSlider("Shadow", spec.shadow, 0f..1f, Modifier.weight(1f)) {
+            edit(spec.copy(shadow = it))
+        }
+    }
     ChipRow("Animate") {
         for (motion in OverlayAnim.entries) {
             Chip(motion.label, spec.anim == motion) { edit(spec.copy(anim = motion)) }
@@ -943,6 +969,21 @@ private val FILTERS = listOf(
         ColorGradeSpec(contrast = 1.08f, saturation = 0.95f, grain = 0.18f, vignette = 0.22f),
         LutSpec(FILM_LUT_ASSET, 0.85f),
     ),
+)
+
+/** The caption treatments, as one tap each. */
+private class CaptionStyle(
+    val label: String,
+    val outline: Float = 0f,
+    val shadow: Float = 0f,
+    val boxArgb: Long = 0x00000000,
+)
+
+private val CAPTION_STYLES = listOf(
+    CaptionStyle("Plain"),
+    CaptionStyle("Outline", outline = 0.06f),
+    CaptionStyle("Shadow", shadow = 0.55f),
+    CaptionStyle("Box", boxArgb = 0xCC000000),
 )
 
 /** What people actually shoot against. */

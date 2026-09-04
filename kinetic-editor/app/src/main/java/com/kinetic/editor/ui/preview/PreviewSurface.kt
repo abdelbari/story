@@ -49,6 +49,11 @@ import com.kinetic.editor.engine.PreviewEngine
 import com.kinetic.editor.ui.timeline.TimelineViewportState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 
 /**
  * Video out on a SurfaceView (zero-copy decoder path — TextureView would force
@@ -208,14 +213,48 @@ private fun PreviewOverlayLayer(
                     val cx = (spec.anchorX * 0.5f + 0.5f) * size.width
                     val cy = (-(spec.anchorY + anim.dy) * 0.5f + 0.5f) * size.height
                     val base = Color(spec.argb)
+                    val w = layout.size.width.toFloat()
+                    val h = layout.size.height.toFloat()
+                    val topLeft = Offset(cx - w / 2f, cy - h / 2f)
                     scale(anim.scale, pivot = Offset(cx, cy)) {
+                        // Box, then outline, then fill: the same order the
+                        // export's canvas draws them in, so the layers stack
+                        // identically on screen and in the file.
+                        val box = Color(spec.boxArgb)
+                        if (box.alpha > 0f) {
+                            val inset = spec.textSizePx * scale * 0.18f
+                            drawRoundRect(
+                                box.copy(alpha = box.alpha * anim.alpha),
+                                topLeft = Offset(topLeft.x - inset, topLeft.y - inset),
+                                size = Size(w + inset * 2f, h + inset * 2f),
+                                cornerRadius = CornerRadius(inset),
+                            )
+                        }
+                        if (spec.outlinePx > 0f) {
+                            val edge = Color(spec.outlineArgb)
+                            drawText(
+                                layout,
+                                edge.copy(alpha = edge.alpha * anim.alpha),
+                                topLeft = topLeft,
+                                drawStyle = Stroke(
+                                    width = spec.outlinePx * scale * 2f,
+                                    join = StrokeJoin.Round,
+                                ),
+                            )
+                        }
                         drawText(
                             layout,
                             base.copy(alpha = base.alpha * anim.alpha),
-                            topLeft = Offset(
-                                cx - layout.size.width / 2f,
-                                cy - layout.size.height / 2f,
-                            ),
+                            topLeft = topLeft,
+                            shadow = if (spec.shadowPx > 0f) {
+                                Shadow(
+                                    color = Color(0xC0000000),
+                                    offset = Offset(0f, spec.shadowPx * scale),
+                                    blurRadius = spec.shadowPx * scale,
+                                )
+                            } else {
+                                null
+                            },
                         )
                     }
                 }

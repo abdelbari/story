@@ -495,6 +495,26 @@ class CoreLogicTest {
     }
 
     @Test
+    fun captionDecorationScalesWithTheTextItDecorates() {
+        // An outline authored at one size has to stay proportional when the
+        // caption is resized, or every resize needs the slider nudged again.
+        val small = TextSpec("hi", textSizePx = 40f, outline = 0.05f, shadow = 0.5f)
+        val large = small.copy(textSizePx = 120f)
+        assertEquals(3f, large.outlinePx / small.outlinePx, 1e-4f)
+        assertEquals(3f, large.shadowPx / small.shadowPx, 1e-4f)
+        // The canvas the export draws on has to hold both, or they clip.
+        assertTrue(large.decorationPadPx >= large.outlinePx)
+        assertTrue(large.decorationPadPx >= large.shadowPx)
+
+        val plain = TextSpec("hi")
+        assertEquals(0f, plain.outlinePx, 1e-4f)
+        assertEquals(0f, plain.shadowPx, 1e-4f)
+        assertEquals(0f, plain.decorationPadPx, 1e-4f)
+        // An undecorated caption stays byte-identical on disk.
+        assertFalse(ProjectCodec.encode(TimelineState.empty()).contains("outline"))
+    }
+
+    @Test
     fun textDefaultsAreOmittedFromDiskAndRestoredOnLoad() {
         val textClip = ClipModel(
             ClipId("t"), MediaRef("kinetic://text", 3_000, false, false, 0f), 0, 3_000,

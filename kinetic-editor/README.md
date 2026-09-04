@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 56 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 57 pure-JVM logic tests
 python3 tools/check-shaders.py   # compiles the GLSL (needs glslang-tools)
 ```
 
@@ -50,8 +50,8 @@ environment, so the app has not been assembled by Gradle there. Instead:
   the shader on purpose: it catches both a renamed uniform and a syntax error.
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 56 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 58-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 57 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 59-scenario executable sandbox suite.
 
 ---
 
@@ -328,7 +328,7 @@ the exporter — the model, the preview and the export path agree on all three.
 | Clips | speed presets (0.5–4x), per-clip brightness/contrast/saturation, film LUT toggle |
 | Transitions | dip-to-black, wipe, zoom-punch on any clip boundary |
 | Audio | music and voiceover lanes, per-clip volume, fade in/out, track mute |
-| Text | editable content (multi-line), four type faces, bold, italic, eight colours, size, position, and five entrance animations (cut, fade, pop, rise, type-on) |
+| Text | editable content (multi-line), four type faces, bold, italic, eight colours, size, position, five entrance animations (cut, fade, pop, rise, type-on), and outline / shadow / backing box for legibility over footage |
 | Stickers | seven shapes, swappable from the inspector, with size, position, rotation and the same animations text uses |
 | Overlays | picture-in-picture (size, position, rotation, opacity) — every control is the number the export consumes |
 | Looks | ten one-tap filters, plus brightness, contrast, saturation, warmth, **film grain** and **vignette** — a preset is a starting point rather than a mode, because it sets the same fields the sliders edit |
@@ -343,6 +343,25 @@ Volume fades deserve a note: the model stores a general keyframe envelope, but
 the UI exposes fade-in/fade-out durations, because that is what nearly every
 volume edit actually is. `fadeKeyframes`/`readFades` convert between the two, so
 the sliders reflect whatever envelope a clip really has.
+
+### Text is drawn, not described
+
+The export renders captions onto a `CanvasOverlay` rather than handing media3 a
+`SpannableString`. `TextOverlay` builds its own `TextPaint`, so an outline, a
+drop shadow and a backing box — the three things that make a caption readable
+over moving footage — are simply not reachable through it.
+
+Owning the canvas paid for itself twice over. Type-on now draws a substring,
+so the pre-built string per character count is gone, and with it the cap on
+caption length and a whole crash class: an empty frame is a canvas nobody drew
+on rather than a zero-width bitmap that throws. The block is measured once from
+the *full* text and never resized, so a caption does not shift on screen while
+it types.
+
+Outline width and shadow are fractions of the text size rather than pixel
+counts, so resizing a caption keeps its treatment proportional instead of
+needing every slider nudged again. Box, then outline, then fill — the same
+order on both sides, so the layers stack identically on screen and in the file.
 
 ### Chroma key, and why transparency reaches the screen
 

@@ -98,7 +98,27 @@ data class TextSpec(
     val bold: Boolean = true,
     val italic: Boolean = false,
     val anim: OverlayAnim = OverlayAnim.FADE,
-)
+    /**
+     * Outline thickness as a fraction of the text size, so it stays right when
+     * the caption is resized. Legibility over footage is what captions are for,
+     * and an outline is how they get it.
+     */
+    val outline: Float = 0f,
+    val outlineArgb: Long = 0xFF000000,
+    /** Drop shadow strength, [0, 1]; scaled by the text size like the outline. */
+    val shadow: Float = 0f,
+    /** Backing box behind the text. Alpha 0 — the default — means no box. */
+    val boxArgb: Long = 0x00000000,
+) {
+    /** Outline half-width in canvas pixels. */
+    val outlinePx: Float get() = outline * textSizePx
+
+    /** Shadow blur and offset in canvas pixels. */
+    val shadowPx: Float get() = shadow * textSizePx * 0.18f
+
+    /** How much room the outline and shadow need around the text block. */
+    val decorationPadPx: Float get() = outlinePx + shadowPx * 2f
+}
 
 /**
  * How an overlay — text or sticker — enters and leaves.
