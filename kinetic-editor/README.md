@@ -10,7 +10,7 @@ under a strict MVI contract.
 ```bash
 cd kinetic-editor
 ./gradlew :app:installDebug      # or open the folder in Android Studio and Run
-./gradlew :app:testDebugUnitTest # 57 pure-JVM logic tests
+./gradlew :app:testDebugUnitTest # 59 pure-JVM logic tests
 python3 tools/check-shaders.py   # compiles the GLSL (needs glslang-tools)
 ```
 
@@ -50,8 +50,8 @@ environment, so the app has not been assembled by Gradle there. Instead:
   the shader on purpose: it catches both a renamed uniform and a syntax error.
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 57 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 59-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 59 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 58-scenario executable sandbox suite.
 
 ---
 
@@ -336,7 +336,7 @@ the exporter — the model, the preview and the export path agree on all three.
 | Editing | trim, split, move, reorder, duplicate, delete, per-clip speed, detach audio |
 | Transform | pan, zoom and rotate the picture inside its frame, on any video clip |
 | Chroma key | green or blue screen with tolerance and edge feather, on any video clip — meant for picture-in-picture, where there is something behind to reveal |
-| Motion | one-tap push in, pull out, pan and drift that run across the whole clip, composed on top of a manual reframe |
+| Motion | one-tap push in, pull out, pan and drift, or a move of your own: set a start and an end framing and the clip travels between them |
 | Output | background MP4 export with live progress, published to Movies/Kinetic |
 
 Volume fades deserve a note: the model stores a general keyframe envelope, but
@@ -409,6 +409,14 @@ cannot lift the surround off black.
 
 Because it is the same shader in both pipelines, the preview and the render
 share one implementation of the geometry, exactly as they share the colour.
+
+A move is either a preset or a pair of framings the clip travels between, never
+both — `transformAt` is the single function that decides, and a hand-set move
+wins, because the user was being more specific than a preset. The inspector
+hides the preset row while a hand-set move exists rather than leaving a control
+on screen that would do nothing. The sliders edit one end at a time, chosen by
+Start/End chips: two sets of four sliders would not fit, and would be worse if
+they did.
 
 Motion presets sit on top of it: `motionAt` is pure and takes the clip's
 transform, a move and how far through the clip the frame is, so a push or a pan
