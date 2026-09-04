@@ -100,4 +100,49 @@ class DrawnPageFuzzTest {
         assertTrue(took < 10_000, "reading a page drawn all over took ${took}ms")
         assertEquals(1, model.blocks.count { it is Paragraph }.coerceAtMost(1))
     }
+
+    @Test
+    fun `a page that rules a hundred grids is read in a moment too`() {
+        // The cell allowance is the page's, not any one grid's. Every grid
+        // was bounded from the start; the page stopped being bounded when
+        // it stopped being read as a single grid, and nothing keeps a file
+        // from ruling ten thousand of them. A hundred grids of a hundred
+        // and forty cells each way, each with words standing in it so none
+        // bails out early, is two million cells on the one page.
+        val n = 140
+        val drawings = mutableListOf<PdfDrawing>()
+        val lines = mutableListOf<PdfLine>()
+        for (grid in 0 until 100) {
+            val x = 10f + (grid % 10) * 3000f
+            val y = 10f + (grid / 10) * 3000f
+            for (r in 0..n) drawings += PdfDrawing(1, x, y + r * 4f - 0.4f, x + n * 4f, y + r * 4f + 0.4f)
+            for (c in 0..n) drawings += PdfDrawing(1, x + c * 4f - 0.4f, y, x + c * 4f + 0.4f, y + n * 4f)
+            for (at in 0 until 4) {
+                lines += PdfLine("grid${grid}word$at and some more of it", x + 2f, y + 8f + at * 8f, 6f, 1, x + 500f)
+            }
+        }
+        val started = System.nanoTime()
+        val model = PdfLayout.reconstruct(lines, confidence = 0.6f, drawings = drawings)
+        val took = (System.nanoTime() - started) / 1_000_000
+        assertTrue(took < 10_000, "reading a page of a hundred grids took ${took}ms")
+        // Bounded, and still nobody's words are lost: a grid the page
+        // cannot pay for is left as the lines it holds.
+        val out = StringBuilder()
+        fun walk(blocks: List<app.morpho.engine.layout.Block>) {
+            for (block in blocks) when (block) {
+                is Paragraph -> out.append(block.text).append(' ')
+                is Table -> block.rows.forEach { row -> row.cells.forEach { walk(it.blocks) } }
+                else -> {}
+            }
+        }
+        walk(model.blocks)
+        walk(model.header)
+        walk(model.footer)
+        val read = out.toString()
+        for (grid in 0 until 100) {
+            for (at in 0 until 4) {
+                assertTrue(read.contains("grid${grid}word$at"), "lost grid${grid}word$at")
+            }
+        }
+    }
 }

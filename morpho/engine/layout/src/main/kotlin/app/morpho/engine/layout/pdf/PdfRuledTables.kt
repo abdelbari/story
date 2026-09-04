@@ -54,13 +54,21 @@ object PdfRuledTables {
     private const val FILLED_SHARE = 0.4f
 
     /**
-     * The most cells a grid may have before it is taken for a drawing.
+     * The most cells that may be read on one page.
      *
      * A page ruled cell by cell draws about one line for every cell, and
      * every cell is then measured against every line, so the work grows as
      * the square of the count. A table nobody reads — a plan, a map, a
      * sheet of graph paper — would spend a phone's afternoon being read as
      * one, and a reader must never be the reason a conversion hangs.
+     *
+     * A page's whole allowance rather than one grid's, since a page may
+     * rule any number of grids: measured at a hundred grids of a hundred
+     * and forty cells each way, all of them holding words, an unbounded
+     * page took half a second, and nothing stops a file drawing ten
+     * thousand. Spent from the top of the page down, so what a reader
+     * sees first is what is read; a grid the rest cannot pay for is left
+     * as the lines it holds, and a smaller one after it is still read.
      */
     private const val MOST_CELLS = 20_000
 
@@ -82,10 +90,14 @@ object PdfRuledTables {
         for ((page, drawn) in drawings.groupBy { it.page }) {
             val uprights = drawn.filter { it.widthPt <= THIN_PT && it.heightPt >= LEAST_SIDE_PT }
             val levels = drawn.filter { it.heightPt <= THIN_PT && it.widthPt >= LEAST_SIDE_PT }
+            var allowance = MOST_CELLS.toLong()
             for (grid in gridsOf(uprights, levels)) {
                 val across = merged(grid.levels) { (it.top + it.bottom) / 2 }
                 val down = merged(grid.uprights) { (it.left + it.right) / 2 }
                 if (across.size <= LEAST_BANDS || down.size <= LEAST_BANDS) continue
+                val cells = (across.size - 1).toLong() * (down.size - 1)
+                if (cells > allowance) continue
+                allowance -= cells
                 gridOf(lines, page, across, down, grid.uprights, grid.levels, spelling)
                     ?.let { out += it }
             }
@@ -225,7 +237,6 @@ object PdfRuledTables {
         val rows = across.size - 1
         val columns = down.size - 1
         if (rows < LEAST_BANDS || columns < LEAST_BANDS) return null
-        if (rows.toLong() * columns > MOST_CELLS) return null
         // A row of a table is one line of text with a piece of it in each
         // cell, so it is the pieces that are placed, not the line: placed
         // by the line, every row of a two-column table lands in whichever
