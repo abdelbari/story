@@ -161,6 +161,37 @@ class RealRecognitionTest {
     }
 
     @Test
+    fun `two ruled tables with a note between them come back as two`() {
+        // The shape that tests where a table stops rather than that there
+        // is one. Recognition ruled both returns, every rule on the page
+        // was read as one grid, and the note between them stood inside the
+        // rectangle that reached from the head of the first to the foot of
+        // the second — so it came back as a row of cells and the two
+        // returns as one table.
+        val model = ruledReadingOf("two-tables")
+        assertEquals(
+            listOf("Paragraph", "Table", "Paragraph", "Table"),
+            model.blocks.map { it::class.simpleName },
+            "blocks: " + model.blocks.map { it::class.simpleName },
+        )
+        val tables = model.blocks.filterIsInstance<Table>()
+        fun cell(table: Table, row: Int, column: Int) = table.rows[row].cells[column]
+            .blocks.filterIsInstance<Paragraph>().joinToString(" ") { it.text }.trim()
+        assertEquals("Received", cell(tables[0], 0, 1), "the first return lost its head")
+        assertEquals("148", cell(tables[0], 1, 1), "the first return lost a figure")
+        assertEquals("Withdrawn", cell(tables[1], 0, 1), "the second return lost its head")
+        assertEquals("12", cell(tables[1], 1, 1), "the second return lost a figure")
+        // The note is one paragraph of its three lines, whole, in the
+        // middle — not cells, and not lost between the tables.
+        val note = model.blocks.filterIsInstance<Paragraph>()[1]
+        assertTrue(
+            note.text.startsWith("The figures above are for applications received"),
+            "the note was cut up: \"${note.text.take(60)}\"",
+        )
+        assertTrue(note.text.endsWith("together and not separately."), "the note lost its end: \"${note.text}\"")
+    }
+
+    @Test
     fun `a page with no rules on it gains no table from this`() {
         // The cost side of the trade, and the reason it is safe: on a page
         // recognition found no rules on, it reports no separators, so a

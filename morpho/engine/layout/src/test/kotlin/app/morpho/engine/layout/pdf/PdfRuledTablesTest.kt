@@ -275,4 +275,101 @@ class PdfRuledTablesTest {
         )
         assertTrue(model.blocks.filterIsInstance<Table>().isEmpty(), "one word in six cells is not a table")
     }
+
+    /** A two-column grid of [rows] rows, drawn whole, with its top at [top]. */
+    private fun small(top: Float, rows: Int): List<PdfDrawing> {
+        val out = mutableListOf<PdfDrawing>()
+        val bottom = top + rows * 30f
+        for (r in 0..rows) {
+            val y = top + r * 30f
+            out += PdfDrawing(1, 60f, y - 0.4f, 380f, y + 0.4f)
+        }
+        for (x in listOf(60f, 240f, 380f)) out += PdfDrawing(1, x - 0.4f, top, x + 0.4f, bottom)
+        return out
+    }
+
+    /** A row of the small grid: a label and a figure, one in each column. */
+    private fun pair(label: String, figure: String, y: Float): PdfLine {
+        val segments = listOf(
+            PdfSegment(label, 66f, 66f + label.length * 6f),
+            PdfSegment(figure, 246f, 246f + figure.length * 6f),
+        )
+        return PdfLine(
+            text = segments.joinToString(" ") { it.text },
+            x = segments.first().xStart,
+            baselineY = y,
+            maxFontSize = 11f,
+            page = 1,
+            xEnd = segments.last().xEnd,
+            segments = segments,
+        )
+    }
+
+    @Test
+    fun `two tables on one page are two tables, and what stands between them is not a row`() {
+        // A page ruling two returns with a note between them. Every rule
+        // the page drew was taken as one grid, so the rectangle reached
+        // from the head of the first table to the foot of the second, the
+        // note stood inside it, and it came back as a row of cells — the
+        // sentence chopped into columns and the two tables run together.
+        val lines = listOf(
+            pair("Term", "Received", 108f),
+            pair("Autumn", "148", 138f),
+            PdfLine(
+                text = "A paragraph between the two tables",
+                x = 60f, baselineY = 210f, maxFontSize = 11f, page = 1, xEnd = 400f,
+                segments = listOf(PdfSegment("A paragraph between the two tables", 60f, 400f)),
+            ),
+            pair("Term", "Withdrawn", 288f),
+            pair("Autumn", "12", 318f),
+        )
+        val drawings = small(top = 90f, rows = 2) + small(top = 270f, rows = 2)
+        val regions = PdfRuledTables.of(lines, drawings)
+        assertEquals(
+            listOf(0 to 2, 3 to 5),
+            regions.map { it.start to it.end },
+            "the two grids were not read apart: " + regions.map { "[${it.start},${it.end})" },
+        )
+        val model = PdfLayout.reconstruct(lines, confidence = 0.6f, drawings = drawings)
+        assertEquals(
+            listOf("Table", "Paragraph", "Table"),
+            model.blocks.map { it::class.simpleName },
+            "blocks: " + model.blocks.map { it::class.simpleName },
+        )
+        assertEquals(
+            "A paragraph between the two tables",
+            model.blocks.filterIsInstance<Paragraph>().single().text,
+            "the note between the tables was cut into cells",
+        )
+    }
+
+    @Test
+    fun `a rule that stands in no grid is not a line of one`() {
+        // The other half of reading grids apart: a rule under a heading, or
+        // over a footer, belongs to no table. Counted into the one grid a
+        // page was allowed, it added a line across above the table and the
+        // heading became the table's first row.
+        val heading = PdfLine(
+            text = "Applications received",
+            x = 60f, baselineY = 60f, maxFontSize = 16f, page = 1, xEnd = 300f,
+            segments = listOf(PdfSegment("Applications received", 60f, 300f)),
+        )
+        val lines = listOf(heading, pair("Term", "Received", 108f), pair("Autumn", "148", 138f))
+        val underHeading = PdfDrawing(1, 60f, 70f, 520f, 71f)
+        val model = PdfLayout.reconstruct(
+            lines,
+            confidence = 0.6f,
+            drawings = small(top = 90f, rows = 2) + underHeading,
+        )
+        assertEquals(
+            "Applications received",
+            model.blocks.filterIsInstance<Paragraph>().first().text,
+            "the heading was pulled into the table under its rule",
+        )
+        assertEquals(
+            2,
+            model.blocks.filterIsInstance<Table>().single().rows.size,
+            "the table gained a row from a rule that was not its own",
+        )
+    }
 }

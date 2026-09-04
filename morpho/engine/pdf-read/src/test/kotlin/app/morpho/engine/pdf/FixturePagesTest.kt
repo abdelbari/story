@@ -41,7 +41,7 @@ class FixturePagesTest {
 
     @Test
     fun `the pages the recognition fixtures were read from still draw`() {
-        for (name in listOf("prose-and-a-table", "three-columns")) {
+        for (name in listOf("prose-and-a-table", "three-columns", "two-tables")) {
             val file = File(out, "$name.png")
             assertTrue(file.isFile, "$name was not drawn")
             // A4 at 200 dpi, near enough: the fixtures' own hOCR records
@@ -57,6 +57,7 @@ class FixturePagesTest {
     fun draw() {
         render("prose-and-a-table") { _, _, cs -> proseAndTable(cs) }
         render("three-columns") { _, _, cs -> threeColumns(cs) }
+        render("two-tables") { _, _, cs -> twoTables(cs) }
     }
 
     private fun render(name: String, draw: (PDDocument, PDPage, PDPageContentStream) -> Unit) {
@@ -124,6 +125,56 @@ class FixturePagesTest {
             "of the number outstanding before the next meeting is called.",
         )
         closing.forEachIndexed { at, line -> text(cs, 56f, 520f - at * 16f, 11f, body, line) }
+    }
+
+    /**
+     * Two ruled tables with prose between them.
+     *
+     * The shape that tests the confinement of the row gathering rather
+     * than the gathering itself: the rectangle recognition rules reaches
+     * from the top of the first table to the bottom of the second, and
+     * the prose in the middle stands inside it.
+     */
+    private fun twoTables(cs: PDPageContentStream) {
+        text(cs, 56f, 780f, 16f, bold, "Two returns and a note between them")
+        table(cs, top = 745f, rows = listOf(
+            listOf("Term", "Received"),
+            listOf("Autumn", "148"),
+            listOf("Spring", "96"),
+        ))
+        val between = listOf(
+            "The figures above are for applications received in the year, and those",
+            "below are for applications withdrawn in the same period. The committee",
+            "asks that the two be read together and not separately.",
+        )
+        between.forEachIndexed { at, line -> text(cs, 56f, 640f - at * 16f, 11f, body, line) }
+        table(cs, top = 560f, rows = listOf(
+            listOf("Term", "Withdrawn"),
+            listOf("Autumn", "12"),
+            listOf("Spring", "4"),
+        ))
+    }
+
+    /** A ruled table of [rows], the first of them its head. */
+    private fun table(cs: PDPageContentStream, top: Float, rows: List<List<String>>) {
+        val left = 56f
+        val right = 380f
+        val middle = 240f
+        val height = 26f
+        cs.setLineWidth(0.9f)
+        for (r in 0..rows.size) {
+            val y = top - r * height
+            cs.moveTo(left, y); cs.lineTo(right, y); cs.stroke()
+        }
+        for (x in floatArrayOf(left, middle, right)) {
+            cs.moveTo(x, top); cs.lineTo(x, top - rows.size * height); cs.stroke()
+        }
+        rows.forEachIndexed { r, row ->
+            row.forEachIndexed { c, value ->
+                text(cs, (if (c == 0) left else middle) + 8f, top - r * height - 18f, 11f,
+                    if (r == 0) bold else body, value)
+            }
+        }
     }
 
     /** A genuine three-column page, which the flow ordering must keep getting right. */

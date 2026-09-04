@@ -44,6 +44,9 @@ object PdfRuledTables {
     /** Lines within this of each other are the one line, drawn cell by cell. */
     private const val SAME_LINE_PT = 2f
 
+    /** Sides this close, end to end, are sides of the one grid. */
+    private const val SAME_GRID_PT = 6f
+
     /** A grid of fewer cells than this either way is a box round something, not a table. */
     private const val LEAST_BANDS = 2
 
@@ -77,18 +80,65 @@ object PdfRuledTables {
         if (lines.isEmpty() || drawings.isEmpty()) return emptyList()
         val out = mutableListOf<PdfTableDetector.Region>()
         for ((page, drawn) in drawings.groupBy { it.page }) {
-            val across = merged(drawn.filter { it.heightPt <= THIN_PT && it.widthPt >= LEAST_SIDE_PT }) {
-                (it.top + it.bottom) / 2
-            }
-            val down = merged(drawn.filter { it.widthPt <= THIN_PT && it.heightPt >= LEAST_SIDE_PT }) {
-                (it.left + it.right) / 2
-            }
-            if (across.size <= LEAST_BANDS || down.size <= LEAST_BANDS) continue
             val uprights = drawn.filter { it.widthPt <= THIN_PT && it.heightPt >= LEAST_SIDE_PT }
             val levels = drawn.filter { it.heightPt <= THIN_PT && it.widthPt >= LEAST_SIDE_PT }
-            gridOf(lines, page, across, down, uprights, levels, spelling)?.let { out += it }
+            for (grid in gridsOf(uprights, levels)) {
+                val across = merged(grid.levels) { (it.top + it.bottom) / 2 }
+                val down = merged(grid.uprights) { (it.left + it.right) / 2 }
+                if (across.size <= LEAST_BANDS || down.size <= LEAST_BANDS) continue
+                gridOf(lines, page, across, down, grid.uprights, grid.levels, spelling)
+                    ?.let { out += it }
+            }
         }
         return out.sortedBy { it.start }
+    }
+
+    /** The sides and levels of one grid, apart from every other grid's. */
+    private class Grid(val uprights: List<PdfDrawing>, val levels: List<PdfDrawing>)
+
+    /**
+     * The separate grids [uprights] and [levels] draw on the one page.
+     *
+     * A page may rule two tables with a paragraph between them, and the
+     * two are not one table with the paragraph as a row of it: read as
+     * one grid, the rectangle reaches from the head of the first to the
+     * foot of the second, every line between stands inside it, and the
+     * paragraph comes back as cells.
+     *
+     * A grid's sides are the ones that stand together: a table's sides
+     * all run down the same part of the page, so they overlap each other
+     * there, and the sides of a table further down do not reach them.
+     * Sides drawn cell by cell meet end to end rather than overlapping,
+     * so they are taken as together when they come within [SAME_GRID_PT],
+     * which is far less than a table is ever set from its neighbour.
+     * Each level then belongs to the grid it stands in and reaches
+     * across; one that stands in none — a rule under a heading, the line
+     * over a footer — belongs to no table and is left where it is.
+     *
+     * Tables set side by side are still read as one, their sides being at
+     * the same height on the page; it is the sides, not the levels, that
+     * say where a grid is.
+     */
+    private fun gridsOf(uprights: List<PdfDrawing>, levels: List<PdfDrawing>): List<Grid> {
+        if (uprights.isEmpty() || levels.isEmpty()) return emptyList()
+        val bands = mutableListOf<MutableList<PdfDrawing>>()
+        for (upright in uprights.sortedBy { it.top }) {
+            val last = bands.lastOrNull()
+            if (last != null && upright.top - last.maxOf { it.bottom } <= SAME_GRID_PT) last += upright
+            else bands += mutableListOf(upright)
+        }
+        return bands.map { band ->
+            val top = band.minOf { it.top } - SAME_GRID_PT
+            val bottom = band.maxOf { it.bottom } + SAME_GRID_PT
+            val left = band.minOf { it.left } - SAME_GRID_PT
+            val right = band.maxOf { it.right } + SAME_GRID_PT
+            Grid(
+                uprights = band,
+                levels = levels.filter {
+                    (it.top + it.bottom) / 2 in top..bottom && it.right >= left && it.left <= right
+                },
+            )
+        }.filter { it.levels.isNotEmpty() }
     }
 
     /** The distinct places [drawn] put a line, near-identical ones counted once. */
