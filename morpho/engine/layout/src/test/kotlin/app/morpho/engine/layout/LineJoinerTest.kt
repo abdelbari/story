@@ -129,4 +129,45 @@ class LineJoinerTest {
             LineJoiner.join(listOf("النص العربي", "يُوصل بمسافة")),
         )
     }
+
+    @Test
+    fun `a page's line that happens to end on a backslash means a backslash`() {
+        // Markdown's hard break is a backslash at a line ending, and the
+        // reading of a Markdown file asks for it. A page has no escaping
+        // convention at all, so the same character there is a character,
+        // and a wrapped line that ends on one must join like any other.
+        // This is why the joining takes the question as a flag rather than
+        // answering it the same way for everyone.
+        val lines = listOf("the path is C:\\", "and then the rest of the sentence")
+        assertEquals(
+            "the path is C:\\ and then the rest of the sentence",
+            LineJoiner.join(lines),
+        )
+    }
+
+    @Test
+    fun `a Markdown line asking to break does, and one escaping a backslash does not`() {
+        // One backslash at the end is the break; two are a backslash the
+        // document's own words hold, written escaped, and not a break.
+        assertEquals(
+            "University of Algiers\nFaculty of Letters",
+            LineJoiner.join(listOf("University of Algiers\\", "Faculty of Letters"), hardBreaks = true),
+        )
+        assertEquals(
+            "a literal \\\\ and more words",
+            LineJoiner.join(listOf("a literal \\\\", "and more words"), hardBreaks = true),
+        )
+        // Three is an escaped backslash followed by a break.
+        assertEquals(
+            "ends on \\\\\nthe next line",
+            LineJoiner.join(listOf("ends on \\\\\\", "the next line"), hardBreaks = true),
+        )
+    }
+
+    @Test
+    fun `a break asked for at the end of the last line is nothing to break`() {
+        // There is no next line to join, so the backslash stays what it is
+        // — which is CommonMark's own answer for a paragraph's last line.
+        assertEquals("all of it\\", LineJoiner.join(listOf("all of it\\"), hardBreaks = true))
+    }
 }
