@@ -1110,3 +1110,35 @@ it), PDF-export layout, then the M4 remainder — re-running OCR on a single
 region, keeping a region as an image, Table Lasso. M5's automation (batch,
 Magic Folders, widget, history) is post-1.0 by the plan's own monetization
 split. Google Docs sync is cut; the app stays network-free.
+
+**Two things were asked for and declined, on 4 September 2026, by the
+person the app is being built for.** Both are recorded with their
+reasoning rather than only their conclusion, because both will look like
+easy wins again later.
+
+*Converting a PDF from a link* was on the original list of asks. It needs
+`INTERNET`, and the app declares no permission of any kind — which is a
+stronger claim than not uploading: today the app **cannot** upload, and a
+CI guard greps the merged manifest to keep it that way. Much of what the
+ask meant is already covered without a permission, since the app accepts
+`SEND`, `SEND_MULTIPLE` and `VIEW` for PDFs, Word files, text and images
+over `content:` and `file:` — a browser downloads it, the reader shares it
+in.
+
+*Running a document-parsing VLM on the phone* — the occasion was Baidu's
+[Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR), MIT-licensed,
+3B parameters with about 500M active, which is exactly the right category
+of idea: it emits tables, LaTeX formulas and layout, which is what this
+converter spends its untagged reading working out by hand. It was declined
+for three measured reasons and one decisive one. Decisive: **Arabic is not
+supported yet** — the maintainers' own discussion thread says multi-language
+is coming in a later release and points to PaddleOCR-VL for Arabic
+meanwhile, and Arabic is the whole reason this app exists. The rest, for
+when that changes: the weights are about 1.95 GB quantised to Q4\_K\_M,
+which is too big to sit in the package and so would have to be downloaded,
+which brings back the `INTERNET` decision above; inference is 30–60 seconds
+a page on a *desktop* CPU against seconds for a whole paper now; and
+llama.cpp support was still on branches rather than upstream. If it is
+revisited, the swap is contained: recognition sits behind
+`AndroidOcrReader`, which hands the engine positioned words and rules, so a
+different recogniser replaces one boundary rather than the reading.
