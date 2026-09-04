@@ -208,9 +208,10 @@ data class ParagraphChange(
  * grown to hold whole any merged cell it cuts through, as a word
  * processor selects cells — and what is done to it is done to every
  * cell in it: emptied, set, merged into one. Rows and columns are put
- * in and taken out of a table with no merged cell in it; a table with
- * one keeps its shape, since a row cut through a cell that covers two
- * is not a row anybody asked for.
+ * in and taken out of a table with merged cells in it as a word
+ * processor does it: a cell that crosses the place grows or shrinks by
+ * it, and one that lies wholly in a row or a column taken out goes
+ * with it ([TableEdits]).
  *
  * Blocks move here — a paragraph split is two paragraphs, a table deleted
  * is gone — which is what [DocumentEdit] exists to forbid, and the two are
@@ -677,90 +678,95 @@ class EditorState private constructor(
     // ---- rows and columns ----
 
     /**
-     * A row put into the table the caret is in, [below] the caret's row
-     * or above it: as many empty cells as the row has, and the caret in
-     * the one under or over where it was.
+     * A row put into the table the caret is in, [below] the caret's cell
+     * or above it — under the whole of a cell that covers several rows —
+     * shaped like the row it is put beside: an empty cell as wide as
+     * each of that row's, and a cell that crosses the place grown by a
+     * row instead. The caret lands in the new row, under or over where
+     * it was, or stays where it was if the new row has no cell there.
      */
     fun insertRow(below: Boolean): EditorState {
         val at = normalised(selection.start)
         val cell = at.cell ?: return this
         val table = document.blocks[at.block] as Table
-        if (hasMergedCells(table)) return this
-        val row = table.rows[cell.row]
-        val added = TableRow(row.cells.map { TableCell(listOf(emptyParagraph())) })
-        val index = if (below) cell.row + 1 else cell.row
-        val rows = table.rows.toMutableList().also { it.add(index, added) }
-        val landing = Caret(at.block, 0, Cell(index, cell.column, 0))
-        return committed(Change(document.replacing(at.block, table.copy(rows = rows)), origins, Selection(landing)))
+        val rectangle = Places(table).rectangleOf(cell.row, cell.column) ?: return this
+        val index = if (below) rectangle.bottom else rectangle.top
+        val grown = TableEdits.insertRow(table, index, template = if (below) rectangle.bottom - 1 else rectangle.top) ?: return this
+        val landing = TableEdits.cellAt(grown, index, rectangle.left)?.takeIf { it.row == index }
+            ?: TableEdits.cellAt(grown, index, grown.rows[index].cells.indices.firstOrNull()?.let { 0 } ?: -1)?.takeIf { it.row == index && grown.rows[index].cells.isNotEmpty() }
+            ?: Cell(if (below) cell.row else cell.row + 1, cell.column)
+        return committed(Change(document.replacing(at.block, grown), origins, Selection(Caret(at.block, 0, landing.copy(paragraph = 0)))))
     }
 
     /**
-     * The caret's row taken out of its table — every row, where cells
-     * of several are selected — and the table with it, where those were
-     * all its rows, since a table with no rows is not a table anybody
-     * can see.
+     * The caret's row taken out of its table — every row its cell
+     * covers, and every row where cells of several are selected — and
+     * the table with it, where those were all its rows, since a table
+     * with no rows is not a table anybody can see. A cell crossing into
+     * the rows taken is shortened by them.
      */
     fun deleteRow(): EditorState {
         val at = normalised(selection.start)
         val cell = at.cell ?: return this
         val table = document.blocks[at.block] as Table
-        if (hasMergedCells(table)) return this
-        val selected = selectedCellsOf(selection)
-        val taken = selected?.rectangle?.let { it.top until it.bottom } ?: (cell.row..cell.row)
+        val rectangle = selectedCellsOf(selection)?.rectangle ?: Places(table).rectangleOf(cell.row, cell.column) ?: return this
+        val taken = rectangle.top until rectangle.bottom
         if (taken.count() >= table.rows.size) return committed(removal(at.block, null))
-        val rows = table.rows.filterIndexed { index, _ -> index !in taken }
-        val row = taken.first.coerceAtMost(rows.size - 1)
-        val column = (selected?.rectangle?.left ?: cell.column).coerceAtMost(rows[row].cells.size - 1)
-        val landing = Caret(at.block, 0, Cell(row, column, 0))
-        return committed(Change(document.replacing(at.block, table.copy(rows = rows)), origins, Selection(landing)))
+        val shrunk = TableEdits.deleteRows(table, taken) ?: return this
+        if (shrunk.rows.none { it.cells.isNotEmpty() }) return committed(removal(at.block, null))
+        val landing = landingIn(shrunk, taken.first, rectangle.left)
+        return committed(Change(document.replacing(at.block, shrunk), origins, Selection(Caret(at.block, 0, landing))))
     }
 
     /**
      * A column put into the table the caret is in, [after] the caret's
-     * column or before it: an empty cell in every row, as wide as the
-     * column it was put beside where the table knows its widths.
+     * cell or before it — beside the whole of a cell that covers several
+     * columns: an empty cell in every row, as wide as the column it was
+     * put beside where the table knows its widths, and a cell that
+     * crosses the place grown by a column instead. The caret lands in
+     * the new cell of its row, or stays where it was if its row has none.
      */
     fun insertColumn(after: Boolean): EditorState {
         val at = normalised(selection.start)
         val cell = at.cell ?: return this
         val table = document.blocks[at.block] as Table
-        if (hasMergedCells(table)) return this
-        val index = if (after) cell.column + 1 else cell.column
-        val rows = table.rows.map { row ->
-            val place = index.coerceAtMost(row.cells.size)
-            row.copy(cells = row.cells.toMutableList().also { it.add(place, TableCell(listOf(emptyParagraph()))) })
-        }
-        val widths = table.columnWidthsPt?.let { widths ->
-            val beside = widths.getOrNull(cell.column) ?: widths.lastOrNull() ?: return@let null
-            widths.toMutableList().also { it.add(index.coerceAtMost(it.size), beside) }
-        }
-        val landing = Caret(at.block, 0, Cell(cell.row, index, 0))
-        return committed(Change(document.replacing(at.block, table.copy(rows = rows, columnWidthsPt = widths)), origins, Selection(landing)))
+        val rectangle = Places(table).rectangleOf(cell.row, cell.column) ?: return this
+        val index = if (after) rectangle.right else rectangle.left
+        val width = table.columnWidthsPt?.let { it.getOrNull(rectangle.left) ?: it.lastOrNull() }
+        val grown = TableEdits.insertColumn(table, index, width) ?: return this
+        val landing = TableEdits.cellAt(grown, rectangle.top, index)?.takeIf { it.row == rectangle.top }
+            ?: TableEdits.cellAt(grown, rectangle.top, if (after) rectangle.left else rectangle.left + 1)
+            ?: Cell(cell.row, cell.column)
+        return committed(Change(document.replacing(at.block, grown), origins, Selection(Caret(at.block, 0, landing.copy(paragraph = 0)))))
     }
 
     /**
-     * The caret's column taken out of its table — every column, where
-     * cells of several are selected — and the table with it, where
-     * those were all its columns. A row is never left without a cell.
+     * The caret's column taken out of its table — every column its cell
+     * covers, and every column where cells of several are selected —
+     * and the table with it, where those were all its columns. A cell
+     * crossing into the columns taken is narrowed by them; a row left
+     * with no cell and nothing covering it goes too.
      */
     fun deleteColumn(): EditorState {
         val at = normalised(selection.start)
         val cell = at.cell ?: return this
         val table = document.blocks[at.block] as Table
-        if (hasMergedCells(table)) return this
-        val taken = selectedCellsOf(selection)?.rectangle?.let { it.left until it.right } ?: (cell.column..cell.column)
-        if (table.rows.all { row -> row.cells.indices.all { it in taken } }) return committed(removal(at.block, null))
-        val rows = table.rows.map { row ->
-            val kept = row.cells.filterIndexed { index, _ -> index !in taken }
-            if (kept.isEmpty()) row else row.copy(cells = kept)
-        }
-        val widths = table.columnWidthsPt?.let { widths ->
-            val kept = widths.filterIndexed { index, _ -> index !in taken }
-            if (kept.isEmpty()) widths else kept
-        }
-        val column = taken.first.coerceAtMost(rows[cell.row].cells.size - 1)
-        val landing = Caret(at.block, 0, Cell(cell.row, column, 0))
-        return committed(Change(document.replacing(at.block, table.copy(rows = rows, columnWidthsPt = widths)), origins, Selection(landing)))
+        val rectangle = selectedCellsOf(selection)?.rectangle ?: Places(table).rectangleOf(cell.row, cell.column) ?: return this
+        val taken = rectangle.left until rectangle.right
+        val shrunk = TableEdits.deleteColumns(table, taken) ?: return this
+        if (shrunk.rows.none { it.cells.isNotEmpty() }) return committed(removal(at.block, null))
+        val landing = landingIn(shrunk, rectangle.top, rectangle.left)
+        return committed(Change(document.replacing(at.block, shrunk), origins, Selection(Caret(at.block, 0, landing))))
+    }
+
+    /**
+     * Where the caret lands in [table] after rows or columns went: the
+     * cell covering [row], [column], or the last cell of that row, or
+     * the nearest cell there is, which normalising finds.
+     */
+    private fun landingIn(table: Table, row: Int, column: Int): Cell {
+        val at = row.coerceIn(0, table.rows.size - 1)
+        return TableEdits.cellAt(table, at, column) ?: Cell(at, (table.rows[at].cells.size - 1).coerceAtLeast(0))
     }
 
     /**
@@ -1201,10 +1207,6 @@ class EditorState private constructor(
     private fun paragraph(index: Int): Paragraph = document.blocks[index] as Paragraph
 
     private fun normalised(caret: Caret): Caret = normalisedIn(document, caret)
-
-    /** Whether a table has a cell covering more than its own place. */
-    private fun hasMergedCells(table: Table): Boolean =
-        table.rows.any { row -> row.cells.any { it.columnSpan > 1 || it.rowSpan > 1 } }
 
     private fun emptyParagraph(): Paragraph = Paragraph(listOf(TextRun("")))
 

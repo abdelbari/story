@@ -489,7 +489,7 @@ class EditorStateTest {
         assertEquals(Selection(Caret(0, 0, Cell(0, 0, 0))), row.selection)
         assertTrue(row.canSplitCell)
         assertFalse(row.canMergeCells)
-        assertSame(row, row.insertRow(true), "a table with a merged cell keeps its shape")
+        assertEquals(listOf(2, 1, 2), (row.insertRow(true).document.blocks[0] as Table).let { t -> listOf(t.rows[0].cells[0].columnSpan, t.rows[1].cells.size, t.rows[2].cells.size) }, "a row under the merged one is one cell as wide")
         val split = row.splitCell()
         assertEquals(listOf(listOf("a", "b"), listOf("")), cells(split, 0)[0], "split, the first keeps what the cell held")
         assertEquals(listOf(1, 1), (split.document.blocks[0] as Table).rows[0].cells.map { it.columnSpan })
@@ -552,13 +552,45 @@ class EditorStateTest {
     }
 
     @Test
-    fun `a table with a merged cell keeps its shape`() {
-        val state = EditorState.open(doc(grid(listOf("a", "b"), listOf("c", "d"), spans = true)))
-        val inCell = state.inCell(0, 1, 0, 0, 1)
-        assertSame(inCell, inCell.insertRow(true))
-        assertSame(inCell, inCell.deleteColumn())
-        // Typing in it is still typing.
-        assertEquals(listOf(listOf("c!"), listOf("d")), cells(inCell.type("!"), 0)[1])
+    fun `rows and columns go into a table with merged cells and come out of it, the cells growing and shrinking`() {
+        // a covers two columns, over c and d; e is beside it, over f.
+        val table = Table(
+            listOf(
+                TableRow(listOf(TableCell(listOf(p("a")), columnSpan = 2), TableCell(listOf(p("e")), rowSpan = 2))),
+                TableRow(listOf(TableCell(listOf(p("c"))), TableCell(listOf(p("d"))))),
+            ),
+        )
+        fun spans(state: EditorState) = (state.document.blocks[0] as Table).rows.map { r -> r.cells.map { c -> "${(c.blocks[0] as Paragraph).text}${c.columnSpan}x${c.rowSpan}" } }
+        val state = EditorState.open(doc(table))
+        val inC = state.inCell(0, 1, 0, 0, 1)
+        val below = inC.insertRow(below = true)
+        assertEquals(listOf(listOf("a2x1", "e1x2"), listOf("c1x1", "d1x1"), listOf("1x1", "1x1", "1x1")), spans(below), "a row below the last row, shaped like it, e ending above")
+        assertEquals(Caret(0, 0, Cell(2, 0, 0)), below.selection.anchor)
+        val above = inC.insertRow(below = false)
+        assertEquals(listOf(listOf("a2x1", "e1x3"), listOf("1x1", "1x1"), listOf("c1x1", "d1x1")), spans(above), "a row between: e crosses it and grows, a ends above it")
+        assertEquals(Caret(0, 0, Cell(1, 0, 0)), above.selection.anchor)
+        val inA = state.inCell(0, 0, 0, 0, 0)
+        assertEquals(listOf(listOf("2x1", "1x1"), listOf("a2x1", "e1x2"), listOf("c1x1", "d1x1")), spans(inA.insertRow(below = false)), "above a: as wide as a, and one for e")
+        assertEquals(listOf(listOf("a2x1", "e1x3"), listOf("2x1"), listOf("c1x1", "d1x1")), spans(inA.insertRow(below = true)), "below a: as wide as a, and e crosses the new row and grows")
+        val inE = state.inCell(0, 0, 1, 0, 0)
+        assertEquals(3, (inE.insertRow(below = true).document.blocks[0] as Table).rows.size)
+        assertEquals(listOf(listOf("a2x1", "e1x2"), listOf("c1x1", "d1x1"), listOf("1x1", "1x1", "1x1")), spans(inE.insertRow(below = true)), "below the whole of e")
+        assertEquals(Caret(0, 0, Cell(2, 2, 0)), inE.insertRow(below = true).selection.anchor, "under e")
+        val narrowed = inC.deleteColumn()
+        assertEquals(listOf(listOf("a1x1", "e1x2"), listOf("d1x1")), spans(narrowed), "c's column out: a narrows, c goes")
+        assertEquals(Caret(0, 0, Cell(1, 0, 0)), narrowed.selection.anchor)
+        assertEquals(listOf(listOf("e1x2"), listOf()), spans(inA.deleteColumn()), "a's columns out: c and d go with them; their row stays, e covering it")
+        val shortened = inC.deleteRow()
+        assertEquals(listOf(listOf("a2x1", "e1x1")), spans(shortened), "c's row out: e shortens")
+        assertEquals(listOf(""), texts(inE.deleteRow()), "e's rows are all the rows: the table goes")
+        val widened = inC.insertColumn(after = true)
+        assertEquals(listOf(listOf("a3x1", "e1x2"), listOf("c1x1", "1x1", "d1x1")), spans(widened), "a column after c: a grows across it")
+        assertEquals(Caret(0, 0, Cell(1, 1, 0)), widened.selection.anchor)
+        val before = inC.insertColumn(after = false)
+        assertEquals(listOf(listOf("1x1", "a2x1", "e1x2"), listOf("1x1", "c1x1", "d1x1")), spans(before), "a column before c, in every row")
+        assertEquals(Caret(0, 0, Cell(1, 0, 0)), before.selection.anchor)
+        assertEquals(listOf(listOf("a2x1", "1x1", "e1x2"), listOf("c1x1", "d1x1", "1x1")), spans(inA.insertColumn(after = true)), "a column after the whole of a")
+        assertEquals(state.document, below.undo().document)
     }
 
     @Test

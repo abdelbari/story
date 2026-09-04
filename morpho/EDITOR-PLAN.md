@@ -267,8 +267,16 @@ Most of this is model → HTML → model plumbing once Stage 1 stands, because
   selected and whether they can be merged or the caret's cell split, so
   a toolbar's buttons are the engine's decision. Driven in Chromium: a
   drag across cells, Backspace over them, Tab and Shift+Tab, a merge, a
-  split, and a table grown by Tab. Still refused: a row or a column put
-  into or taken out of a table with a merged cell.
+  split, and a table grown by Tab.
+- **Done 4 September:** rows and columns go into a table with merged
+  cells and come out of it. `TableEdits` lays the table out on its grid,
+  puts the row or column into the grid or takes it out — a cell that
+  crosses the place grows or shrinks by it, one lying wholly in what is
+  taken out goes with it, a row left with nothing goes too — and reads
+  the rows back off the grid; a row or a column put in and taken out
+  again gives back the table it was, held over six hundred random
+  tables with random merges. The Word writer's stray cell under a cell
+  merged both ways went with it.
 - The editor's markup keeps every tab a tab stop places, out of sight,
   so a caret in a form's `Name:<tab>value` line is counted right; the
   preview's markup is as it was.
