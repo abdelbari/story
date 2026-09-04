@@ -49,6 +49,10 @@
     <string name="review_words_fix">Wörter berichtigen</string>
     <string name="review_words_label">Was dort stehen soll</string>
     <string name="review_words_keep">Fertig</string>
+    <string name="review_remove">Entfernen</string>
+    <string name="review_put_back">Zurückholen</string>
+    <string name="review_removed">Entfernt</string>
+    <string name="review_join_up">Mit dem darüber verbinden</string>
     <string name="about_open">Über die App und Lizenzen</string>
     <string name="about_title">Über Morpho</string>
     <string name="about_version">Version %1$s</string>

@@ -22,6 +22,59 @@ package app.morpho.engine.layout
 object ParagraphEdit {
 
     /**
+     * [first] and [second] as one paragraph, which is what they were
+     * before something broke them apart.
+     *
+     * Recognition splits a paragraph wherever a page or a column ends,
+     * because it never sees the two halves together, and the reader is
+     * left with a sentence stopping mid-clause and starting again as a
+     * paragraph of its own. Rejoining is not retyping: the second half
+     * keeps its own runs, so its bold, its links and its notes come over
+     * with it, which is the whole of the difference between this and
+     * typing the second half into the first.
+     *
+     * The joined paragraph is the first one — its kind, its ranging, its
+     * list — because that is where the sentence began. What sits between
+     * the halves is a space, unless one side already ends or begins with
+     * one, or with a break: a paragraph broken at a hyphenated word is
+     * joined by the reader typing over the join afterwards, and a space
+     * put in unasked would have to be taken out again.
+     *
+     * Confidence is the lower of the two, and this is the one edit where
+     * it moves. A correction says something about the characters and
+     * nothing about how they were read; a join makes one block whose
+     * words really did come from both, and a block is only as certain as
+     * the least certain thing in it.
+     */
+    fun join(first: Paragraph, second: Paragraph): Paragraph {
+        if (second.runs.isEmpty()) return first
+        if (first.runs.isEmpty()) {
+            return first.copy(runs = second.runs, confidence = leastOf(first, second))
+        }
+        val gap = if (abuts(first.text, second.text)) emptyList() else listOf(spacer(first.runs))
+        return first.copy(
+            runs = merged(first.runs + gap + second.runs),
+            confidence = leastOf(first, second),
+        )
+    }
+
+    /** Whether nothing need go between [before] and [after] to keep them apart. */
+    private fun abuts(before: String, after: String): Boolean =
+        before.isEmpty() || after.isEmpty() ||
+            before.last().isWhitespace() || after.first().isWhitespace()
+
+    /**
+     * The space between two joined halves, set the way the first half
+     * ended — but never inside its link, which belonged to the words and
+     * not to the gap after them.
+     */
+    private fun spacer(runs: List<TextRun>): TextRun =
+        plain(runs.last()).copy(text = " ", link = null)
+
+    private fun leastOf(first: Paragraph, second: Paragraph): Float =
+        minOf(first.confidence, second.confidence)
+
+    /**
      * [paragraph] saying [text] instead of what it said.
      *
      * The paragraph's own style — what kind it is, how it is ranged, what

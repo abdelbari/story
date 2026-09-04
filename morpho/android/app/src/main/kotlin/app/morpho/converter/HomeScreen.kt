@@ -129,6 +129,9 @@ fun HomeScreen(viewModel: ConvertViewModel) {
             onReclassify = viewModel::reclassify,
             textOf = viewModel::textOf,
             onRetext = viewModel::retext,
+            onRemove = viewModel::remove,
+            onRestore = viewModel::restore,
+            onJoinUp = viewModel::joinUp,
             onSaveCorrected = viewModel::saveCorrected,
             onClose = viewModel::hideReview,
         )

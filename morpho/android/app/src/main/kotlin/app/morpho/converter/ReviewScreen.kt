@@ -6,6 +6,8 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -36,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import app.morpho.engine.layout.FidelityReport
 import app.morpho.engine.layout.ParagraphKind
@@ -62,6 +65,9 @@ fun ReviewScreen(
     // Not the report's excerpt: see [EntryRow].
     textOf: (index: Int) -> String,
     onRetext: (index: Int, text: String) -> Unit,
+    onRemove: (index: Int) -> Unit,
+    onRestore: (index: Int) -> Unit,
+    onJoinUp: (index: Int) -> Unit,
     onSaveCorrected: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -99,9 +105,9 @@ fun ReviewScreen(
 
         Summary(report)
 
-        if (state.edited.isNotEmpty()) {
+        if (state.fixes > 0) {
             Button(onClick = onSaveCorrected, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.review_save_corrected, state.edited.size))
+                Text(stringResource(R.string.review_save_corrected, state.fixes))
             }
         }
 
@@ -116,6 +122,11 @@ fun ReviewScreen(
             }
         }
 
+        // Asked of the document rather than of the list: the list is
+        // usually filtered to the doubtful blocks, and what sits above one
+        // on the screen is then not what sits above it on the page.
+        val joinable = joinableTo(report, state.dropped)
+
         LazyColumn(
             // weight, not fillMaxSize: the list takes the height left over
             // after the header, instead of the parent's full height.
@@ -128,9 +139,14 @@ fun ReviewScreen(
                 EntryRow(
                     entry = entry,
                     edited = entry.index in state.edited,
+                    dropped = entry.index in state.dropped,
+                    canJoinUp = entry.index in joinable,
                     textOf = { textOf(entry.index) },
                     onRetext = { text -> onRetext(entry.index, text) },
                     onReclassify = { kind -> onReclassify(entry.index, kind) },
+                    onRemove = { onRemove(entry.index) },
+                    onRestore = { onRestore(entry.index) },
+                    onJoinUp = { onJoinUp(entry.index) },
                 )
             }
         }
@@ -192,13 +208,24 @@ private fun BandBar(report: FidelityReport.Report) {
  * saves a paragraph back with its tail cut off and calls that a
  * correction.
  */
+// FlowRow so the actions wrap rather than being clipped: three of them on
+// a narrow phone is already close, and German and French say all three in
+// about twice the letters English does. The opt-in is belt and braces —
+// FlowRow is stable in this version of Compose and the marker costs a
+// warning at worst.
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EntryRow(
     entry: FidelityReport.Entry,
     edited: Boolean,
+    dropped: Boolean,
+    canJoinUp: Boolean,
     textOf: () -> String,
     onRetext: (String) -> Unit,
     onReclassify: (ParagraphKind) -> Unit,
+    onRemove: () -> Unit,
+    onRestore: () -> Unit,
+    onJoinUp: () -> Unit,
 ) {
     // Null is "not editing", so the draft and the state that it exists are
     // one thing and cannot disagree. Saveable because a reader retyping a
@@ -247,6 +274,13 @@ private fun EntryRow(
                 Text(
                     text = entry.excerpt.ifEmpty { stringResource(R.string.review_image) },
                     style = MaterialTheme.typography.bodyMedium,
+                    // Struck through and dimmed rather than hidden: what was
+                    // taken out has to stay readable, or a reader cannot tell
+                    // whether they took out the right thing.
+                    textDecoration = if (dropped) TextDecoration.LineThrough else null,
+                    color =
+                        if (dropped) MaterialTheme.colorScheme.onSurfaceVariant
+                        else Color.Unspecified,
                 )
             } else {
                 WordEditor(
@@ -260,33 +294,69 @@ private fun EntryRow(
                 )
             }
 
-            if (edited) {
-                Text(
-                    text = stringResource(R.string.review_edited),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-
-            // The two corrections part company here on purpose. Any words
-            // can be wrong, including a Word document's own — that is what
-            // editing a document is — so fixing them is offered on every
-            // block that has any. Relabelling is offered only where the
-            // label was guessed: a heading level a DOCX states outright is
-            // not the app's to second-guess.
-            if (hasWords && typing == null) {
-                TextButton(onClick = { draft = textOf() }) {
-                    Text(stringResource(R.string.review_words_fix))
+            if (dropped) {
+                // Nothing else is offered on a block that is not in the
+                // document: correcting the words of something on its way
+                // out is work thrown away, and offering to remove it again
+                // says the first removal did not take.
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.review_removed),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = onRestore) {
+                        Text(stringResource(R.string.review_put_back))
+                    }
+                }
+            } else {
+                if (edited) {
+                    Text(
+                        text = stringResource(R.string.review_edited),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                if (typing == null) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (hasWords) {
+                            TextButton(onClick = { draft = textOf() }) {
+                                Text(stringResource(R.string.review_words_fix))
+                            }
+                        }
+                        if (canJoinUp) {
+                            TextButton(onClick = onJoinUp) {
+                                Text(stringResource(R.string.review_join_up))
+                            }
+                        }
+                        // Offered on a picture and a table as well: a
+                        // scanner's edge comes back as a picture of nothing,
+                        // and a rule drawn across a page comes back as a
+                        // table of one empty cell.
+                        TextButton(onClick = onRemove) {
+                            Text(stringResource(R.string.review_remove))
+                        }
+                    }
                 }
             }
+
+            // The corrections part company here on purpose. Any words can be
+            // wrong, including a Word document's own — that is what editing a
+            // document is — so fixing them is offered on every block that has
+            // any. Relabelling is offered only where the label was guessed: a
+            // heading level a DOCX states outright is not the app's to
+            // second-guess.
             val relabel = entry.band != FidelityReport.Band.HIGH && hasWords
-            if (relabel && typing == null) {
+            if (relabel && typing == null && !dropped) {
                 Text(
                     text = stringResource(R.string.review_correct_hint),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     KindButton(R.string.review_as_body, ParagraphKind.BODY, onReclassify)
                     KindButton(R.string.review_as_h1, ParagraphKind.HEADING_1, onReclassify)
                     KindButton(R.string.review_as_h2, ParagraphKind.HEADING_2, onReclassify)
@@ -345,6 +415,27 @@ private fun bandColor(band: FidelityReport.Band): Color {
         FidelityReport.Band.LOW ->
             if (dark) Color(0xFFF08A7C) else Color(0xFFC0392B)
     }
+}
+
+/**
+ * Which blocks have a paragraph directly above them to be joined to.
+ *
+ * Directly: a block the reader has taken out is passed over, since it is
+ * no longer there, but a table or a picture is not — carrying a sentence
+ * over something standing between its halves is not what joining a
+ * paragraph to the one above it means.
+ */
+private fun joinableTo(report: FidelityReport.Report, dropped: Set<Int>): Set<Int> {
+    val out = mutableSetOf<Int>()
+    var paragraphAbove = false
+    for (entry in report.entries.sortedBy { it.index }) {
+        if (entry.index in dropped) continue
+        val words = entry.kind == FidelityReport.Kind.PARAGRAPH ||
+            entry.kind == FidelityReport.Kind.HEADING
+        if (words && paragraphAbove) out += entry.index
+        paragraphAbove = words
+    }
+    return out
 }
 
 private fun kindLabel(kind: FidelityReport.Kind): Int = when (kind) {

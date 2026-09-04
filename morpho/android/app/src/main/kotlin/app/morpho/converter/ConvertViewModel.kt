@@ -109,11 +109,24 @@ enum class FailReason {
     UNSUPPORTED_TYPE, SCANNED_PDF, OCR_EMPTY, UNREADABLE_PICTURE, TOO_LARGE, READ_ERROR, WRITE_ERROR
 }
 
-/** What Review Mode shows: the report, and which blocks the reader corrected. */
+/** What Review Mode shows: the report, and what the reader has done to it. */
 data class ReviewState(
     val report: FidelityReport.Report,
     val edited: Set<Int> = emptySet(),
-)
+    /**
+     * The blocks the reader has taken out. They are still in the report —
+     * still listed, still with their words showing — because a removal
+     * that vanished from the screen could not be undone, and because the
+     * moment a block left the document every block below it would move up
+     * one and every mark in [edited] would land on somebody else's
+     * paragraph. They are left out when the document is written, and
+     * nowhere else.
+     */
+    val dropped: Set<Int> = emptySet(),
+) {
+    /** How many corrections the reader has made, of either kind. */
+    val fixes: Int get() = (edited + dropped).size
+}
 
 /** Thrown inside a conversion to surface a specific, honest failure reason. */
 private class UnconvertibleContent(val reason: FailReason) : Exception()
@@ -207,6 +220,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     private var lastWriter: ((DocumentModel) -> ByteArray)? = null
     private var lastMimeType: String = DocxWriter.MIME_TYPE
     private val editedBlocks = mutableSetOf<Int>()
+    private val droppedBlocks = mutableSetOf<Int>()
 
     /**
      * Whether the bytes the reader is about to save are older than the
@@ -276,7 +290,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     /** Opens Review Mode on the last conversion's report, if there is one. */
     fun showReview() {
         val report = lastReport ?: return
-        _review.value = ReviewState(report, editedBlocks.toSet())
+        _review.value = ReviewState(report, editedBlocks.toSet(), droppedBlocks.toSet())
     }
 
     fun hideReview() {
@@ -320,6 +334,78 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
+     * Takes a block out of the document.
+     *
+     * A scan invents things: an edge of the scanner read as a «, a
+     * running head that escaped the reading of the page's furniture, a
+     * page number sitting in the middle of the text. None of those can be
+     * corrected into anything, because none of them should be there.
+     *
+     * The block stays in the model and is left out only when the document
+     * is written. That is what lets it be put back, and it is what keeps
+     * every other block where it was: Review Mode remembers corrections
+     * by position, and a block that really left would move every block
+     * below it up one and every mark onto somebody else's paragraph.
+     */
+    fun remove(index: Int) {
+        val model = lastModel ?: return
+        if (index !in model.blocks.indices || index in droppedBlocks) return
+        droppedBlocks += index
+        republish(model, index, marked = false)
+    }
+
+    /** Puts back a block the reader took out. */
+    fun restore(index: Int) {
+        val model = lastModel ?: return
+        if (!droppedBlocks.remove(index)) return
+        republish(model, index, marked = false)
+    }
+
+    /**
+     * Joins a block to the one above it, which is where it belonged.
+     *
+     * Recognition breaks a paragraph at every page and every column,
+     * because it never sees the two halves together — so a sentence stops
+     * mid-clause and starts again as a paragraph of its own. Both halves
+     * keep their own runs; see [ParagraphEdit.join].
+     *
+     * The half above is whatever the reader still sees above it — a
+     * block already taken out is not somewhere to put words. It has to be
+     * a paragraph and it has to be the one directly above: joining across
+     * a table or a picture would carry a sentence over something standing
+     * between the two halves, which is not what anybody means by joining
+     * a paragraph to the one above it.
+     */
+    fun joinUp(index: Int) {
+        val model = lastModel ?: return
+        val second = model.blocks.getOrNull(index) as? Paragraph ?: return
+        if (index in droppedBlocks) return
+        val above = (index - 1 downTo 0).firstOrNull { it !in droppedBlocks } ?: return
+        if (model.blocks[above] !is Paragraph) return
+        val blocks = model.blocks.toMutableList()
+        blocks[above] = ParagraphEdit.join(blocks[above] as Paragraph, second)
+        droppedBlocks += index
+        republish(model.copy(blocks = blocks), above)
+    }
+
+    /**
+     * The document as the reader has it: their corrections, less what
+     * they took out.
+     *
+     * The one place the removals are applied, so that what is drawn in
+     * the preview and what is written to the file are the same document —
+     * and so that the report, the review list and every mark in it keep
+     * counting from the blocks as they were read.
+     */
+    private fun readersModel(): DocumentModel? {
+        val model = lastModel ?: return null
+        if (droppedBlocks.isEmpty()) return model
+        return model.copy(
+            blocks = model.blocks.filterIndexed { at, _ -> at !in droppedBlocks },
+        )
+    }
+
+    /**
      * The whole of what a block says, for the reader about to correct it.
      *
      * The report carries an excerpt — eighty code points, enough to know
@@ -343,13 +429,15 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
      * again when the reader asks to save, which is once rather than after
      * every word.
      */
-    private fun republish(corrected: DocumentModel, index: Int) {
+    private fun republish(corrected: DocumentModel, index: Int, marked: Boolean = true) {
         val report = FidelityReport.of(corrected)
         lastModel = corrected
         lastReport = report
-        editedBlocks += index
+        // A removal marks nothing: the row says it is gone, and saying it
+        // was corrected as well would count one edit twice.
+        if (marked) editedBlocks += index
         correctedSinceWrite = true
-        _review.value = ReviewState(report, editedBlocks.toSet())
+        _review.value = ReviewState(report, editedBlocks.toSet(), droppedBlocks.toSet())
         redrawPreview()
     }
 
@@ -365,7 +453,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
      * pages arrive a moment later.
      */
     private fun redrawPreview() {
-        val model = lastModel ?: return
+        val model = readersModel() ?: return
         val epoch = ++redrawEpoch
         redrawing?.cancel()
         redrawing = viewModelScope.launch(Dispatchers.IO) {
@@ -393,7 +481,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     /** Writes the corrected model out again, straight to the save dialog. */
     fun saveCorrected() {
         if (_state.value is ConvertUiState.Converting) return
-        val model = lastModel ?: return
+        val model = readersModel() ?: return
         val write = lastWriter ?: return
         // "Try again" after a failed save must retry the save. Re-running the
         // conversion would rebuild the model and drop every correction.
@@ -442,6 +530,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         pdfPages = null
         wantsMarkdown = false
         editedBlocks.clear()
+        droppedBlocks.clear()
         correctedSinceWrite = false
         redrawEpoch++
         redrawing?.cancel()
@@ -641,6 +730,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         lastMimeType = mimeType
         lastReport = FidelityReport.of(model)
         editedBlocks.clear()
+        droppedBlocks.clear()
         correctedSinceWrite = false
 
         val output = try {

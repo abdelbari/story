@@ -200,4 +200,116 @@ class ParagraphEditTest {
             )
         }
     }
+
+    @Test
+    fun `a paragraph a page broke in two is one paragraph again`() {
+        // What a scan does at every page and every column: it never sees
+        // the two halves together, so a sentence stops mid-clause and
+        // starts again as a paragraph of its own.
+        val first = Paragraph(
+            listOf(TextRun("The committee found that the form")),
+            style = ParagraphStyle(kind = ParagraphKind.BODY),
+            confidence = 0.5f,
+        )
+        val second = Paragraph(listOf(TextRun("had been received in time.")), confidence = 0.9f)
+        val now = ParagraphEdit.join(first, second)
+        assertEquals("The committee found that the form had been received in time.", now.text)
+        assertEquals(0.5f, now.confidence, "a block is as certain as the least certain thing in it")
+    }
+
+    @Test
+    fun `the second half brings its own formatting over with it`() {
+        val first = paragraph(TextRun("See "))
+        val second = paragraph(
+            TextRun("the form", link = "https://example.org/form"),
+            TextRun(" itself.", italic = true),
+        )
+        val now = ParagraphEdit.join(first, second)
+        assertEquals("See the form itself.", now.text)
+        assertEquals("https://example.org/form", now.runs.first { it.text == "the form" }.link)
+        assertTrue(now.runs.last().italic)
+    }
+
+    @Test
+    fun `no space is put in where there is one already`() {
+        assertEquals("one two", ParagraphEdit.join(paragraph(TextRun("one ")), paragraph(TextRun("two"))).text)
+        assertEquals("one two", ParagraphEdit.join(paragraph(TextRun("one")), paragraph(TextRun(" two"))).text)
+        // A word a page broke at a hyphen is joined and then typed over,
+        // and a space put in unasked would have to be taken out again —
+        // so it is put in once, not twice.
+        assertEquals("one two", ParagraphEdit.join(paragraph(TextRun("one")), paragraph(TextRun("two"))).text)
+    }
+
+    @Test
+    fun `the space between two halves is in neither of their links`() {
+        val first = paragraph(TextRun("nebbarrebih@example.org", link = "mailto:nebbarrebih@example.org"))
+        val second = paragraph(TextRun("and nobody else."))
+        val now = ParagraphEdit.join(first, second)
+        assertEquals("nebbarrebih@example.org and nobody else.", now.text)
+        // The gap goes to the words after it rather than staying a run of
+        // its own — what matters is only that it did not go to the link.
+        assertEquals(
+            "nebbarrebih@example.org",
+            now.runs.single { it.link != null }.text,
+            "the gap after a link was made part of it",
+        )
+    }
+
+    @Test
+    fun `the joined paragraph is the first one, since that is where it began`() {
+        val first = Paragraph(
+            listOf(TextRun("A heading")),
+            style = ParagraphStyle(kind = ParagraphKind.HEADING_2, listMarker = ListMarker.BULLET),
+        )
+        val second = Paragraph(
+            listOf(TextRun("and its tail")),
+            style = ParagraphStyle(kind = ParagraphKind.BODY),
+        )
+        val now = ParagraphEdit.join(first, second)
+        assertEquals(ParagraphKind.HEADING_2, now.style.kind)
+        assertEquals(ListMarker.BULLET, now.style.listMarker)
+    }
+
+    @Test
+    fun `joining an empty half changes nothing but keeps the doubt`() {
+        val words = Paragraph(listOf(TextRun("all of it")), confidence = 0.9f)
+        val empty = Paragraph(emptyList(), confidence = 0.5f)
+        assertEquals("all of it", ParagraphEdit.join(words, empty).text)
+        assertEquals(
+            "all of it", ParagraphEdit.join(empty, words).text,
+            "the words of the second half were lost",
+        )
+        assertEquals(0.5f, ParagraphEdit.join(empty, words).confidence)
+    }
+
+    @Test
+    fun `whatever two paragraphs are, joining them says what both said`() {
+        val pieces = listOf("", "a", "الاستمارة", "the ", " ", "\n", "\t", "form")
+        val rng = kotlin.random.Random(20260905)
+        val looks = listOf(
+            TextRun(""), TextRun("", bold = true), TextRun("", link = "https://example.org"),
+            TextRun("", italic = true, fontSizePt = 14f),
+        )
+        fun some() = Paragraph(
+            List(rng.nextInt(0, 4)) { looks.random(rng).copy(text = pieces.random(rng)) }
+        )
+        repeat(3000) {
+            val first = some()
+            val second = some()
+            val now = ParagraphEdit.join(first, second)
+            assertTrue(
+                now.text.startsWith(first.text.trimEnd().ifEmpty { "" }.let { first.text }) ||
+                    first.text.isEmpty() || first.runs.isEmpty(),
+                "\"${first.text}\" is not the front of \"${now.text}\"",
+            )
+            assertTrue(
+                now.text.endsWith(second.text) || second.text.isEmpty() || second.runs.isEmpty(),
+                "\"${second.text}\" is not the end of \"${now.text}\"",
+            )
+            assertEquals(
+                minOf(first.confidence, second.confidence), now.confidence,
+                "a join must never grow more certain than its halves",
+            )
+        }
+    }
 }

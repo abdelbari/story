@@ -49,6 +49,10 @@
     <string name="review_words_fix">صحّح الكلمات</string>
     <string name="review_words_label">ما ينبغي أن يقوله</string>
     <string name="review_words_keep">تم</string>
+    <string name="review_remove">احذف</string>
+    <string name="review_put_back">أعده</string>
+    <string name="review_removed">محذوف</string>
+    <string name="review_join_up">ضمّه إلى ما فوقه</string>
     <string name="about_open">حول التطبيق والتراخيص</string>
     <string name="about_title">حول مورفو</string>
     <string name="about_version">الإصدار %1$s</string>
