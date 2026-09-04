@@ -34,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -238,7 +239,16 @@ private fun StateContent(state: ConvertUiState) {
             Text(state.fileName, style = MaterialTheme.typography.titleMedium)
             if (state.pictures > 1) {
                 Text(
-                    text = stringResource(R.string.pictures_as_pages, state.pictures),
+                    // Counted rather than merely formatted: Arabic has a
+                    // word for two of a thing and a different ending for
+                    // three to ten than for eleven upward, and a converter
+                    // whose reason to exist is Arabic can afford to say
+                    // "صورتان" rather than "2 صورة".
+                    text = pluralStringResource(
+                        R.plurals.pictures_as_pages,
+                        state.pictures,
+                        state.pictures,
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

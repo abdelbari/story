@@ -15,7 +15,7 @@
     <string name="retry">أعد المحاولة</string>
     <string name="scanned_pdf">يبدو هذا ملف PDF ممسوحًا ضوئيًا دون طبقة نصية. يمكنك قراءته بالتعرف الضوئي على الجهاز بالكامل.</string>
     <string name="convert_with_ocr">اقرأ بالتعرف الضوئي وحوِّل</string>
-    <string name="unsupported_type">يحوّل مورفو ملفات PDF ووورد (.docx) والنصوص وماركداون. هذا الملف من نوع آخر.</string>
+    <string name="unsupported_type">يحوّل مورفو ملفات PDF ووورد (.docx) والنصوص وماركداون وصور الصفحات. هذا الملف من نوع آخر.</string>
     <string name="read_error">تعذّرت قراءة الملف. قد يكون تالفا أو ليس من النوع الذي يشير إليه اسمه.</string>
     <string name="write_error">تعذّر حفظ الملف المحوَّل.</string>
     <string name="privacy_line">على الجهاز فقط — التحويلات في هذه الشاشة لا تمر عبر الشبكة أبدًا.</string>
@@ -74,4 +74,13 @@
     <string name="pages_body">اكتب نطاقا مثل ٥-٢٠، أو رقم صفحة واحدة. اتركه فارغا لتحويل الملف كاملا.</string>
     <string name="pages_label">الصفحات</string>
     <string name="pages_convert">تحويل</string>
+    <string name="unreadable_picture">لا يستطيع هذا الهاتف فتح هذا النوع من الصور. تعمل صيغ JPEG وPNG وWebP وHEIC؛ أما TIFF فلا.</string>
+    <plurals name="pictures_as_pages">
+        <item quantity="zero">لا صور</item>
+        <item quantity="one">صورة واحدة، تُحوَّل مستندًا واحدًا</item>
+        <item quantity="two">صورتان، تُحوَّلان مستندًا واحدًا</item>
+        <item quantity="few">%1$d صور، تُحوَّل مستندًا واحدًا</item>
+        <item quantity="many">%1$d صورة، تُحوَّل مستندًا واحدًا</item>
+        <item quantity="other">%1$d صورة، تُحوَّل مستندًا واحدًا</item>
+    </plurals>
 </resources>

@@ -15,7 +15,7 @@
     <string name="retry">Reintentar</string>
     <string name="scanned_pdf">Este PDF parece escaneado, sin capa de texto. Puedes leerlo con OCR completamente en el dispositivo.</string>
     <string name="convert_with_ocr">Leer con OCR y convertir</string>
-    <string name="unsupported_type">Morpho convierte archivos PDF, Word (.docx), de texto y Markdown. Ese es de otro tipo.</string>
+    <string name="unsupported_type">Morpho convierte archivos PDF, Word (.docx), de texto, Markdown y fotos de páginas. Ese es de otro tipo.</string>
     <string name="read_error">No se pudo leer ese archivo. Puede estar dañado, o no ser del tipo que dice su nombre.</string>
     <string name="write_error">No se pudo guardar el archivo convertido.</string>
     <string name="privacy_line">Solo en el dispositivo: las conversiones de esta pantalla nunca tocan la red.</string>
@@ -74,4 +74,9 @@
     <string name="pages_body">Escribe un intervalo, como 5-20, o una sola página. Déjalo vacío para convertir todo el documento.</string>
     <string name="pages_label">Páginas</string>
     <string name="pages_convert">Convertir</string>
+    <string name="unreadable_picture">Este teléfono no puede abrir ese tipo de imagen. JPEG, PNG, WebP y HEIC sí funcionan; TIFF no.</string>
+    <plurals name="pictures_as_pages">
+        <item quantity="one">%1$d imagen, convertida en un solo documento</item>
+        <item quantity="other">%1$d imágenes, convertidas en un solo documento</item>
+    </plurals>
 </resources>
