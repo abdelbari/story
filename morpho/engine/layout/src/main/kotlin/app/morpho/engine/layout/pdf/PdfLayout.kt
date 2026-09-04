@@ -289,6 +289,13 @@ object PdfLayout {
         // size comparison, and that is how most hand-made section headings
         // are written; bold means nothing in a document that is mostly bold.
         val boldClusters = flatClusters.count(::isBold)
+        // Whether this document marks a head by weight at all, which is
+        // what lets a bold opening inside a paragraph be read as one: a
+        // short line, bold all through, standing on its own. Without one
+        // anywhere, a bold opening is emphasis and nothing more.
+        val marksHeadsInBold = flatClusters.any {
+            isBold(it) && it.sumOf { line -> line.text.length } <= HeadingSizes.MAX_CHARS
+        }
         val boldLevel =
             if (HeadingSizes.boldIsMeaningful(boldClusters, flatClusters.size)) {
                 HeadingSizes.boldLevel(kindBySize)
@@ -329,15 +336,20 @@ object PdfLayout {
                 else -> confidence
             }.coerceIn(LEAST_SURE, SUREST_RECONSTRUCTION)
             val next = flatClusters.getOrNull(index + 1)?.firstOrNull()
-            positioned += Positioned(
-                first.page,
-                flows[first] ?: 0,
-                first.baselineY,
-                paragraph(
-                    clusterLines, kind, sureness, blockByPage, next, bodyRules,
-                    flatClusters.getOrNull(index - 1)?.lastOrNull(), spelling,
-                ),
+            val built = paragraph(
+                clusterLines, kind, sureness, blockByPage, next, bodyRules,
+                flatClusters.getOrNull(index - 1)?.lastOrNull(), spelling,
             )
+            // A section head the page set at the head of its own first
+            // paragraph rather than on a line of its own.
+            val runIn = if (kind == ParagraphKind.BODY && boldLevel != null && marksHeadsInBold) {
+                runIn(built, boldLevel, (sureness - GUESSED_FROM_WEIGHT).coerceAtLeast(LEAST_SURE))
+            } else {
+                null
+            }
+            for (block in runIn ?: listOf(built)) {
+                positioned += Positioned(first.page, flows[first] ?: 0, first.baselineY, block)
+            }
         }
         val textCount = positioned.size
         positioned.sortWith(compareBy({ it.page }, { it.y }))
@@ -1141,6 +1153,101 @@ object PdfLayout {
         }
         return sawLetter
     }
+
+    /**
+     * A paragraph that opens with its own heading, as the heading and then
+     * the paragraph, or null where it does not.
+     *
+     * A page may set a section head on the line its section starts on:
+     * `5-Sections of the form: the form falls into two parts, of which…`,
+     * the head in bold and the sentence after it in the body's own weight,
+     * all on one line. Every other head in such a document stands on a
+     * line of its own and is found by its weight, so the reader gets an
+     * outline with a number missing out of the middle of it — measured on
+     * the paper this converter was built for, heads one to four and six to
+     * twelve, and nothing where five should be.
+     *
+     * Word has no half-paragraph, so recovering the head means making one:
+     * the bold opening becomes a heading of its own and the rest stays the
+     * paragraph it was. Only where the document already uses weight to
+     * mark its heads ([level] is the level it marks them at), only where
+     * the opening is short enough to be one, and only where it closes the
+     * way a run-in head closes — a colon, a full stop, a dash. A document
+     * that merely bolds a word to open a paragraph keeps it: without a
+     * close, it is emphasis.
+     *
+     * The digit is judged like the rest of the reading judges it: `5-` may
+     * be set in a regular Latin face beside bold Arabic letters, so a run
+     * with no letters in it neither makes the opening bold nor breaks it.
+     */
+    private fun runIn(paragraph: Paragraph, level: ParagraphKind, confidence: Float): List<Paragraph>? {
+        // An item of a list is not a section of the document, however its
+        // label is set. A list whose items open with a bold label and a
+        // colon is ordinary — six of them on the paper this was measured
+        // on — and read as heads it loses the list and gains six sections
+        // that are not there.
+        if (paragraph.style.listMarker != null) return null
+        val runs = paragraph.runs
+        if (runs.firstOrNull()?.text?.trimStart()?.firstOrNull() in LIST_OPENS) return null
+        var at = 0
+        var sawBoldLetter = false
+        while (at < runs.size) {
+            val run = runs[at]
+            if (run.text.none(Character::isLetter)) {
+                at++
+                continue
+            }
+            if (!run.bold) break
+            sawBoldLetter = true
+            at++
+        }
+        if (!sawBoldLetter || at == 0 || at >= runs.size) return null
+        // Nothing but the opening was bold, or the whole paragraph is and
+        // this is not a head with a paragraph after it.
+        if (runs.drop(at).none { it.text.any(Character::isLetter) }) return null
+        var head = runs.take(at)
+        var rest = runs.drop(at)
+        // Where the close was typed outside the weight — `**Step one**: …`
+        // rather than `**Step one:** …` — it still closes the head, and
+        // belongs to it. The same document does both, one step to the next.
+        if (head.joinToString("") { it.text }.trimEnd().lastOrNull() !in RUN_IN_CLOSES) {
+            val over = rest.first()
+            val opens = over.text.trimStart()
+            if (opens.firstOrNull() !in RUN_IN_CLOSES) return null
+            val taken = over.text.length - opens.length + 1
+            head = head + over.copy(text = over.text.take(taken), bold = true)
+            rest = listOf(over.copy(text = over.text.drop(taken))) + rest.drop(1)
+        }
+        val opening = head.joinToString("") { it.text }.trim()
+        if (opening.length > HeadingSizes.MAX_CHARS) return null
+        // The space that separated the two is the separation; neither side
+        // should keep it.
+        if (rest.none { it.text.any(Character::isLetter) }) return null
+        val body = rest.mapIndexed { on, run ->
+            if (on == 0) run.copy(text = run.text.trimStart()) else run
+        }.filter { it.text.isNotEmpty() }
+        if (body.isEmpty()) return null
+        return listOf(
+            paragraph.copy(
+                runs = head.map { it.copy(text = it.text.trimEnd()) }.filter { it.text.isNotEmpty() },
+                style = paragraph.style.copy(
+                    kind = level,
+                    firstLineIndentPt = null,
+                    hangingIndentPt = null,
+                    spaceAfterPt = 0f,
+                ),
+                confidence = confidence,
+            ),
+            paragraph.copy(runs = body, confidence = confidence),
+        )
+    }
+
+    /** What a list item opens with, where the marker was left in the text. */
+    private val LIST_OPENS =
+        setOf('\u2022', '\u2023', '\u25e6', '\u00b7', '\u25aa', '\u25ab', '-', '\u2013', '\u2014', '*')
+
+    /** How a run-in head closes, and without one it is emphasis. */
+    private val RUN_IN_CLOSES = setOf(':', '\u061b', '\u060c', '.', '-', '\u2013', '\u2014', ')')
 
     private fun paragraph(
         cluster: List<PdfLine>,

@@ -106,6 +106,92 @@ class UntaggedLookTest {
         assertEquals(12f, paragraph.runs[0].fontSizePt)
     }
 
+    /** A line of two looks: [head] set bold, then [rest] in the body's weight. */
+    private fun runIn(y: Float, head: String, rest: String, page: Int = 1) =
+        line(head + rest, margin, right, y, page).copy(
+            runs = head.map { PdfRun(it.toString(), PdfLook("Times New Roman", 12f, bold = true)) } +
+                rest.map { PdfRun(it.toString(), PdfLook("Times New Roman", 12f)) },
+        )
+
+    /** A document that marks its sections by weight, as the paper this was built for does. */
+    private fun marked(vararg own: PdfLine): List<PdfLine> =
+        body(100f, 6) + short(200f, "1-The first section", bold = true) + body(215f, 6) + own.toList()
+
+    @Test
+    fun `a head the page set at the head of its own paragraph is still a head`() {
+        // The shape that loses a section: the page sets the head and the
+        // sentence after it on one line, the head in bold and the sentence
+        // in the body's weight. Every other head in the document stands on
+        // a line of its own, so the outline comes back with a number
+        // missing out of the middle of it.
+        val blocks = paragraphs(marked(runIn(400f, "2-The second section: ", "which opens here and runs on")))
+        val at = blocks.indexOfFirst { it.text.startsWith("2-The second section") }
+        assertTrue(at >= 0, "the head was lost: " + blocks.map { it.text.take(24) })
+        // The level a head standing on its own line gets in this
+        // document, because a head is a head wherever the page put it.
+        val onItsOwn = blocks.first { it.text == "1-The first section" }.style.kind
+        assertEquals(onItsOwn, blocks[at].style.kind, "not read as a head")
+        assertEquals("2-The second section:", blocks[at].text, "the head kept the sentence after it")
+        assertEquals(
+            "which opens here and runs on",
+            blocks[at + 1].text,
+            "the paragraph did not keep what the head left",
+        )
+        assertEquals(ParagraphKind.BODY, blocks[at + 1].style.kind)
+    }
+
+    @Test
+    fun `a close typed outside the weight closes the head just the same`() {
+        // The same document does both, one section to the next: `**Step
+        // one**: text` and `**Step two:** text`. Held to the weight alone,
+        // a reader finds every other one of them.
+        val blocks = paragraphs(marked(runIn(400f, "Step one", ": the planning of it")))
+        val at = blocks.indexOfFirst { it.text.startsWith("Step one") }
+        assertTrue(at >= 0, "the head was lost: " + blocks.map { it.text.take(24) })
+        assertEquals("Step one:", blocks[at].text, "the close did not come with the head")
+        assertEquals(blocks.first { it.text == "1-The first section" }.style.kind, blocks[at].style.kind)
+        assertEquals("the planning of it", blocks[at + 1].text)
+    }
+
+    @Test
+    fun `a bold opening with nothing closing it is emphasis`() {
+        val blocks = paragraphs(marked(runIn(400f, "Nevertheless ", "the committee went on to say that")))
+        assertEquals(
+            listOf("Nevertheless the committee went on to say that"),
+            blocks.filter { it.text.startsWith("Nevertheless") }.map { it.text },
+            "an emphasised opening was made a head",
+        )
+    }
+
+    @Test
+    fun `a list item with a bold label is still a list item`() {
+        // A list whose items open with a bold label and a colon is
+        // ordinary — six of them on the paper this was measured on — and
+        // read as heads it loses the list and gains six sections that are
+        // not there.
+        val blocks = paragraphs(marked(runIn(400f, "\u2022By post: ", "the form is sent out and returned")))
+        assertEquals(
+            listOf("\u2022By post: the form is sent out and returned"),
+            blocks.filter { it.text.contains("By post") }.map { it.text },
+            "a list item was made a head",
+        )
+    }
+
+    @Test
+    fun `a document that marks no head by weight keeps its bold openings`() {
+        // The guard the whole reading rests on. Bold means a head only in
+        // a document that sets a head in bold somewhere on its own line;
+        // in one that never does, a bold opening is a label, a defined
+        // term, the lead-in to a note.
+        val blocks = paragraphs(
+            body(100f, 6) + runIn(300f, "Abstract: ", "the study set out to establish") + body(400f, 6),
+        )
+        assertEquals(
+            listOf("Abstract: the study set out to establish"),
+            blocks.filter { it.text.startsWith("Abstract") }.map { it.text },
+        )
+    }
+
     @Test
     fun `a short bold line is a heading even at the body's size`() {
         val lines = body(100f, 10) + short(250f, "1-Introduction", bold = true) + body(265f, 10)
