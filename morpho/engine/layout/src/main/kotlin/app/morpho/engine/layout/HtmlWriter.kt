@@ -98,6 +98,24 @@ object HtmlWriter {
             remarks.remove()
         }
 
+    /**
+     * The blocks of the body alone, marked, with their lists and sheets
+     * round them and nothing else of the page: what a screen that keeps
+     * the page's frame paints again when a block cannot be painted on
+     * its own.
+     */
+    fun writeBody(document: DocumentModel, comments: Boolean = true): String =
+        try {
+            noteNumbers.set(numberNotes(document.blocks))
+            remarks.set(if (comments) Remarks.of(document) else Remarks.NONE)
+            val sb = StringBuilder()
+            appendBlocks(sb, document.blocks, document.defaultDirection, sectionShapes(document), marked = true)
+            sb.toString()
+        } finally {
+            noteNumbers.remove()
+            remarks.remove()
+        }
+
     /** The attribute that says which block of the body an element is. */
     private fun markOf(index: Int): String = """ data-block="$index""""
 

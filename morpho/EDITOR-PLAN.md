@@ -206,12 +206,9 @@ by the document itself, laid out, with a caret in it.
   deleting the boundary between two paragraphs, separate becomes pressing
   Return.
 
-Engine work (JVM, tested): the algebra and the history exist; what
-remains is the rendering side of the transport — `HtmlWriter` emitting
-each top-level block with a stable id, so an operation can name one, and
-a way to render one block on its own for the bridge to hand back — and
-the operations as a wire format the script can send, which is a small
-flat grammar rather than a document format.
+Engine work (JVM, tested): done — the algebra, the history, the block
+marks, the single-block and body renders, and the wire format with its
+JSON, all of it fuzzed. See Stage 0.
 
 Android work: the editing WebView, the bridge, a formatting toolbar, and
 the wiring in `ConvertViewModel` (1016 lines already; this is where it will
@@ -280,18 +277,25 @@ Most of this is model → HTML → model plumbing once Stage 1 stands, because
 
 ## What to do first on Saturday
 
-Stage 0's engine half is done. What is left of Stage 0 needs a device:
+Everything of Stage 0 and Stage 1 that a machine can do is done; what
+is left needs a device:
 
 1. The `contenteditable` device spike, and the JavaScript posture
    decision that goes with it.
-2. The bridge, wired to `EditorState`, and the timing question above.
+2. The bridge, wired to `EditorProtocol`, and the timing question above.
 
-Before either, the engine piece Stage 1 still needs and a machine can do:
-the operations' wire format with its own fuzz, so that what the device
-spike sends has something to land on. The other one is done: every block
-of the body carries `data-block="N"` on its outermost element, and
-`HtmlWriter.writeBlock(document, n)` renders one block alone, the same
-element the page wrote for it, for the bridge to hand back after an edit.
+What the device spike lands on is all there. Every block of the body
+carries `data-block="N"` on its outermost element; `HtmlWriter.writeBlock`
+renders one block alone and `writeBody` the body alone; and
+`EditorProtocol` is the bridge's whole grammar — `operation(json)` reads
+what the script sends as if a hostile page wrote it, `step(state, json)`
+applies it, and the reply is a splice of re-rendered blocks with where
+to put them (or the whole body where a list or a sheet is involved), the
+selection, whether there is anything to undo, and the look and paragraph
+style at the caret for the toolbar. The script's job on the device is
+exactly three things: turn `beforeinput` and toolbar presses into those
+operations, apply a splice to the DOM and renumber the marks, and put the
+caret where the reply says. Nothing it holds is the document.
 
 Then hold at the gate and decide between routes A and B on what the two
 spikes actually measured, rather than on what this document expects them
