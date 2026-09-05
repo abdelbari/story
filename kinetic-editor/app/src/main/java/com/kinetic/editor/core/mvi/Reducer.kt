@@ -2,6 +2,7 @@ package com.kinetic.editor.core.mvi
 
 import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ClipModel
+import com.kinetic.editor.core.model.MaskSpec
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TransformSpec
 import com.kinetic.editor.core.model.Track
@@ -60,6 +61,15 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
                 softness = intent.chroma.softness.coerceIn(0f, 0.5f),
             ),
         )
+    }
+    is EditorIntent.SetMask -> replaceClip(state, intent.clipId) {
+        it.copy(mask = intent.mask?.let(::clampMask))
+    }
+    is EditorIntent.SetFlip -> replaceClip(state, intent.clipId) {
+        it.copy(flipX = intent.flipX, flipY = intent.flipY)
+    }
+    is EditorIntent.SetEffect -> replaceClip(state, intent.clipId) {
+        it.copy(effect = intent.effect, effectAmount = intent.amount.coerceIn(0f, 1f))
     }
     is EditorIntent.SetMotion -> replaceClip(state, intent.clipId) { it.copy(motion = intent.motion) }
     is EditorIntent.SetTransformEnd -> replaceClip(state, intent.clipId) {
@@ -292,6 +302,21 @@ private fun clampTransform(t: TransformSpec) = t.copy(
     offsetX = t.offsetX.coerceIn(-2f, 2f),
     offsetY = t.offsetY.coerceIn(-2f, 2f),
     rotationDeg = t.rotationDeg.coerceIn(-180f, 180f),
+)
+
+/**
+ * Bounds a mask to shapes that mean something: a zero size is no mask at all,
+ * a feather wider than half the frame is a fade, and the centre may sit a
+ * little off-frame so a shape can enter from an edge.
+ */
+private fun clampMask(m: MaskSpec) = m.copy(
+    centerX = m.centerX.coerceIn(-1.5f, 1.5f),
+    centerY = m.centerY.coerceIn(-1.5f, 1.5f),
+    size = m.size.coerceIn(0.02f, 3f),
+    aspect = m.aspect.coerceIn(0.2f, 5f),
+    roundness = m.roundness.coerceIn(0f, 1f),
+    rotationDeg = m.rotationDeg.coerceIn(-180f, 180f),
+    feather = m.feather.coerceIn(0f, 0.5f),
 )
 
 private inline fun mapTracks(state: TimelineState, transform: (Track) -> Track): TimelineState {

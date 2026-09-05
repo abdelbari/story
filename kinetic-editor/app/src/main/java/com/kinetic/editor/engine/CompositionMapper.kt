@@ -171,6 +171,14 @@ object CompositionMapper {
                         transformEnd = clip.transformEnd,
                         motion = clip.motion,
                         spanUs = clip.sourceSpanMs * 1_000L,
+                        flipX = clip.flipX,
+                        flipY = clip.flipY,
+                        mask = clip.mask,
+                        effect = clip.effect,
+                        effectAmount = clip.effectAmount,
+                        // The encoder's input surface ignores alpha, exactly as
+                        // the preview's SurfaceView does.
+                        opaque = true,
                         lutBitmap = lutBitmap,
                         lutIntensity = clip.lut?.intensity ?: 0f,
                         transOutType = clip.transitionOut?.type ?: TransitionType.NONE,
@@ -291,6 +299,15 @@ object CompositionMapper {
                             transformEnd = clip.transformEnd,
                             motion = clip.motion,
                             spanUs = clip.sourceSpanMs * 1_000L,
+                            flipX = clip.flipX,
+                            flipY = clip.flipY,
+                            mask = clip.mask,
+                            effect = clip.effect,
+                            effectAmount = clip.effectAmount,
+                            // Straight alpha: the compositor blends this over
+                            // the main picture, and a mask or key must let it
+                            // through.
+                            opaque = false,
                             lutBitmap = lutBitmap,
                             lutIntensity = clip.lut?.intensity ?: 0f,
                             transOutType = TransitionType.NONE,

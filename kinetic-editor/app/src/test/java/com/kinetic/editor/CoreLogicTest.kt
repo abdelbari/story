@@ -5,7 +5,10 @@ import com.kinetic.editor.core.model.ChromaKeySpec
 import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ClipModel
 import com.kinetic.editor.core.model.ColorGradeSpec
+import com.kinetic.editor.core.model.ClipEffect
 import com.kinetic.editor.core.model.ClipMotion
+import com.kinetic.editor.core.model.MaskShape
+import com.kinetic.editor.core.model.MaskSpec
 import com.kinetic.editor.core.model.MediaRef
 import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.FadeSpec
@@ -41,7 +44,9 @@ import com.kinetic.editor.core.model.videoStructureHash
 import com.kinetic.editor.core.mvi.EditorIntent
 import com.kinetic.editor.core.mvi.EditorStore
 import com.kinetic.editor.core.mvi.reduce
+import com.kinetic.editor.effects.ClipFx
 import com.kinetic.editor.effects.ClipGradeProvider
+import com.kinetic.editor.effects.ClipSnapshotFxProvider
 import com.kinetic.editor.effects.EditorShaders
 import com.kinetic.editor.effects.FxSegment
 import com.kinetic.editor.effects.GradeUniformsBuffer
@@ -988,13 +993,7 @@ class CoreLogicTest {
         assertEquals(3, TransitionType.ZOOM_PUNCH.ordinal)
 
         val buf = GradeUniformsBuffer()
-        val p = ClipGradeProvider(
-            grade = ColorGradeSpec(brightness = 0.2f),
-            lutBitmap = null, lutIntensity = 0f,
-            transOutType = TransitionType.DIP_TO_BLACK,
-            transOutStartUs = 5_750_000, transOutEndUs = 6_000_000,
-            transInType = TransitionType.ZOOM_PUNCH, transInEndUs = 250_000,
-        )
+        val p = exportProvider(opaque = true, grade = ColorGradeSpec(brightness = 0.2f))
         p.fill(0, buf)
         assertEquals(0.5f, buf.transProgress, 1e-3f)
         p.fill(3_000_000, buf)
@@ -1010,13 +1009,7 @@ class CoreLogicTest {
         // Transformer adds the item's sequence offset ahead of its effects: the
         // third clip of a sequence sees ~12.5s on its first frame, not 0.
         val buf = GradeUniformsBuffer()
-        val p = ClipGradeProvider(
-            grade = ColorGradeSpec(),
-            lutBitmap = null, lutIntensity = 0f,
-            transOutType = TransitionType.DIP_TO_BLACK,
-            transOutStartUs = 5_750_000, transOutEndUs = 6_000_000,
-            transInType = TransitionType.ZOOM_PUNCH, transInEndUs = 250_000,
-        )
+        val p = exportProvider(opaque = true)
         p.fill(12_500_000, buf)
         assertEquals(3f, buf.transType, 1e-3f)
         assertEquals(0.5f, buf.transProgress, 1e-3f)
@@ -1031,9 +1024,186 @@ class CoreLogicTest {
         assertEquals(0.5f, buf.transProgress, 1e-2f)
     }
 
+
+    /**
+     * Named, in full, on purpose: these constructors have grown with the
+     * shader, and a positional call here once compiled against a stale stub
+     * while failing against the real class.
+     */
+    private fun segment(
+        startUs: Long,
+        endUs: Long,
+        brightness: Float = 0f,
+        effect: ClipEffect = ClipEffect.NONE,
+    ) = FxSegment(
+        startUs = startUs, endUs = endUs,
+        transform = TransformSpec.NONE, transformEnd = null, motion = ClipMotion.NONE,
+        chroma = null, flipX = false, flipY = false, mask = null,
+        effect = effect, effectAmount = 1f,
+        grain = 0f, vignette = 0f,
+        brightness = brightness, contrast = 1f, saturation = 1f, temperature = 0f,
+        lutBitmap = null, lutIntensity = 0f,
+        transOutType = 0f, transOutStartUs = endUs, transInType = 0f, transInEndUs = startUs,
+    )
+
+    private fun exportProvider(
+        opaque: Boolean,
+        effect: ClipEffect = ClipEffect.NONE,
+        grade: ColorGradeSpec = ColorGradeSpec.NEUTRAL,
+    ) = ClipGradeProvider(
+        grade = grade, chroma = null,
+        transform = TransformSpec.NONE, transformEnd = null, motion = ClipMotion.NONE,
+        spanUs = 6_000_000L,
+        flipX = false, flipY = false, mask = null, effect = effect, effectAmount = 1f,
+        opaque = opaque,
+        lutBitmap = null, lutIntensity = 0f,
+        transOutType = TransitionType.DIP_TO_BLACK,
+        transOutStartUs = 5_750_000, transOutEndUs = 6_000_000,
+        transInType = TransitionType.ZOOM_PUNCH, transInEndUs = 250_000,
+    )
+
+    @Test
+    fun maskClampsClearsAndStaysOffDisk() {
+        val c = clip("a", 4_000)
+        val s0 = stateWith(listOf(c))
+        assertNull(s0.mainTrack.clips[0].mask)
+        assertFalse(ProjectCodec.encode(s0).contains("mask"))
+
+        val wild = MaskSpec(
+            shape = MaskShape.RECTANGLE, centerX = 9f, centerY = -9f, size = 0f,
+            aspect = 0f, roundness = 2f, rotationDeg = 400f, feather = 3f,
+        )
+        val m = reduce(s0, EditorIntent.SetMask(c.id, wild)).mainTrack.clips[0].mask!!
+        assertEquals(MaskShape.RECTANGLE, m.shape)
+        assertEquals(1.5f, m.centerX, 1e-4f)
+        assertEquals(-1.5f, m.centerY, 1e-4f)
+        // A zero size would be no mask at all, so the floor is above zero.
+        assertEquals(0.02f, m.size, 1e-4f)
+        assertEquals(0.2f, m.aspect, 1e-4f)
+        assertEquals(1f, m.roundness, 1e-4f)
+        assertEquals(180f, m.rotationDeg, 1e-4f)
+        assertEquals(0.5f, m.feather, 1e-4f)
+
+        val masked = reduce(s0, EditorIntent.SetMask(c.id, MaskSpec()))
+        val json = ProjectCodec.encode(masked)
+        assertTrue(json.contains("\"mask\""))
+        assertEquals(MaskSpec(), ProjectCodec.decode(json)!!.mainTrack.clips[0].mask)
+        assertNull(reduce(masked, EditorIntent.SetMask(c.id, null)).mainTrack.clips[0].mask)
+    }
+
+    @Test
+    fun mirrorAndEffectsDefaultOffAndRoundTripThroughTheCodec() {
+        val c = clip("a", 4_000)
+        val s0 = stateWith(listOf(c))
+        // A project saved before these fields existed has none of them, and an
+        // untouched clip must still write the bytes it always did.
+        val plain = ProjectCodec.encode(s0)
+        assertFalse(plain.contains("flipX"))
+        assertFalse(plain.contains("effect"))
+
+        val flipped = reduce(s0, EditorIntent.SetFlip(c.id, flipX = true, flipY = false))
+        val styled = reduce(flipped, EditorIntent.SetEffect(c.id, ClipEffect.VHS, 1.7f))
+        val back = ProjectCodec.decode(ProjectCodec.encode(styled))!!.mainTrack.clips[0]
+        assertTrue(back.flipX)
+        assertFalse(back.flipY)
+        assertEquals(ClipEffect.VHS, back.effect)
+        // Clamped on the way in, so the shader never sees more than 1.
+        assertEquals(1f, back.effectAmount, 1e-4f)
+
+        // Switching effects keeps the amount: trying each one at the strength
+        // you already chose is one tap each.
+        val half = reduce(styled, EditorIntent.SetEffect(c.id, ClipEffect.VHS, 0.5f))
+        val kept = half.mainTrack.clips[0].effectAmount
+        val next = reduce(half, EditorIntent.SetEffect(c.id, ClipEffect.GLOW, kept))
+        assertEquals(ClipEffect.GLOW, next.mainTrack.clips[0].effect)
+        assertEquals(0.5f, next.mainTrack.clips[0].effectAmount, 1e-4f)
+    }
+
+    @Test
+    fun theMainTrackCompositesOntoBlackAndOverlaysKeepAlpha() {
+        // A SurfaceView and an encoder input both ignore alpha, so what the
+        // main track hands them must already be composited; the compositor
+        // blends overlays on straight alpha, so theirs must not be.
+        val buf = GradeUniformsBuffer()
+        exportProvider(opaque = true).fill(0, buf)
+        assertEquals(1f, buf.opaque, 0f)
+        exportProvider(opaque = false).fill(0, buf)
+        assertEquals(0f, buf.opaque, 0f)
+
+        val preview = PreviewFxProvider()
+        preview.timeline = PreviewFxTimeline(listOf(segment(0, 1_000_000)))
+        preview.fill(10, buf)
+        assertEquals(1f, buf.opaque, 0f)
+
+        val pip = ClipSnapshotFxProvider()
+        pip.snapshot = ClipFx(
+            grade = ColorGradeSpec.NEUTRAL, chroma = null, transform = TransformSpec.NONE,
+            flipX = true, flipY = false, mask = null,
+            effect = ClipEffect.NONE, effectAmount = 0f,
+            lutBitmap = null, lutIntensity = 0f,
+        )
+        pip.fill(10, buf)
+        assertEquals(0f, buf.opaque, 0f)
+        assertEquals(-1f, buf.flipX, 0f)
+        assertEquals(1f, buf.flipY, 0f)
+    }
+
+    @Test
+    fun effectClockIsClipLocalAndWrapsWithoutAJump() {
+        val buf = GradeUniformsBuffer()
+        // Export: Transformer hands the third clip of a sequence its sequence
+        // offset on its first frame; the effect must still start from zero.
+        val p = exportProvider(opaque = true, effect = ClipEffect.FLICKER)
+        p.fill(12_500_000, buf)
+        assertEquals(ClipEffect.FLICKER.ordinal.toFloat(), buf.fxType, 0f)
+        assertEquals(0f, buf.time, 1e-6f)
+        p.fill(12_500_000 + 1_500_000, buf)
+        assertEquals(1.5f, buf.time, 1e-5f)
+
+        // Wraps at the period, and never goes negative for a frame that lands
+        // a hair before the segment's start.
+        buf.setEffect(ClipEffect.SHAKE, 1f, GradeUniformsBuffer.FX_PERIOD_US + 250_000L)
+        assertEquals(0.25f, buf.time, 1e-5f)
+        buf.setEffect(ClipEffect.SHAKE, 1f, -250_000L)
+        assertEquals(GradeUniformsBuffer.FX_PERIOD_US / 1e6f - 0.25f, buf.time, 1e-4f)
+
+        // Preview: measured from the segment's start, not the window's.
+        val preview = PreviewFxProvider()
+        preview.timeline =
+            PreviewFxTimeline(listOf(segment(4_000_000, 9_000_000, effect = ClipEffect.GLITCH)))
+        preview.fill(4_000_000 + 700_000, buf)
+        assertEquals(0.7f, buf.time, 1e-5f)
+        assertEquals(ClipEffect.GLITCH.ordinal.toFloat(), buf.fxType, 0f)
+    }
+
+    @Test
+    fun maskUniformsAreTheSpecInTextureSpace() {
+        val buf = GradeUniformsBuffer()
+        buf.setMask(null)
+        assertEquals(0f, buf.maskType, 0f)
+        buf.setMask(
+            MaskSpec(
+                shape = MaskShape.BAND, centerX = 0.5f, centerY = -1f, size = 0.4f,
+                rotationDeg = 90f, feather = 0.1f, invert = true,
+            ),
+        )
+        // Ids are ordinal + 1 so that 0 can mean "no mask"; the centre uses the
+        // same NDC -> texture mapping the overlays do.
+        assertEquals(4f, buf.maskType, 0f)
+        assertEquals(0.75f, buf.maskCenterX, 1e-6f)
+        assertEquals(0f, buf.maskCenterY, 1e-6f)
+        assertEquals(0.4f, buf.maskSize, 0f)
+        assertEquals(Math.PI.toFloat() / 2f, buf.maskRotRad, 1e-6f)
+        assertEquals(0.1f, buf.maskFeather, 0f)
+        assertEquals(1f, buf.maskInvert, 0f)
+        buf.reset()
+        assertEquals(0f, buf.maskType, 0f)
+        assertEquals(1f, buf.flipX, 0f)
+    }
+
     @Test
     fun fxTimelineBinarySearchGatesSegments() {
-        fun seg(s: Long, e: Long) = FxSegment(s, e, 0.1f, 1f, 1f, 0f, null, 0f, 0f, e, 0f, s)
+        fun seg(s: Long, e: Long) = segment(s, e, brightness = 0.1f)
         val tl = PreviewFxTimeline(listOf(seg(0, 1_000_000), seg(1_000_000, 3_000_000)))
         assertEquals(1_000_000L, tl.segmentAt(999_999)!!.endUs)
         assertEquals(3_000_000L, tl.segmentAt(1_000_000)!!.endUs)
@@ -1054,4 +1224,8 @@ private val SHADER_UNIFORMS = listOf(
     "uXfScale", "uXfOffset", "uXfRot", "uAspect",
     "uGrain", "uGrainSeed", "uVignette",
     "uKeyColor", "uKeyTolerance", "uKeySoftness",
+    "uFlip",
+    "uMaskType", "uMaskCenter", "uMaskSize", "uMaskAspect", "uMaskRound",
+    "uMaskRot", "uMaskFeather", "uMaskInvert",
+    "uFxType", "uFxAmount", "uTime", "uOpaque",
 )

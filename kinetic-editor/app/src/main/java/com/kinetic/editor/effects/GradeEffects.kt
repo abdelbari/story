@@ -12,8 +12,10 @@ import androidx.media3.effect.BaseGlShaderProgram
 import androidx.media3.effect.GlEffect
 import androidx.media3.effect.GlShaderProgram
 import com.kinetic.editor.core.model.ChromaKeySpec
+import com.kinetic.editor.core.model.ClipEffect
 import com.kinetic.editor.core.model.ClipMotion
 import com.kinetic.editor.core.model.ColorGradeSpec
+import com.kinetic.editor.core.model.MaskSpec
 import com.kinetic.editor.core.model.TransformSpec
 import com.kinetic.editor.core.model.motionAt
 import com.kinetic.editor.core.model.transformAt
@@ -48,12 +50,74 @@ class GradeUniformsBuffer {
     var keyTolerance = 0f
     var keySoftness = 0f
 
+    /** 1 leaves an axis alone, -1 mirrors it. */
+    var flipX = 1f
+    var flipY = 1f
+
+    /** Zero means no mask, which is what an absent [MaskSpec] sets. */
+    var maskType = 0f
+    var maskCenterX = 0.5f
+    var maskCenterY = 0.5f
+    var maskSize = 0f
+    var maskAspect = 1f
+    var maskRound = 0f
+    var maskRotRad = 0f
+    var maskFeather = 0f
+    var maskInvert = 0f
+
+    var fxType = 0f
+    var fxAmount = 0f
+
+    /** Clip-local seconds, wrapped to [FX_PERIOD_US]. */
+    var time = 0f
+
+    /** 1 composites onto black (the main track), 0 keeps straight alpha (an overlay). */
+    var opaque = 0f
+
     fun reset() {
         brightness = 0f; contrast = 1f; saturation = 1f; temperature = 0f
         lutBitmap = null; lutIntensity = 0f; transType = 0f; transProgress = 0f
         xfScale = 1f; xfOffsetX = 0f; xfOffsetY = 0f; xfRotRad = 0f
         grain = 0f; grainSeed = 0f; vignette = 0f
         keyR = 0f; keyG = 0f; keyB = 0f; keyTolerance = 0f; keySoftness = 0f
+        flipX = 1f; flipY = 1f
+        maskType = 0f; maskCenterX = 0.5f; maskCenterY = 0.5f; maskSize = 0f
+        maskAspect = 1f; maskRound = 0f; maskRotRad = 0f; maskFeather = 0f; maskInvert = 0f
+        fxType = 0f; fxAmount = 0f; time = 0f; opaque = 0f
+    }
+
+    fun setFlip(x: Boolean, y: Boolean) {
+        flipX = if (x) -1f else 1f
+        flipY = if (y) -1f else 1f
+    }
+
+    fun setMask(spec: MaskSpec?) {
+        if (spec == null) {
+            maskType = 0f
+            return
+        }
+        maskType = (spec.shape.ordinal + 1).toFloat()
+        // NDC anchor -> texture space, the same mapping the overlays use.
+        maskCenterX = spec.centerX * 0.5f + 0.5f
+        maskCenterY = spec.centerY * 0.5f + 0.5f
+        maskSize = spec.size
+        maskAspect = spec.aspect
+        maskRound = spec.roundness
+        maskRotRad = spec.rotationDeg * DEG_TO_RAD
+        maskFeather = spec.feather
+        maskInvert = if (spec.invert) 1f else 0f
+    }
+
+    /**
+     * The frame effect, and the clock it animates on. [localUs] is clip-local:
+     * an effect starts its animation with the clip in both pipelines. It is
+     * wrapped to a period every animation in the shader divides evenly, so the
+     * wrap is invisible and no intermediate outgrows a mediump float.
+     */
+    fun setEffect(effect: ClipEffect, amount: Float, localUs: Long) {
+        fxType = effect.ordinal.toFloat()
+        fxAmount = amount
+        time = Math.floorMod(localUs, FX_PERIOD_US) / 1_000_000f
     }
 
     fun setChroma(spec: ChromaKeySpec?) {
@@ -75,8 +139,11 @@ class GradeUniformsBuffer {
         xfRotRad = xf.rotationDeg * DEG_TO_RAD
     }
 
-    private companion object {
-        const val DEG_TO_RAD = (Math.PI / 180.0).toFloat()
+    companion object {
+        private const val DEG_TO_RAD = (Math.PI / 180.0).toFloat()
+
+        /** The effects' clock wraps here; see [setEffect]. */
+        const val FX_PERIOD_US = 20_000_000L
     }
 
     fun setGrade(grade: ColorGradeSpec) {
@@ -188,6 +255,22 @@ class GradeShaderProgram(
             )
             program.setFloatUniform("uKeyTolerance", uniforms.keyTolerance)
             program.setFloatUniform("uKeySoftness", uniforms.keySoftness)
+            program.setFloatsUniform("uFlip", floatArrayOf(uniforms.flipX, uniforms.flipY))
+            program.setFloatUniform("uMaskType", uniforms.maskType)
+            program.setFloatsUniform(
+                "uMaskCenter",
+                floatArrayOf(uniforms.maskCenterX, uniforms.maskCenterY),
+            )
+            program.setFloatUniform("uMaskSize", uniforms.maskSize)
+            program.setFloatUniform("uMaskAspect", uniforms.maskAspect)
+            program.setFloatUniform("uMaskRound", uniforms.maskRound)
+            program.setFloatUniform("uMaskRot", uniforms.maskRotRad)
+            program.setFloatUniform("uMaskFeather", uniforms.maskFeather)
+            program.setFloatUniform("uMaskInvert", uniforms.maskInvert)
+            program.setFloatUniform("uFxType", uniforms.fxType)
+            program.setFloatUniform("uFxAmount", uniforms.fxAmount)
+            program.setFloatUniform("uTime", uniforms.time)
+            program.setFloatUniform("uOpaque", uniforms.opaque)
             program.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, /* first= */ 0, /* count= */ 4)
             GlUtil.checkGlError()
@@ -249,6 +332,13 @@ class ClipGradeProvider(
     private val motion: ClipMotion,
     /** The clip's own span, so a motion knows how far through it the frame is. */
     private val spanUs: Long,
+    private val flipX: Boolean,
+    private val flipY: Boolean,
+    private val mask: MaskSpec?,
+    private val effect: ClipEffect,
+    private val effectAmount: Float,
+    /** True on the main track, whose frames composite onto black; false for an overlay. */
+    private val opaque: Boolean,
     private val lutBitmap: Bitmap?,
     private val lutIntensity: Float,
     private val transOutType: TransitionType,
@@ -271,6 +361,10 @@ class ClipGradeProvider(
         out.setTransform(
             transformAt(transform, transformEnd, motion, progressOf(localUs, spanUs)),
         )
+        out.setFlip(flipX, flipY)
+        out.setMask(mask)
+        out.setEffect(effect, effectAmount, localUs)
+        out.opaque = if (opaque) 1f else 0f
         out.lutBitmap = lutBitmap
         out.lutIntensity = lutIntensity
 
@@ -324,6 +418,11 @@ class PreviewFxProvider : GradeUniformsProvider {
                 progressOf(presentationTimeUs - seg.startUs, seg.endUs - seg.startUs),
             ),
         )
+        out.setFlip(seg.flipX, seg.flipY)
+        out.setMask(seg.mask)
+        out.setEffect(seg.effect, seg.effectAmount, presentationTimeUs - seg.startUs)
+        // This provider serves the main track only; its surface ignores alpha.
+        out.opaque = 1f
         out.lutBitmap = seg.lutBitmap
         out.lutIntensity = seg.lutIntensity
 
@@ -346,6 +445,11 @@ class ClipFx(
     val grade: ColorGradeSpec,
     val chroma: ChromaKeySpec?,
     val transform: TransformSpec,
+    val flipX: Boolean,
+    val flipY: Boolean,
+    val mask: MaskSpec?,
+    val effect: ClipEffect,
+    val effectAmount: Float,
     val lutBitmap: Bitmap?,
     val lutIntensity: Float,
 )
@@ -371,6 +475,13 @@ class ClipSnapshotFxProvider : GradeUniformsProvider {
         out.setChroma(s.chroma)
         out.seedGrainAt(presentationTimeUs)
         out.setTransform(s.transform)
+        out.setFlip(s.flipX, s.flipY)
+        out.setMask(s.mask)
+        // The player's own clock rather than a clip-local one: the effects it
+        // drives are noise and drift, whose phase nobody can see. An overlay,
+        // so it keeps straight alpha for the surface to blend.
+        out.setEffect(s.effect, s.effectAmount, presentationTimeUs)
+        out.opaque = 0f
         out.lutBitmap = s.lutBitmap
         out.lutIntensity = s.lutIntensity
     }
@@ -384,6 +495,11 @@ class FxSegment(
     val transformEnd: TransformSpec?,
     val motion: ClipMotion,
     val chroma: ChromaKeySpec?,
+    val flipX: Boolean,
+    val flipY: Boolean,
+    val mask: MaskSpec?,
+    val effect: ClipEffect,
+    val effectAmount: Float,
     val grain: Float,
     val vignette: Float,
     val brightness: Float,

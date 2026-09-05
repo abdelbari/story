@@ -50,8 +50,11 @@ environment, so the app has not been assembled by Gradle there. Instead:
   the shader on purpose: it catches both a renamed uniform and a syntax error.
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 59 tests in `app/src/test` pass under JUnit
-  4.13.2, alongside a 58-scenario executable sandbox suite.
+  geometry) runs on the JVM: the 64 tests in `app/src/test` pass under JUnit
+  4.13.2, alongside a 58-scenario executable sandbox suite. The harness
+  compiles the tests against the real effect classes with only the GL calls
+  stubbed out, which is what caught two test call sites that had drifted
+  from the constructors they call.
 
 ---
 
@@ -337,6 +340,9 @@ the exporter — the model, the preview and the export path agree on all three.
 | Transform | pan, zoom and rotate the picture inside its frame, on any video clip |
 | Chroma key | green or blue screen with tolerance and edge feather, on any video clip — meant for picture-in-picture, where there is something behind to reveal |
 | Motion | one-tap push in, pull out, pan and drift, or a move of your own: set a start and an end framing and the clip travels between them |
+| Masks | circle, rectangle (with corners), split and band — size, feather, position, rotation, and show inside or outside — on the frame, so the picture can move behind it |
+| Effects | chromatic fringe, glitch, VHS, light leak, flicker, shake, glow and mirror, each with an amount, animated identically in preview and export |
+| Mirror | flip any video clip left-to-right or top-to-bottom |
 | Output | background MP4 export with live progress, published to Movies/Kinetic |
 
 Volume fades deserve a note: the model stores a general keyframe envelope, but
@@ -380,6 +386,16 @@ rather than black.
 In the preview the picture-in-picture surface is a `TextureView` with
 `isOpaque = false`, without which the platform would composite those
 transparent pixels as black and the preview would disagree with the render.
+
+The main track is the other way round. A `SurfaceView` and an encoder's input
+surface both *ignore* alpha, so a transparent pixel handed to either shows
+whatever colour sat under it — for an out-of-frame or keyed pixel, the smeared
+edge texel. The shader therefore carries a `uOpaque` flag: the main track's
+providers set it and the frame composites onto black *in the shader*, where the
+preview and the render cannot disagree about it; overlay providers leave it
+clear and keep straight alpha for the compositor. An earlier version emitted
+transparency for both, which was right for overlays and wrong for the main
+track on exactly the surfaces that ignore alpha.
 
 ### Grain and vignette are on the print, not the scene
 
@@ -427,6 +443,34 @@ enough that sliding never reveals the source's edge (sampling stays inside
 while `scale >= 1 + |offset|`), and a unit test walks every preset across every
 clip to hold that, because hand-tuned constants are exactly what drifts out of
 that relationship.
+
+### Masks, mirror and frame effects
+
+A mask is a signed distance in the shader — circle, rounded rectangle, a
+half-plane (split) and a band — feathered by a `smoothstep` over that distance
+and inverted by a flag. It is evaluated in *frame* space, after the transform,
+so it holds still while the clip pans or zooms behind it, which is what a
+circle reveal or a split screen wants. Sizes are fractions of the frame height,
+so a circle is round on every canvas. The mask multiplies alpha last of all,
+which is why it composes with the chroma key and the out-of-frame test instead
+of fighting them.
+
+The mirror is one multiply on the sampling coordinate, placed last in the
+sampling chain — which puts it *first* on the picture: it is the source that
+flips, and a pan still goes the way it is dragged.
+
+The eight effects are procedural and need no asset. Those that move pixels
+(glitch, shake, the mirror fold) run before sampling; those that tone (VHS,
+light leak, flicker) run after the grade, so a look sits on top of a filter
+rather than under it; glow and the chromatic fringe are extra taps around the
+sample. Each animates on a clip-local clock, so an effect starts with its clip
+in both pipelines. That clock wraps at 20 s, a period every animation divides
+evenly, chosen so no intermediate value outgrows a mediump float on the devices
+that give fragment shaders nothing better; the frame-counter noise uses a
+second, smaller hash for the same reason.
+
+The amount survives switching effects, so trying each one at a strength you
+already chose is one tap each.
 
 ## 5b. Lifecycle
 

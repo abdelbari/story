@@ -233,6 +233,66 @@ data class ChromaKeySpec(
     val softness: Float = 0.10f,
 )
 
+/** The shapes a mask can take; labels are what the inspector shows. */
+@Serializable
+enum class MaskShape(val label: String) {
+    CIRCLE("Circle"),
+    RECTANGLE("Rectangle"),
+    LINEAR("Split"),
+    BAND("Band"),
+}
+
+/**
+ * A mask: the part of the frame a clip is allowed to show through.
+ *
+ * It sits on the FRAME rather than on the picture, so it holds still while the
+ * clip pans or zooms behind it — which is what a circle reveal or a split
+ * screen wants. Null on a clip means no mask, for the same reason the chroma
+ * key is nullable: an unmasked clip costs nothing on disk and one compare in
+ * the shader. Sizes are fractions of the frame's HEIGHT, so a circle is round
+ * on every canvas and the same mask reads the same on a 9:16 and a 16:9.
+ */
+@Serializable
+@Immutable
+data class MaskSpec(
+    val shape: MaskShape = MaskShape.CIRCLE,
+    // NDC, [-1, 1]; (0, 0) is frame centre, y up, like every other anchor.
+    val centerX: Float = 0f,
+    val centerY: Float = 0f,
+    /** Diameter (circle), height (rectangle) or width (band), as a fraction of the frame height. */
+    val size: Float = 0.6f,
+    /** Rectangle width over its height. */
+    val aspect: Float = 1f,
+    /** Rectangle corner rounding, 0 (square) to 1 (fully round). */
+    val roundness: Float = 0.1f,
+    val rotationDeg: Float = 0f,
+    /** Edge softness, as a fraction of the frame height. */
+    val feather: Float = 0.04f,
+    /** Show what is OUTSIDE the shape instead. */
+    val invert: Boolean = false,
+)
+
+/**
+ * A stylised treatment of the whole frame, animated per frame by the shader.
+ *
+ * These are the procedural looks short-form editors reach for. None needs an
+ * asset, each is the same code in preview and export, and
+ * [ClipModel.effectAmount] scales every one so a light touch is possible.
+ * Ids in the shader are the ordinals here.
+ */
+@Serializable
+enum class ClipEffect(val label: String) {
+    NONE("None"),
+    CHROMATIC("Chromatic"),
+    GLITCH("Glitch"),
+    VHS("VHS"),
+    LIGHT_LEAK("Light leak"),
+    FLICKER("Flicker"),
+    SHAKE("Shake"),
+    GLOW("Glow"),
+    MIRROR("Mirror"),
+}
+
 /** Placement of a picture-in-picture video overlay. Null on a clip = full frame. */
 @Serializable
 @Immutable
@@ -293,6 +353,13 @@ data class ClipModel(
      * preset, because the user was more specific.
      */
     val transformEnd: TransformSpec? = null,
+    /** Mirrors the source picture left-to-right / top-to-bottom, before anything else. */
+    val flipX: Boolean = false,
+    val flipY: Boolean = false,
+    val mask: MaskSpec? = null,
+    val effect: ClipEffect = ClipEffect.NONE,
+    /** How strongly [effect] is applied, [0, 1]. Kept when the effect is switched, like a mix knob. */
+    val effectAmount: Float = 0.6f,
 ) {
     /** Source-domain span (what the decoder actually reads). */
     val sourceSpanMs: Long get() = trimOutMs - trimInMs

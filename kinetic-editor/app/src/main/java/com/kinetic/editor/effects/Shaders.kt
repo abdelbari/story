@@ -1,14 +1,20 @@
 package com.kinetic.editor.effects
 
 /**
- * One fragment shader serves color grading, LUTs, and boundary transitions for
- * BOTH the real-time preview and the Transformer export — identical math, so
- * what you see is exactly what renders.
+ * One fragment shader serves color grading, LUTs, boundary transitions, the
+ * clip transform, masks and frame effects for BOTH the real-time preview and
+ * the Transformer export - identical math, so what you see is exactly what
+ * renders.
  *
  * Transitions are single-stream by design (like most CapCut transitions): the
  * outgoing clip animates through phase [0, 0.5], the incoming clip through
  * [0.5, 1]. No second decoder, no pre-rendered overlap, works inside one
  * EditedMediaItemSequence.
+ *
+ * Order of operations, which is the order a print would see them: the frame is
+ * warped (effects that move pixels, the transform, the mirror), then sampled,
+ * then keyed, graded and toned, then the print-level treatments (vignette,
+ * grain) go on, and the mask decides what survives at the very end.
  */
 object EditorShaders {
 
@@ -23,6 +29,7 @@ void main() {
 
     // Transition type ids, mirrored in Kotlin (TransitionType.ordinal).
     // 0 = none, 1 = dip-to-black, 2 = wipe-left, 3 = zoom-punch.
+    // Effect ids mirror ClipEffect.ordinal; mask ids are MaskShape.ordinal + 1.
     const val FRAGMENT = """
 // highp where the device offers it: the LUT's tile coordinates are the one
 // computation here that mediump's 10-bit mantissa can visibly band. Fragment
@@ -48,6 +55,8 @@ uniform float uXfScale;
 uniform vec2 uXfOffset;
 uniform float uXfRot;
 uniform float uAspect;
+// Mirror: -1 reflects that axis of the source, 1 leaves it alone.
+uniform vec2 uFlip;
 // The print, rather than the scene: grain and vignette live on the frame, so
 // they do not zoom or pan with the clip transform above.
 uniform float uGrain;
@@ -57,11 +66,36 @@ uniform float uVignette;
 uniform vec3 uKeyColor;
 uniform float uKeyTolerance;
 uniform float uKeySoftness;
+// Mask, on the frame rather than the picture. Type 0 = none. The centre is in
+// texture space; sizes are fractions of the frame height, so a circle is round.
+uniform float uMaskType;
+uniform vec2 uMaskCenter;
+uniform float uMaskSize;
+uniform float uMaskAspect;
+uniform float uMaskRound;
+uniform float uMaskRot;
+uniform float uMaskFeather;
+uniform float uMaskInvert;
+// Frame effect. Type 0 = none; amount 0..1; time in clip-local seconds, wrapped
+// by the Kotlin side to a period every animation below divides evenly.
+uniform float uFxType;
+uniform float uFxAmount;
+uniform float uTime;
+// 1: composite onto black, for the main track, whose surfaces ignore alpha.
+// 0: straight alpha, for an overlay the compositor will blend.
+uniform float uOpaque;
 
 // Cheap hash noise. Deterministic per pixel per frame, which is what makes
 // grain sit still within a frame and dance between them, the way film does.
 float hash(vec2 p) {
   return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+// Hash for small counters (frame numbers, band indices). Its constants keep
+// every intermediate under a few thousand, inside mediump's range, where the
+// classic hash above would overflow to infinity and come back as NaN.
+float hashi(vec2 p) {
+  return fract(sin(dot(p, vec2(0.918, 0.472))) * 213.7);
 }
 
 // 64^3 LUT packed as an 8x8 grid of 64x64 blue-slices in a 512x512 texture.
@@ -75,9 +109,49 @@ vec3 applyLut(vec3 c) {
   return mix(texture2D(uLutSampler, uv0).rgb, texture2D(uLutSampler, uv1).rgb, b - s0);
 }
 
+// Signed distance to the mask edge, negative inside, in frame-height units.
+float maskDistance(vec2 m) {
+  if (uMaskType < 1.5) {
+    return length(m) - uMaskSize * 0.5;
+  } else if (uMaskType < 2.5) {
+    vec2 hs = vec2(uMaskSize * 0.5 * uMaskAspect, uMaskSize * 0.5);
+    float r = uMaskRound * min(hs.x, hs.y);
+    vec2 e = abs(m) - hs + r;
+    return length(max(e, 0.0)) + min(max(e.x, e.y), 0.0) - r;
+  } else if (uMaskType < 3.5) {
+    return m.y;
+  }
+  return abs(m.y) - uMaskSize * 0.5;
+}
+
 void main() {
   vec2 uv = vTexCoords;
   float p = clamp(uTransProgress, 0.0, 1.0);
+  float fx = uFxType;
+  float amt = uFxAmount;
+
+  // Mirror effect: the left half reflected onto the right. Screen space and
+  // before the transform, so it is the frame that folds, not the source.
+  if (fx > 7.5 && fx < 8.5) {
+    uv.x = 0.5 - abs(uv.x - 0.5);
+  }
+
+  // Shake: the whole frame jolted a little each frame, zoomed in a touch so
+  // the jolt never shows the edge of the source.
+  if (fx > 5.5 && fx < 6.5) {
+    float f = floor(uTime * 12.0);
+    vec2 jolt = vec2(hashi(vec2(f, 1.0)), hashi(vec2(f, 7.0))) - 0.5;
+    uv = 0.5 + (uv - 0.5) / (1.0 + 0.06 * amt) + jolt * 0.05 * amt;
+  }
+
+  // Glitch: bands of rows torn sideways, on some frames and not others.
+  if (fx > 1.5 && fx < 2.5) {
+    float f = floor(uTime * 8.0);
+    float on = step(0.55, hashi(vec2(f, 3.0)));
+    float band = floor(uv.y * 12.0 + hashi(vec2(f, 5.0)) * 12.0);
+    float tear = (hashi(vec2(band, f)) - 0.5) * step(0.5, hashi(vec2(band + 11.0, f)));
+    uv.x += tear * 0.08 * amt * on;
+  }
 
   // Move the CONTENT, so the sampling coordinate moves the opposite way.
   // Written branch-free: with an identity transform every term below is
@@ -90,7 +164,9 @@ void main() {
   float sn = sin(uXfRot);
   q = vec2(q.x * cs + q.y * sn, -q.x * sn + q.y * cs);
   q.x /= uAspect;
-  uv = q + 0.5;
+  // The mirror goes on last in the chain, which puts it FIRST on the picture:
+  // it is the source that flips, and a pan still goes the way it is dragged.
+  uv = 0.5 + (q * uFlip);
 
   // Zoom-punch warps sampling coords: scale peaks at the cut point (p = 0.5).
   if (uTransType > 2.5) {
@@ -101,6 +177,24 @@ void main() {
 
   vec4 texel = texture2D(uTexSampler, uv);
   vec3 c = texel.rgb;
+
+  // Chromatic fringe, and the milder version the glitch and tape looks share:
+  // red and blue sampled a little either side of green.
+  if (fx > 0.5 && fx < 3.5) {
+    float split = amt * (fx < 1.5 ? 0.012 : (fx < 2.5 ? 0.008 : 0.004));
+    c.r = texture2D(uTexSampler, uv + vec2(split, 0.0)).r;
+    c.b = texture2D(uTexSampler, uv - vec2(split, 0.0)).b;
+  }
+
+  // Glow: a soft haze lifted from the brightest parts, four wide taps.
+  if (fx > 6.5 && fx < 7.5) {
+    vec2 o = vec2(0.012 / uAspect, 0.012);
+    vec3 g = texture2D(uTexSampler, uv + o).rgb
+           + texture2D(uTexSampler, uv - o).rgb
+           + texture2D(uTexSampler, uv + vec2(o.x, -o.y)).rgb
+           + texture2D(uTexSampler, uv + vec2(-o.x, o.y)).rgb;
+    c += max(g * 0.25 - 0.45, 0.0) * amt * 1.2;
+  }
 
   // Keyed BEFORE the grade, so the key is judged on the colour that was shot
   // rather than on one the user has since pushed around.
@@ -138,6 +232,30 @@ void main() {
     c *= 1.0 - 0.25 * (1.0 - abs(1.0 - 2.0 * p));
   }
 
+  // Tape: scanlines, a wash of the colour, and noise that never sits still.
+  if (fx > 2.5 && fx < 3.5) {
+    float scan = 0.5 + 0.5 * sin(vTexCoords.y * 1200.0);
+    c *= 1.0 - 0.18 * amt * scan;
+    c = mix(c, vec3(dot(c, vec3(0.299, 0.587, 0.114))), 0.25 * amt);
+    c += (hash(vTexCoords * 700.0 + uGrainSeed) - 0.5) * 0.12 * amt;
+  }
+
+  // Light leak: a warm bloom drifting about the top corner. Its two drifts
+  // divide the 20-second time period exactly, so the wrap is invisible.
+  if (fx > 3.5 && fx < 4.5) {
+    vec2 centre = vec2(0.85 + 0.15 * sin(uTime * 0.6283), 0.75 + 0.2 * cos(uTime * 0.3142));
+    vec2 d = (vTexCoords - centre) * vec2(uAspect, 1.0);
+    float dd = dot(d, d);
+    float leak = exp(-dd * 3.0) + 0.35 * exp(-dd * 0.8);
+    c += vec3(1.0, 0.55, 0.25) * leak * amt * (1.0 - 0.4 * c);
+  }
+
+  // Flicker: exposure that wobbles from frame to frame, as a projector's does.
+  if (fx > 4.5 && fx < 5.5) {
+    float f = floor(uTime * 24.0);
+    c *= 1.0 + (hashi(vec2(f, 13.0)) - 0.5) * 0.5 * amt;
+  }
+
   // Vignette before grain: the grain sits on top of the darkened corners, as
   // it would on a print, rather than being darkened along with them.
   if (uVignette > 0.0) {
@@ -151,14 +269,29 @@ void main() {
     c += n * uGrain * 0.22;
   }
 
-  // Anything the transform moved off the source is black, not a smeared edge
-  // texel: zooming out or panning past the border letterboxes cleanly. Applied
-  // last so a brightened grade cannot lift the surround off black.
-  // Transparent rather than black, so a zoomed-out or keyed overlay reveals
-  // what is behind it. The compositor blends on straight alpha, so the colour
-  // is left unmultiplied.
+  // Mask: on the frame, so it holds still while the picture moves behind it.
+  float mask = 1.0;
+  if (uMaskType > 0.5) {
+    vec2 m = (vTexCoords - uMaskCenter) * vec2(uAspect, 1.0);
+    float mc = cos(uMaskRot);
+    float ms = sin(uMaskRot);
+    m = vec2(m.x * mc + m.y * ms, -m.x * ms + m.y * mc);
+    // The upper edge is nudged so a zero feather is a step, not undefined.
+    mask = 1.0 - smoothstep(-uMaskFeather, uMaskFeather + 0.0005, maskDistance(m));
+    mask = mix(mask, 1.0 - mask, uMaskInvert);
+  }
+
+  // Anything the transform moved off the source is gone rather than a smeared
+  // edge texel: zooming out or panning past the border letterboxes cleanly.
+  // Applied last so a brightened grade cannot lift the surround.
   float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
-  gl_FragColor = vec4(clamp(c, 0.0, 1.0), alpha * inside);
+  float a = alpha * inside * mask;
+  vec3 rgb = clamp(c, 0.0, 1.0);
+  // The compositor blends overlays on straight alpha, so theirs is left
+  // unmultiplied. The main track's surfaces ignore alpha altogether - an
+  // encoder input and a SurfaceView both do - so it composites onto black
+  // here, where the preview and the render cannot disagree about it.
+  gl_FragColor = mix(vec4(rgb, a), vec4(rgb * a, 1.0), uOpaque);
 }
 """
 }

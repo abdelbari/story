@@ -3,9 +3,11 @@ package com.kinetic.editor.core.mvi
 import com.kinetic.editor.core.model.CanvasFit
 import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ChromaKeySpec
+import com.kinetic.editor.core.model.ClipEffect
 import com.kinetic.editor.core.model.ClipMotion
 import com.kinetic.editor.core.model.ColorGradeSpec
 import com.kinetic.editor.core.model.LutSpec
+import com.kinetic.editor.core.model.MaskSpec
 import com.kinetic.editor.core.model.MediaRef
 import com.kinetic.editor.core.model.PipSpec
 import com.kinetic.editor.core.model.StickerSpec
@@ -94,6 +96,19 @@ sealed interface EditorIntent {
     /** Keys a colour out of a clip, or clears the key when null. */
     data class SetChroma(val clipId: ClipId, val chroma: ChromaKeySpec?) : EditorIntent {
         override val coalesceKey get() = "chroma:${clipId.value}"
+    }
+
+    /** The part of the frame the clip shows through, or null for all of it. */
+    data class SetMask(val clipId: ClipId, val mask: MaskSpec?) : EditorIntent {
+        override val coalesceKey get() = "mask:${clipId.value}"
+    }
+
+    /** Mirrors the source picture on either axis. */
+    data class SetFlip(val clipId: ClipId, val flipX: Boolean, val flipY: Boolean) : EditorIntent
+
+    /** A frame effect, and how strongly it is applied. */
+    data class SetEffect(val clipId: ClipId, val effect: ClipEffect, val amount: Float) : EditorIntent {
+        override val coalesceKey get() = "fx:${clipId.value}"
     }
 
     /** A move that runs across the whole clip, on top of its transform. */

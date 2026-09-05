@@ -441,6 +441,11 @@ class PreviewEngine(
                     transformEnd = clip.transformEnd,
                     motion = clip.motion,
                     chroma = clip.chroma,
+                    flipX = clip.flipX,
+                    flipY = clip.flipY,
+                    mask = clip.mask,
+                    effect = clip.effect,
+                    effectAmount = clip.effectAmount,
                     grain = clip.grade.grain,
                     vignette = clip.grade.vignette,
                     brightness = clip.grade.brightness,
@@ -589,6 +594,11 @@ class PreviewEngine(
                 // A PiP's snapshot carries no clock, so a move of any kind
                 // shows its starting frame; the manual transform still applies.
                 transform = transformAt(clip.transform, clip.transformEnd, clip.motion, 0f),
+                flipX = clip.flipX,
+                flipY = clip.flipY,
+                mask = clip.mask,
+                effect = clip.effect,
+                effectAmount = clip.effectAmount,
                 lutBitmap = clip.lut?.let { lutCache[it.assetPath] },
                 lutIntensity = clip.lut?.intensity ?: 0f,
             )

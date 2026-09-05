@@ -104,6 +104,9 @@ import com.kinetic.editor.ui.theme.ValueSlider
 import com.kinetic.editor.core.model.StickerSpec
 import com.kinetic.editor.core.model.PipSpec
 import com.kinetic.editor.core.model.ChromaKeySpec
+import com.kinetic.editor.core.model.ClipEffect
+import com.kinetic.editor.core.model.MaskShape
+import com.kinetic.editor.core.model.MaskSpec
 import androidx.compose.runtime.mutableStateOf
 
 /**
@@ -596,7 +599,9 @@ private fun ClipInspector(
         val hasVideo = clip.media.hasVideo
         val hasAudio = clip.media.hasAudio
         if (hasVideo) LookSection(clip, dispatch)
+        if (hasVideo) EffectSection(clip, dispatch)
         if (hasVideo) FrameSection(clip, dispatch)
+        if (hasVideo) MaskSection(clip, dispatch)
         if (hasVideo) KeySection(clip, dispatch)
         if (hasAudio) SoundSection(clip, dispatch)
         if (hasVideo || hasAudio) ClipSection(clip, track, dispatch)
@@ -842,6 +847,14 @@ private fun FrameSection(clip: ClipModel, dispatch: (EditorIntent) -> Unit) {
             set(editing.copy(offsetY = it))
         }
     }
+    ChipRow("Mirror") {
+        Chip("Left-right", clip.flipX) {
+            dispatch(EditorIntent.SetFlip(clip.id, !clip.flipX, clip.flipY))
+        }
+        Chip("Top-bottom", clip.flipY) {
+            dispatch(EditorIntent.SetFlip(clip.id, clip.flipX, !clip.flipY))
+        }
+    }
     ChipRow("Move") {
         Chip("Start", travelling && !editingEnd) {
             editingEnd = false
@@ -872,6 +885,85 @@ private fun FrameSection(clip: ClipModel, dispatch: (EditorIntent) -> Unit) {
                 }
             }
         }
+    }
+}
+
+/**
+ * A frame effect: one chip per look, and one knob for how much of it. The
+ * amount survives switching effects, so trying each one at the strength you
+ * already chose is one tap each rather than a tap and a drag.
+ */
+@Composable
+private fun EffectSection(clip: ClipModel, dispatch: (EditorIntent) -> Unit) {
+    ChipRow("Effect") {
+        for (fx in ClipEffect.entries) {
+            Chip(fx.label, clip.effect == fx) {
+                dispatch(EditorIntent.SetEffect(clip.id, fx, clip.effectAmount))
+            }
+        }
+    }
+    if (clip.effect != ClipEffect.NONE) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Dim.sm)) {
+            ValueSlider("Amount", clip.effectAmount, 0f..1f, Modifier.weight(1f)) {
+                dispatch(EditorIntent.SetEffect(clip.id, clip.effect, it))
+            }
+        }
+    }
+}
+
+/**
+ * The mask. Shape first, then only the controls that shape has: a split line
+ * has no size, and only a rectangle has proportions and corners.
+ */
+@Composable
+private fun MaskSection(clip: ClipModel, dispatch: (EditorIntent) -> Unit) {
+    val mask = clip.mask
+    fun edit(next: MaskSpec?) = dispatch(EditorIntent.SetMask(clip.id, next))
+
+    ChipRow("Mask") {
+        Chip("Off", mask == null) { edit(null) }
+        for (shape in MaskShape.entries) {
+            Chip(shape.label, mask?.shape == shape) {
+                edit((mask ?: MaskSpec()).copy(shape = shape))
+            }
+        }
+    }
+    if (mask == null) return
+
+    Row(horizontalArrangement = Arrangement.spacedBy(Dim.sm)) {
+        if (mask.shape != MaskShape.LINEAR) {
+            ValueSlider("Size", mask.size, 0.05f..2f, Modifier.weight(1f)) {
+                edit(mask.copy(size = it))
+            }
+        }
+        ValueSlider("Feather", mask.feather, 0f..0.5f, Modifier.weight(1f)) {
+            edit(mask.copy(feather = it))
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(Dim.sm)) {
+        ValueSlider("X", mask.centerX, -1f..1f, Modifier.weight(1f)) { edit(mask.copy(centerX = it)) }
+        ValueSlider("Y", mask.centerY, -1f..1f, Modifier.weight(1f)) { edit(mask.copy(centerY = it)) }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(Dim.sm)) {
+        ValueSlider("Turn", mask.rotationDeg, -180f..180f, Modifier.weight(1f)) {
+            edit(mask.copy(rotationDeg = it))
+        }
+        if (mask.shape == MaskShape.RECTANGLE) {
+            ValueSlider("Width", mask.aspect, 0.25f..4f, Modifier.weight(1f)) {
+                edit(mask.copy(aspect = it))
+            }
+        }
+    }
+    if (mask.shape == MaskShape.RECTANGLE) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Dim.sm)) {
+            ValueSlider("Corners", mask.roundness, 0f..1f, Modifier.weight(1f)) {
+                edit(mask.copy(roundness = it))
+            }
+        }
+    }
+    ChipRow("Show") {
+        Chip("Inside", !mask.invert) { edit(mask.copy(invert = false)) }
+        Chip("Outside", mask.invert) { edit(mask.copy(invert = true)) }
     }
 }
 
