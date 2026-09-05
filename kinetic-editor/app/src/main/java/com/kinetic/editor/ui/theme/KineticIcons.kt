@@ -225,6 +225,18 @@ object KineticIcons {
         }
     }
 
+    /** Backdrop: a frame with a letterboxed picture inside it. */
+    val Backdrop: ImageVector by lazy {
+        icon("Backdrop") {
+            stroke {
+                moveTo(3.5f, 4.5f); horizontalLineTo(20.5f); verticalLineTo(19.5f)
+                horizontalLineTo(3.5f); close()
+            }
+            stroke { moveTo(3.5f, 9f); horizontalLineTo(20.5f) }
+            stroke { moveTo(3.5f, 15f); horizontalLineTo(20.5f) }
+        }
+    }
+
     /** Detach: a note leaving the frame it came from. */
     val Detach: ImageVector by lazy {
         icon("Detach") {

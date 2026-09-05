@@ -1,5 +1,6 @@
 package com.kinetic.editor.core.mvi
 
+import com.kinetic.editor.core.model.CanvasBackground
 import com.kinetic.editor.core.model.CanvasFit
 import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ChromaKeySpec
@@ -163,6 +164,9 @@ sealed interface EditorIntent {
 
     /** Letterbox, crop or stretch a clip whose shape differs from the canvas. */
     data class SetCanvasFit(val fit: CanvasFit) : EditorIntent
+
+    /** What shows in the letterbox bars: black, white, or the clip blurred. */
+    data class SetCanvasBackground(val background: CanvasBackground) : EditorIntent
 
     /** Replaces the whole document (project restore). Clears undo history. */
     data class Replace(val state: TimelineState) : EditorIntent

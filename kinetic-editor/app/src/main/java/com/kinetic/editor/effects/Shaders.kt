@@ -294,4 +294,75 @@ void main() {
   gl_FragColor = mix(vec4(rgb, a), vec4(rgb * a, 1.0), uOpaque);
 }
 """
+
+    /*
+     * Canvas fill: the three passes that letterbox a clip over a background
+     * that is not black. See CanvasFill.kt for the order they run in. These
+     * are simple enough for mediump: no LUT, no large constants.
+     */
+
+    /**
+     * Pass 1: the picture at FILL (cover) geometry, shrunk to a small texture.
+     * Four taps a quarter-texel apart, so the shrink averages neighbouring
+     * pixels rather than skipping over them, which would shimmer as the video
+     * moves.
+     */
+    const val CANVAS_DOWNSAMPLE = """
+precision mediump float;
+varying vec2 vTexCoords;
+uniform sampler2D uTexSampler;
+uniform vec2 uFillScale;
+uniform vec2 uTexel;
+void main() {
+  vec2 src = 0.5 + (vTexCoords - 0.5) * uFillScale;
+  vec2 d = uTexel * 0.25 * uFillScale;
+  vec3 c = texture2D(uTexSampler, src + d).rgb
+         + texture2D(uTexSampler, src - d).rgb
+         + texture2D(uTexSampler, src + vec2(d.x, -d.y)).rgb
+         + texture2D(uTexSampler, src + vec2(-d.x, d.y)).rgb;
+  gl_FragColor = vec4(c * 0.25, 1.0);
+}
+"""
+
+    /**
+     * Passes 2 and 3 (and again, per round): a Gaussian along one axis. Five
+     * bilinear taps at the classic offsets read nine texels, and the weights
+     * sum to one so the blur neither darkens nor brightens.
+     */
+    const val CANVAS_BLUR = """
+precision mediump float;
+varying vec2 vTexCoords;
+uniform sampler2D uTexSampler;
+uniform vec2 uStep;
+void main() {
+  vec3 c = texture2D(uTexSampler, vTexCoords).rgb * 0.2270;
+  c += (texture2D(uTexSampler, vTexCoords + uStep * 1.3846).rgb
+      + texture2D(uTexSampler, vTexCoords - uStep * 1.3846).rgb) * 0.3162;
+  c += (texture2D(uTexSampler, vTexCoords + uStep * 3.2308).rgb
+      + texture2D(uTexSampler, vTexCoords - uStep * 3.2308).rgb) * 0.0703;
+  gl_FragColor = vec4(c, 1.0);
+}
+"""
+
+    /**
+     * Last pass: the picture at FIT geometry over the background, which is the
+     * blurred fill when uUseBlur is set and a flat colour otherwise. Opaque
+     * out, because a canvas has no outside.
+     */
+    const val CANVAS_COMPOSITE = """
+precision mediump float;
+varying vec2 vTexCoords;
+uniform sampler2D uTexSampler;
+uniform sampler2D uBackSampler;
+uniform vec2 uFitScale;
+uniform float uUseBlur;
+uniform vec3 uBackColor;
+void main() {
+  vec2 src = 0.5 + (vTexCoords - 0.5) * uFitScale;
+  float inside = step(0.0, src.x) * step(src.x, 1.0) * step(0.0, src.y) * step(src.y, 1.0);
+  vec3 fg = texture2D(uTexSampler, src).rgb;
+  vec3 bg = mix(uBackColor, texture2D(uBackSampler, vTexCoords).rgb, uUseBlur);
+  gl_FragColor = vec4(mix(bg, fg, inside), 1.0);
+}
+"""
 }

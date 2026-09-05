@@ -175,6 +175,20 @@ enum class CanvasFit(val label: String) {
 }
 
 /**
+ * What shows behind a clip that does not fill the canvas.
+ *
+ * BLUR is the clip itself, blown up to cover the canvas and softened — the
+ * treatment nearly every vertical edit of horizontal footage uses. The colour
+ * components are what the fill program paints for the flat choices.
+ */
+@Serializable
+enum class CanvasBackground(val label: String, val red: Float, val green: Float, val blue: Float) {
+    BLACK("Black", 0f, 0f, 0f),
+    BLUR("Blur", 0f, 0f, 0f),
+    WHITE("White", 1f, 1f, 1f),
+}
+
+/**
  * Pan, zoom and rotation of the picture inside its own frame — CapCut's
  * "transform", and the thing a reframe or a slow push-in is made of.
  *
@@ -400,6 +414,8 @@ data class TimelineState(
     val outputWidth: Int = 1080,
     val outputHeight: Int = 1920,
     val canvasFit: CanvasFit = CanvasFit.FIT,
+    /** Only visible with [CanvasFit.FIT]; the other fits leave no bars to fill. */
+    val canvasBackground: CanvasBackground = CanvasBackground.BLACK,
     val projectFps: Float = 30f,
     /** Monotonic; bumped by the store on each committed reduction. */
     val revision: Long = 0L,

@@ -101,7 +101,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (prev.outputWidth != next.outputWidth ||
             prev.outputHeight != next.outputHeight ||
-            prev.canvasFit != next.canvasFit
+            prev.canvasFit != next.canvasFit ||
+            prev.canvasBackground != next.canvasBackground
         ) {
             // Its own path: re-letterboxing is a change of effects, not of media,
             // so it must not tear down the concatenated source.

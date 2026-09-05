@@ -60,6 +60,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.kinetic.editor.core.model.CanvasBackground
 import com.kinetic.editor.core.model.CanvasFit
 import com.kinetic.editor.core.model.ClipModel
 import com.kinetic.editor.core.model.ClipMotion
@@ -532,6 +533,18 @@ private fun ToolBar(
             vm.store.dispatch(
                 EditorIntent.SetCanvasFit(order[(order.indexOf(state.canvasFit) + 1) % order.size]),
             )
+        }
+        // Only while there are bars to fill: the other fits have none, and a
+        // control that changes nothing is worse than no control.
+        if (state.canvasFit == CanvasFit.FIT) {
+            IconAction(KineticIcons.Backdrop, state.canvasBackground.label) {
+                val order = CanvasBackground.entries
+                vm.store.dispatch(
+                    EditorIntent.SetCanvasBackground(
+                        order[(order.indexOf(state.canvasBackground) + 1) % order.size],
+                    ),
+                )
+            }
         }
         IconAction(KineticIcons.Export, "Export", tint = Ink.accent) {
             if (Build.VERSION.SDK_INT >= 33 &&

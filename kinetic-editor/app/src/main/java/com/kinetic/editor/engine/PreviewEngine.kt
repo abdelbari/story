@@ -26,6 +26,7 @@ import com.kinetic.editor.core.model.transitionWindowsUs
 import com.kinetic.editor.core.model.gainAt
 import com.kinetic.editor.core.model.transformAt
 import com.kinetic.editor.effects.ClipFx
+import com.kinetic.editor.effects.canvasFillEffect
 import com.kinetic.editor.effects.ClipSnapshotFxProvider
 import com.kinetic.editor.effects.FxSegment
 import com.kinetic.editor.effects.GradeGlEffect
@@ -222,8 +223,16 @@ class PreviewEngine(
      */
     fun applyCanvas(state: TimelineState) {
         player.setVideoEffects(
-            listOf(
+            listOfNotNull(
                 GradeGlEffect(fxProvider),
+                // Same factory as the export, so the two agree on when the
+                // bars are filled; a no-op Presentation follows it.
+                canvasFillEffect(
+                    state.outputWidth,
+                    state.outputHeight,
+                    state.canvasFit,
+                    state.canvasBackground,
+                ),
                 Presentation.createForWidthAndHeight(
                     state.outputWidth,
                     state.outputHeight,

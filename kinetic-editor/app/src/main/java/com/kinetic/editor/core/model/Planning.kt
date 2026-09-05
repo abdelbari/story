@@ -374,3 +374,34 @@ fun overlayScaleFor(fractionOfWidth: Float, frameWidthPx: Int, assetWidthPx: Int
         // by nothing. Wrong size beats no frame.
         fractionOfWidth
     }
+
+/* ------------------------------ canvas fill ------------------------------- */
+
+/** How a picture maps into a canvas, as the fill program's two samplings. */
+data class CanvasScales(val fitX: Float, val fitY: Float, val fillX: Float, val fillY: Float)
+
+/**
+ * The two ways a source of one shape can occupy a canvas of another, each as
+ * the scale from canvas texture space to source texture space:
+ *  - fit:  the picture inside the canvas, letterboxed; > 1 on the boxed axis.
+ *  - fill: the picture covering the canvas, cropped;   < 1 on the cropped axis.
+ *
+ * These are media3's Presentation FIT and FIT_WITH_CROP, restated, so the
+ * picture the fill program draws lands exactly where Presentation would have
+ * put it — and where the preview lays overlays out on top of it.
+ */
+fun canvasScales(sourceWidth: Int, sourceHeight: Int, canvasWidth: Int, canvasHeight: Int): CanvasScales {
+    if (sourceWidth <= 0 || sourceHeight <= 0 || canvasWidth <= 0 || canvasHeight <= 0) {
+        // Unknown geometry: a straight copy beats a divide by zero.
+        return CanvasScales(1f, 1f, 1f, 1f)
+    }
+    val sourceAspect = sourceWidth.toFloat() / sourceHeight
+    val canvasAspect = canvasWidth.toFloat() / canvasHeight
+    val r = canvasAspect / sourceAspect
+    return if (r >= 1f) {
+        // Canvas wider than the picture: bars at the sides, crop top and bottom.
+        CanvasScales(fitX = r, fitY = 1f, fillX = 1f, fillY = 1f / r)
+    } else {
+        CanvasScales(fitX = 1f, fitY = 1f / r, fillX = r, fillY = 1f)
+    }
+}

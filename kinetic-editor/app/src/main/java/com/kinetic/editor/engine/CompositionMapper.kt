@@ -31,6 +31,7 @@ import com.kinetic.editor.core.model.planSequence
 import com.kinetic.editor.core.model.transitionWindowsUs
 import com.kinetic.editor.effects.ClipGradeProvider
 import com.kinetic.editor.effects.GradeGlEffect
+import com.kinetic.editor.effects.canvasFillEffect
 import com.kinetic.editor.effects.PipCompositorSettings
 
 data class ExportSpec(
@@ -191,6 +192,10 @@ object CompositionMapper {
             )
             // After the grade, so the shader still sees clip-local source time.
             speed.videoEffect?.let(::add)
+            // The letterbox fill, when the project has one; it outputs the
+            // canvas size, which makes the Presentation after it a no-op.
+            canvasFillEffect(spec.width, spec.height, state.canvasFit, state.canvasBackground)
+                ?.let(::add)
             // Last, and per item rather than once for the whole composition: it
             // makes every main frame canvas-sized BEFORE the compositor sees it,
             // which is what puts picture-in-picture and overlays in the same

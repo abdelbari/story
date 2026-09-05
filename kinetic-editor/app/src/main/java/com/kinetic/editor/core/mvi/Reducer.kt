@@ -121,6 +121,7 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
         if (t.id == intent.trackId) t.copy(muted = intent.muted) else t
     }
     is EditorIntent.SetCanvasFit -> state.copy(canvasFit = intent.fit)
+    is EditorIntent.SetCanvasBackground -> state.copy(canvasBackground = intent.background)
     is EditorIntent.SetCanvas -> state.copy(
         // Hardware encoders want even dimensions; keep both within sane bounds.
         outputWidth = (intent.width.coerceIn(16, 4096) / 2) * 2,

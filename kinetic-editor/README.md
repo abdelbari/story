@@ -41,16 +41,17 @@ environment, so the app has not been assembled by Gradle there. Instead:
   undefined name and a missing import in `EditorScreen`.)
 - **The GLSL is compiled**, by the Khronos reference compiler, as the ESSL 1.00
   a GLES driver reads it as — both stages, and both sides of the precision
-  guard. `tools/check-shaders.py` then reflects the linked program and checks it
-  against the Kotlin that drives it: every uniform `GradeShaderProgram` writes
-  must exist in the linked program with a matching type. That is not
+  guard. `tools/check-shaders.py` then reflects each linked program and checks
+  it against the Kotlin class that drives it — the grade shader and the three
+  canvas-fill passes: every uniform a class writes must exist in the program
+  it builds, with a matching type. That is not
   pedantry — drivers strip uniforms nothing reads, and `GlProgram` *throws*
   when asked to set a missing one, so a uniform renamed on one side only is a
   crash on the first frame of every device. The checker was proved by breaking
   the shader on purpose: it catches both a renamed uniform and a syntax error.
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 64 tests in `app/src/test` pass under JUnit
+  geometry) runs on the JVM: the 66 tests in `app/src/test` pass under JUnit
   4.13.2, alongside a 58-scenario executable sandbox suite. The harness
   compiles the tests against the real effect classes with only the GL calls
   stubbed out, which is what caught two test call sites that had drifted
@@ -335,7 +336,7 @@ the exporter — the model, the preview and the export path agree on all three.
 | Stickers | seven shapes, swappable from the inspector, with size, position, rotation and the same animations text uses |
 | Overlays | picture-in-picture (size, position, rotation, opacity) — every control is the number the export consumes |
 | Looks | ten one-tap filters, plus brightness, contrast, saturation, warmth, **film grain** and **vignette** — a preset is a starting point rather than a mode, because it sets the same fields the sliders edit |
-| Canvas | 9:16, 16:9, 1:1 and 4:5 presets, each fitted, filled (cropped) or stretched — applied by the same `Presentation` in preview and export |
+| Canvas | 9:16, 16:9, 1:1 and 4:5 presets, each fitted, filled (cropped) or stretched — applied by the same `Presentation` in preview and export; letterbox bars black, white, or **the clip itself blurred** behind the picture |
 | Editing | trim, split, move, reorder, duplicate, delete, per-clip speed, detach audio |
 | Transform | pan, zoom and rotate the picture inside its frame, on any video clip |
 | Chroma key | green or blue screen with tolerance and edge feather, on any video clip — meant for picture-in-picture, where there is something behind to reveal |
@@ -472,6 +473,31 @@ second, smaller hash for the same reason.
 The amount survives switching effects, so trying each one at a strength you
 already chose is one tap each.
 
+### The blurred letterbox
+
+Horizontal footage in a vertical frame is the aesthetic niche's daily problem,
+and the answer every feed has settled on is the clip itself, blown up to cover
+the frame and blurred, behind the letterboxed picture. That is a real multi-pass
+GL program (`effects/CanvasFill.kt`), not a shader trick: the picture at cover
+geometry is shrunk to a small texture (a twelfth of the canvas on each side,
+four taps so the shrink averages rather than skips), a separable Gaussian
+ping-pongs over it twice, and a last pass draws the picture at fit geometry
+over the result, which the sampler upsamples bilinearly. Most of the blur is
+the shrink: a few texels of Gaussian there is tens of pixels at full size, for
+a handful of draws over a 90×160 texture.
+
+It sits where `Presentation` sits and outputs the canvas size, so the
+`Presentation` after it becomes a no-op media3 drops at configure time. The
+fit geometry is `canvasScales`, a restatement of `Presentation`'s FIT and
+FIT_WITH_CROP math with a test pinning it to the same figures, which is what
+keeps the overlays the preview lays out in canvas coordinates on top of the
+right pixels. `BaseGlShaderProgram` focuses the output framebuffer before
+`drawFrame`, so the program reads that binding back at the start and
+re-focuses it before the last pass; the small textures are its own, created on
+`configure` and released with it. A flat white background is the same program
+with the first two passes skipped; black stays with `Presentation`, the proven
+path, and the factory that decides is shared by both pipelines.
+
 ## 5b. Lifecycle
 
 `MainActivity.onStop` → `EditorViewModel.onEnterBackground`, which is the only
@@ -603,7 +629,8 @@ kinetic-editor/
         │   ├── ExportEngine.kt          Transformer flow + ExportWorker
         │   └── MediaStorePublisher.kt   render -> shared Movies collection
         ├── effects/
-        │   ├── Shaders.kt               shared GLSL (grade/LUT/transitions)
+        │   ├── Shaders.kt               shared GLSL (grade/LUT/transitions/mask/effects, canvas fill)
+        │   ├── CanvasFill.kt            multi-pass blurred letterbox
         │   ├── GradeEffects.kt          BaseGlShaderProgram + providers
         │   ├── PipCompositor.kt         per-frame PiP placement (export)
         │   └── Overlays.kt              timed text/sticker overlays (export)

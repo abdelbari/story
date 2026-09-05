@@ -1,6 +1,9 @@
 package com.kinetic.editor
 
+import com.kinetic.editor.core.model.CanvasBackground
 import com.kinetic.editor.core.model.CanvasFit
+import com.kinetic.editor.core.model.CanvasScales
+import com.kinetic.editor.core.model.canvasScales
 import com.kinetic.editor.core.model.ChromaKeySpec
 import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ClipModel
@@ -1199,6 +1202,51 @@ class CoreLogicTest {
         buf.reset()
         assertEquals(0f, buf.maskType, 0f)
         assertEquals(1f, buf.flipX, 0f)
+    }
+
+
+    @Test
+    fun canvasScalesRestatePresentationFitAndCrop() {
+        // A landscape source in a portrait canvas. Fit: full width, and the
+        // middle 31.6% of the height — the figure Presentation's FIT scales by
+        // (requested aspect over input aspect). Fill: the canvas covered by
+        // cropping to the middle 31.6% of the source's width.
+        val s = canvasScales(1920, 1080, 1080, 1920)
+        val fraction = (1080f / 1920f) / (1920f / 1080f)
+        assertEquals(1f, s.fitX, 1e-6f)
+        assertEquals(1f / fraction, s.fitY, 1e-4f)
+        assertEquals(fraction, s.fillX, 1e-4f)
+        assertEquals(1f, s.fillY, 1e-6f)
+
+        // The other way round: bars at the sides, crop top and bottom.
+        val p = canvasScales(1080, 1920, 1920, 1080)
+        assertEquals(1f / fraction, p.fitX, 1e-4f)
+        assertEquals(1f, p.fitY, 1e-6f)
+        assertEquals(1f, p.fillX, 1e-6f)
+        assertEquals(fraction, p.fillY, 1e-4f)
+
+        // Same shape: every scale is one and the fill program is a copy.
+        val same = canvasScales(1920, 1080, 1280, 720)
+        for (v in listOf(same.fitX, same.fitY, same.fillX, same.fillY)) assertEquals(1f, v, 1e-5f)
+        // Unknown geometry degrades to a copy rather than a divide by zero.
+        assertEquals(CanvasScales(1f, 1f, 1f, 1f), canvasScales(0, 0, 1080, 1920))
+    }
+
+    @Test
+    fun canvasBackgroundDefaultsToBlackAndRoundTrips() {
+        val s0 = stateWith(listOf(clip("a", 1_000)))
+        assertEquals(CanvasBackground.BLACK, s0.canvasBackground)
+        // Absent from a project saved before it existed, and from one that
+        // never changed it.
+        assertFalse(ProjectCodec.encode(s0).contains("canvasBackground"))
+        val blurred = reduce(s0, EditorIntent.SetCanvasBackground(CanvasBackground.BLUR))
+        assertEquals(
+            CanvasBackground.BLUR,
+            ProjectCodec.decode(ProjectCodec.encode(blurred))!!.canvasBackground,
+        )
+        // A change of effects, not of media: the concatenated source must
+        // not be rebuilt for it.
+        assertEquals(s0.videoStructureHash(), blurred.videoStructureHash())
     }
 
     @Test
