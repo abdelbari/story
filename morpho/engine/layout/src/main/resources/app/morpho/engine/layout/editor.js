@@ -199,6 +199,10 @@
     var s = window.getSelection();
     s.setBaseAndExtent(ap[0], ap[1], fp[0], fp[1]);
     lastSelection = selectionKey(sel);
+    // Brought into view where the engine moved it out of view — to a
+    // word found, a doubtful block — as a reader would scroll to it.
+    var box = f.getBoundingClientRect();
+    if (box.bottom < 0 || box.top > window.innerHeight) f.scrollIntoView({ block: 'center' });
   }
 
   function tell(reply) {
@@ -206,9 +210,12 @@
     paragraph = reply.paragraph || {};
     status = reply;
     if (window.Morpho && typeof window.Morpho.status === 'function') {
+      var s = reply.selection;
       window.Morpho.status(JSON.stringify({
         look: reply.look, paragraph: reply.paragraph, canUndo: reply.canUndo, canRedo: reply.canRedo, modified: reply.modified,
         cells: reply.cells, canMerge: reply.canMerge, canSplit: reply.canSplit, table: reply.table, comments: reply.comments,
+        collapsed: !s || selectionKey(s) === s.anchor.join(',') + ';' + s.anchor.join(','),
+        block: s ? s.anchor[0] : 0,
       }));
     }
   }
@@ -377,6 +384,9 @@
     undo: function () { return op({ op: 'undo' }); },
     redo: function () { return op({ op: 'redo' }); },
     insertTable: function (rows, columns) { return op({ op: 'insertTable', rows: rows, columns: columns }); },
+    insertImage: function (base64, mimeType, widthPx, heightPx, description) {
+      return op({ op: 'insertImage', bytes: base64, mimeType: mimeType, widthPx: widthPx, heightPx: heightPx, description: description == null ? null : String(description) });
+    },
     insertRow: function (below) { return op({ op: 'insertRow', below: below !== false }); },
     deleteRow: function () { return op({ op: 'deleteRow' }); },
     insertColumn: function (after) { return op({ op: 'insertColumn', after: after !== false }); },

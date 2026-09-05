@@ -44,6 +44,9 @@ object EditorProtocol {
     /** The most markup one paste may carry beside its text, markup being the longer. */
     const val MOST_HTML = HtmlReader.MOST_LENGTH
 
+    /** The most a picture put in over the bridge may be, written in base64: a phone's photograph at a document's size. */
+    const val MOST_IMAGE_BASE64 = 3_000_000
+
     /** What the screen's script says the reader did. */
     sealed interface Operation {
         data class Select(val selection: Selection) : Operation
@@ -55,6 +58,7 @@ object EditorProtocol {
         data class Format(val change: RunChange) : Operation
         data class Restyle(val change: ParagraphChange) : Operation
         data class InsertTable(val rows: Int, val columns: Int) : Operation
+        data class InsertImage(val image: ImageBlock) : Operation
         data class InsertRow(val below: Boolean) : Operation
         data object DeleteRow : Operation
         data class InsertColumn(val after: Boolean) : Operation
@@ -141,6 +145,27 @@ object EditorProtocol {
                     rows = whole(map["rows"] as? Double ?: return null, 1, MOST_TABLE_SIDE),
                     columns = whole(map["columns"] as? Double ?: return null, 1, MOST_TABLE_SIDE),
                 )
+                "insertImage" -> {
+                    val encoded = map["bytes"] as? String ?: return null
+                    if (encoded.length > MOST_IMAGE_BASE64) return null
+                    val bytes = try {
+                        java.util.Base64.getDecoder().decode(encoded)
+                    } catch (e: IllegalArgumentException) {
+                        return null
+                    }
+                    if (bytes.isEmpty()) return null
+                    val mime = (map["mimeType"] as? String ?: return null).lowercase()
+                    if (!mime.startsWith("image/") || mime.length > 64) return null
+                    Operation.InsertImage(
+                        ImageBlock(
+                            bytes = bytes,
+                            mimeType = mime,
+                            widthPx = whole(map["widthPx"] as? Double ?: return null, 1, 20_000),
+                            heightPx = whole(map["heightPx"] as? Double ?: return null, 1, 20_000),
+                            description = map["description"]?.let { (it as? String ?: return null).take(1_000).trim().ifEmpty { null } },
+                        ),
+                    )
+                }
                 "insertRow" -> Operation.InsertRow(flag(map, "below") ?: true)
                 "deleteRow" -> Operation.DeleteRow
                 "insertColumn" -> Operation.InsertColumn(flag(map, "after") ?: true)
@@ -212,6 +237,7 @@ object EditorProtocol {
         is Operation.Format -> state.format(operation.change)
         is Operation.Restyle -> state.restyle(operation.change)
         is Operation.InsertTable -> state.insertBlock(emptyTable(operation.rows, operation.columns))
+        is Operation.InsertImage -> state.insertBlock(operation.image)
         is Operation.InsertRow -> state.insertRow(operation.below)
         Operation.DeleteRow -> state.deleteRow()
         is Operation.InsertColumn -> state.insertColumn(operation.after)

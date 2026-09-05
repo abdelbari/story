@@ -46,7 +46,19 @@ Work through, in this order — each exercises a path nothing else covers:
 - [ ] **An Arabic document whose headings were typed by hand** (bold or
       larger text, not Word's heading styles). Headings should still come
       out as headings. A bold line that is not a heading — a byline, say —
-      may be promoted, which is what Review Mode is for.
+      may be promoted, which is what the editor is for: put the caret in
+      the line and set its style back to Body.
+- [ ] **The editor.** Open a converted document in it (the Review button
+      on the preview and on the result card opens the editor now). Type
+      Arabic with the phone's own keyboard: letters must join and compose
+      as they do in Word, and the keyboard must lift the page rather than
+      cover it. Select by touch and drag a handle; the toolbar must follow
+      the caret — bold lit on a bold word, the style menu ticking the
+      heading the caret stands in, the table tools appearing in a cell.
+      Make a word bold, put a table in and type in a cell, put a picture
+      in from the gallery, leave the editor and save. Open the file in
+      Word: everything done must be there. Kill the app in the middle of
+      an edit and open it again: the edit must be there.
 - [ ] **The preview shows pages.** After converting the Arabic paper, the
       preview should look like the PDF: the same page shape and margins, the
       title centred, the bold labels and raised marks in place, page after

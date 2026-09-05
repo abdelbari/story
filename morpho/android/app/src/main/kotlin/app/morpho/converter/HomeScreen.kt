@@ -57,6 +57,7 @@ private val inputMimeTypes = DocumentFormats.PICKABLE_MIME_TYPES.toTypedArray()
 fun HomeScreen(viewModel: ConvertViewModel) {
     val state by viewModel.state.collectAsState()
     val review by viewModel.review.collectAsState()
+    val editing by viewModel.editing.collectAsState()
     val languages by viewModel.languages.collectAsState()
 
     // Local state: which screen is showing is not worth surviving process
@@ -127,6 +128,17 @@ fun HomeScreen(viewModel: ConvertViewModel) {
         return
     }
 
+    // The editor, over everything: it is the document itself, being changed.
+    val session = editing
+    if (session != null) {
+        EditorScreen(
+            session = session,
+            onDone = viewModel::closeEditor,
+            onSave = viewModel::saveFromEditor,
+        )
+        return
+    }
+
     val openReview = review
     if (openReview != null) {
         ReviewScreen(
@@ -154,7 +166,7 @@ fun HomeScreen(viewModel: ConvertViewModel) {
             html = converted.previewHtml,
             fileName = converted.suggestedName,
             onSave = viewModel::requestSave,
-            onReview = viewModel::showReview,
+            onReview = viewModel::openEditor,
             onClose = { showPreview = false },
         )
         return
@@ -218,7 +230,7 @@ fun HomeScreen(viewModel: ConvertViewModel) {
                         onPrint = viewModel::printPdf,
                         onRetry = viewModel::retry,
                         onOcr = viewModel::convertWithOcr,
-                        onReview = viewModel::showReview,
+                        onReview = viewModel::openEditor,
                         onCancel = viewModel::cancelConversion,
                         onSave = viewModel::requestSave,
                         onPreview = { showPreview = true },

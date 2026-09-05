@@ -36,21 +36,24 @@ formatting.
 
 ## Where it stands, 5 September
 
-Everything of Stages 0 to 4 that a machine can do is done, in the engine
-and in the page, and driven in headless Chromium against the real engine
-after every action — the sections below say what, stage by stage. The
-editor exists; what does not exist yet is the screen that shows it. What
-is left needs either a device or a decision only the owner can make:
+Everything of Stages 0 to 4 is done, in the engine, in the page, and —
+since the evening of 5 September — in the app: the screen exists
+(`EditorScreen`), the bridge exists (`EditorBridge`), the formatting
+tools are a toolbar over the page, autosave takes every edit, the
+doubtful jump is a button, and a picture goes in from the device's own
+bytes. The JavaScript posture (Price one below) is taken: the owner asked
+for the edit screen to be a real editor, which a page that can be typed
+in cannot be without script, and it was taken exactly as priced — see
+the decisions log in the README for the whole of it. What is left needs
+a phone:
 
-- **The JavaScript posture** (Price one below): whether the editor's
-  WebView may run script at all. Nothing of the editor has been wired
-  into the app until that is decided.
 - **On a phone:** an input method composing Arabic, touch selection
   handles, the keyboard showing and hiding, and the true round trip
-  through the bridge.
-- **The app's own half:** the editing screen, the bridge object, the
-  formatting sheet, autosave on every edit, a button for the doubtful
-  jump, and inserting a picture from the device's own bytes.
+  through the bridge. The page's part of each was driven in headless
+  Chromium; the phone's part of each has not been seen, because neither
+  CI nor the machine this was built on has a phone.
+- **The toolbar by eye:** the page has been photographed and looks right;
+  the Compose toolbar over it has only been compiled, in CI.
 
 ## The honest size of this
 
@@ -130,6 +133,22 @@ not being weakened. What remains is local, and is handled by construction:
 
 This is a posture change and should be confirmed before Stage 1 starts,
 the way the `INTERNET` question was.
+
+**Taken, 5 September.** The owner asked for the edit screen to be an
+editor like Word's and Docs' — a document typed in, with the type tools
+over it — which no page can be without script, so the ask is the
+decision. It is taken exactly as priced above and not a step wider: the
+editor's WebView is its own and the preview's is untouched; every
+file-access setting is false in both; DOM storage, new windows, address
+following and every resource fetch are refused in the editor's, behind
+a page whose own policy allows no source; the one bridge object is
+`EditorBridge`, with `send`, `status` and `tapped` and nothing else, each
+reading its input as if a hostile document wrote it; and the guard
+changed rather than skipped — it allows script and one bridge in exactly
+`EditorScreen.kt`, requires the refusals to be written there, and still
+refuses file access in every WebView in the app. If the decision is ever
+to be reversed, the guard is where to start: refuse the one file again,
+and the build says what depends on it.
 
 ### Price two, as first written: there is no HTML reader
 
@@ -397,16 +416,17 @@ Most of this is model → HTML → model plumbing once Stage 1 stands, because
 
 ## What to do first on Saturday
 
-Everything of every stage that a machine can do is done, the page and
-its script included (see *Where it stands* at the top); what is left
-needs a device:
+Everything of every stage is done, the screen included (see *Where it
+stands* at the top); what is left needs a phone:
 
-1. The JavaScript posture decision (Price one above), and the page on a
-   real phone: an input method composing Arabic, touch selection, the
-   keyboard showing and hiding.
-2. The bridge — an object with `send(json): String` and `status(json)`
-   given to the page as `Morpho`, which is all the script asks for — and
-   the timing question above.
+1. Install the CI build and open a converted document in the editor.
+   Type Arabic with the phone's own input method — letters must join and
+   compose as they do in Word — then select by touch, drag a handle, and
+   watch the toolbar follow the caret. The keyboard showing must lift the
+   page rather than cover it (`adjustResize` is set for exactly this).
+2. The round trip: bold a word, put a table in, put a picture in from the
+   gallery, leave the editor and save. Open the file in Word. Kill the app
+   mid-edit and open it again: the edit must be there.
 
 What the device spike lands on is all there. Every block of the body
 carries `data-block="N"` on its outermost element; `HtmlWriter.writeBlock`

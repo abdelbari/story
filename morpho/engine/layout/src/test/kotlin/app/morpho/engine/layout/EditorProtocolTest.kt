@@ -156,6 +156,24 @@ class EditorProtocolTest {
     }
 
     @Test
+    fun `a picture is put in over the bridge as the bytes the app hands over`() {
+        val state = open(p("one"), p("two")).at(0, 3)
+        val bytes = java.util.Base64.getEncoder().encodeToString(byteArrayOf(9, 8, 7))
+        val put = EditorProtocol.step(state, """{"op":"insertImage","bytes":"$bytes","mimeType":"image/JPEG","widthPx":40,"heightPx":30,"description":" a seal "}""")
+        val image = put.state.document.blocks[1] as ImageBlock
+        assertEquals(listOf("image/jpeg", 40, 30, "a seal"), listOf(image.mimeType, image.widthPx, image.heightPx, image.description))
+        assertTrue(image.bytes.contentEquals(byteArrayOf(9, 8, 7)))
+        assertEquals(listOf("one", "<ImageBlock>", "two"), texts(put.state))
+        for (bad in listOf(
+            """{"op":"insertImage","bytes":"!!","mimeType":"image/png","widthPx":1,"heightPx":1}""",
+            """{"op":"insertImage","bytes":"$bytes","mimeType":"text/html","widthPx":1,"heightPx":1}""",
+            """{"op":"insertImage","bytes":"$bytes","mimeType":"image/png","widthPx":0,"heightPx":1}""",
+            """{"op":"insertImage","bytes":"","mimeType":"image/png","widthPx":1,"heightPx":1}""",
+            """{"op":"insertImage","bytes":"${"A".repeat(EditorProtocol.MOST_IMAGE_BASE64 + 4)}","mimeType":"image/png","widthPx":1,"heightPx":1}""",
+        )) assertNull(EditorProtocol.operation(bad), bad.take(80))
+    }
+
+    @Test
     fun `a picture is described and sized over the bridge, and the document counted`() {
         val state = open(p("one two"), ImageBlock(ByteArray(2), "image/png", 4, 2))
         val described = EditorProtocol.step(state, """{"op":"describeImage","block":1,"description":"a seal"}""")

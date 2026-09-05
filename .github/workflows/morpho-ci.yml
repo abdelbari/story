@@ -161,17 +161,40 @@ jobs:
       # or carry a bridge, and none may read the device's files; when it is,
       # this guard is what changes — to exactly one file — rather than what is
       # skipped.
-      - name: Script posture guard — no WebView runs script or reads files
+      - name: Script posture guard — script in the editor's WebView alone, and no WebView reads files
         working-directory: morpho/android
         run: |
           set -uo pipefail
+          editor=app/src/main/kotlin/app/morpho/converter/EditorScreen.kt
           sources=$(find app/src/main -name '*.kt' 2>/dev/null || true)
           if [ -z "$sources" ]; then
             echo "::error::Script posture guard found no sources to inspect. The layout changed — fix the guard, never skip it."
             exit 1
           fi
-          if grep -Hn -E 'javaScriptEnabled\s*=\s*true|addJavascriptInterface|allowFileAccess\s*=\s*true|allowContentAccess\s*=\s*true|allowFileAccessFromFileURLs\s*=\s*true|allowUniversalAccessFromFileURLs\s*=\s*true' $sources; then
-            echo "::error::A WebView in the app runs script, carries a bridge, or reads files. The editor's WebView is a decision recorded in morpho/EDITOR-PLAN.md (Price one); when it is taken, allow it here for that one file and keep everything else refused."
+          if [ ! -f "$editor" ]; then
+            echo "::error::The editor screen moved from $editor. Point the guard at it — never widen the guard to more files."
             exit 1
           fi
-          echo "No WebView runs script, carries a bridge, or reads files — the script posture holds."
+          # No WebView anywhere reads the app's files or the device's content.
+          if grep -Hn -E 'allowFileAccess\s*=\s*true|allowContentAccess\s*=\s*true|allowFileAccessFromFileURLs\s*=\s*true|allowUniversalAccessFromFileURLs\s*=\s*true' $sources; then
+            echo "::error::A WebView in the app reads files. No WebView may: every one keeps the four file-access settings false."
+            exit 1
+          fi
+          # Script and a bridge exist in exactly one file: the editor's screen.
+          others=$(printf '%s\n' $sources | grep -v -F "$editor")
+          if [ -n "$others" ] && grep -Hn -E 'javaScriptEnabled\s*=\s*true|addJavascriptInterface' $others; then
+            echo "::error::A WebView outside the editor runs script or carries a bridge. Script is the editor's alone (morpho/EDITOR-PLAN.md, Price one); everything else stays refused."
+            exit 1
+          fi
+          bridges=$(grep -c 'addJavascriptInterface' "$editor" || true)
+          if [ "$bridges" != "1" ]; then
+            echo "::error::The editor's WebView must carry exactly one bridge object; found $bridges addJavascriptInterface calls in $editor."
+            exit 1
+          fi
+          for setting in 'allowFileAccess = false' 'allowContentAccess = false' 'allowFileAccessFromFileURLs = false' 'allowUniversalAccessFromFileURLs = false' 'domStorageEnabled = false'; do
+            if ! grep -q -F "$setting" "$editor"; then
+              echo "::error::The editor's WebView must set '$setting' in $editor — script runs there, so everything else is refused explicitly."
+              exit 1
+            fi
+          done
+          echo "Script runs in the editor's WebView alone, over one bridge, with file access refused everywhere — the script posture holds."

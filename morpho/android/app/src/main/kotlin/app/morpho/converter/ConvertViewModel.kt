@@ -507,6 +507,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         redrawEpoch++
         redrawing?.cancel()
         _review.value = null
+        _editing.value = null
 
         val epoch = pickEpoch
         val uri = uris.first()
@@ -1035,8 +1036,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
      * written where the process's death does not reach. Corrections come
      * in runs, and only the last of a run is worth writing.
      */
-    private fun keep() {
-        val model = edits?.asWritten ?: return
+    private fun keep(changed: DocumentModel? = null) {
+        val model = changed ?: edits?.asWritten ?: return
         val name = outputName
         val mime = lastMimeType
         val epoch = ++keepEpoch
@@ -1111,6 +1112,73 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             }
             publish(epoch, ConvertUiState.Converted(outputName, restored.mimeType, output, needsReview(), lastPreviewHtml, lastPreviewPdf))
         }
+    }
+
+    /**
+     * One opening of the editor: the document's page as the editor's
+     * WebView shows it, and the bridge that carries every edit to the
+     * engine and its reply back. [doubtful] is how many blocks the
+     * conversion was unsure of, so the screen can offer to walk them.
+     */
+    class EditorSession internal constructor(
+        val fileName: String,
+        val html: String,
+        val bridge: EditorBridge,
+        val doubtful: Int,
+    ) {
+        /** A picture the reader chose, waiting to be put in at the caret. */
+        var pendingImage: Uri? = null
+    }
+
+    private val _editing = MutableStateFlow<EditorSession?>(null)
+
+    /** Non-null while the editor is open on the last conversion. */
+    val editing: StateFlow<EditorSession?> = _editing.asStateFlow()
+
+    /**
+     * Opens the editor on the last conversion, as the reader has corrected
+     * it so far. The page is written off the main thread: a long document
+     * is a long page.
+     */
+    fun openEditor() {
+        val made = edits ?: return
+        if (_editing.value != null) return
+        val document = made.asWritten
+        val name = outputName
+        val epoch = pickEpoch
+        viewModelScope.launch(Dispatchers.IO) {
+            val html = HtmlWriter.writeEditor(document)
+            val doubtful = FidelityReport.of(document).reviewables.size
+            if (epoch != pickEpoch) return@launch
+            // The bridge is called on the page's own thread; the keeping is
+            // the main thread's, like every other field here.
+            val bridge = EditorBridge(document, onChanged = { changed -> viewModelScope.launch { keep(changed) } })
+            _editing.value = EditorSession(name, html, bridge, doubtful)
+        }
+    }
+
+    /**
+     * Closes the editor. What the reader changed in it becomes the
+     * conversion: the report, the preview and the next save all follow
+     * the edited document. Nothing changed, nothing to do.
+     */
+    fun closeEditor() {
+        val session = _editing.value ?: return
+        _editing.value = null
+        if (!session.bridge.changed) return
+        val document = session.bridge.document
+        edits = DocumentEdit(document)
+        lastReport = FidelityReport.of(document)
+        correctedSinceWrite = true
+        previewIsStale = true
+        redrawPreview()
+        keep(document)
+    }
+
+    /** The reader asked to save from inside the editor: close, then save what they made. */
+    fun saveFromEditor() {
+        closeEditor()
+        requestSave()
     }
 
     init {

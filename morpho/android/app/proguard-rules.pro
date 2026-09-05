@@ -35,3 +35,11 @@
 # Keep the line numbers a crash report needs, without keeping source paths.
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+# --- The editor's bridge -----------------------------------------------
+# The editor's page calls the bridge's methods by name through the
+# WebView's JavaScript interface. R8 cannot see those calls; a renamed
+# method is a page that types and nothing happens.
+-keepclassmembers class app.morpho.converter.EditorBridge {
+    @android.webkit.JavascriptInterface <methods>;
+}
