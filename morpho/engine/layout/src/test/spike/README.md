@@ -18,3 +18,15 @@ The Kotlin test serves the page and the engine over a loopback socket and
 starts the script; the script talks to the engine through that socket, so
 the time it measures per keystroke is the time of the socket and of the
 browser's own IPC, not of the bridge the app will use, which is a call.
+
+## Looking at the page
+
+`EditorLookTest` writes an Arabic paper and an English one, with everything
+the page draws, under `layout/build/editor-look/`; then, from this directory,
+
+    node editor-look.mjs
+
+photographs each in headless Chromium at a phone's size and a tablet's, in
+light and in dark, and once more with words selected and a picture picked,
+into `look/`, which is not committed. The photographs are for a person to
+look at; nothing asserts on them.

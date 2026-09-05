@@ -215,6 +215,7 @@
 
   function paint(reply, wasSelect) {
     if (!reply || reply.error) return;
+    unpick();
     painting = true;
     try {
       if (reply.all) doc.innerHTML = reply.body;
@@ -247,6 +248,10 @@
   // where the engine already has it, and never while it is being placed.
   document.addEventListener('selectionchange', function () {
     if (painting || composing) return;
+    if (picked) {
+      var here = window.getSelection();
+      if (!here || here.rangeCount === 0 || !blockOf(picked) || !blockOf(picked).contains(here.anchorNode)) unpick();
+    }
     var sel = currentSelection();
     if (!sel) return;
     var key = selectionKey(sel);
@@ -302,12 +307,21 @@
     }
   });
 
-  // A picture tapped is told to the app, which has the sheet for what
-  // it shows and how big it is; a caret cannot stand in one.
+  // A picture tapped is outlined, as a picked picture is in every
+  // editor, until the caret moves on; and told to the app, which has
+  // the sheet for what it shows and how big it is, since a caret cannot
+  // stand in one.
+  var picked = null;
+  function unpick() {
+    if (picked) { picked.classList.remove('picked'); picked = null; }
+  }
   doc.addEventListener('click', function (ev) {
     var img = ev.target && ev.target.tagName === 'IMG' ? ev.target : null;
     var el = img ? blockOf(img) : null;
+    unpick();
     if (!el || !el.classList.contains('image')) return;
+    img.classList.add('picked');
+    picked = img;
     if (window.Morpho && typeof window.Morpho.tapped === 'function') {
       window.Morpho.tapped(JSON.stringify({ kind: 'image', block: Number(el.getAttribute('data-block')), alt: img.getAttribute('alt') || '' }));
     }

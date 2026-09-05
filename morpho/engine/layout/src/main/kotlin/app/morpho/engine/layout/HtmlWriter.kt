@@ -148,9 +148,12 @@ object HtmlWriter {
         sb.append("<!DOCTYPE html>\n")
         sb.append("""<html dir="$dir"$lang><head><meta charset="utf-8"/>""")
         sb.append("""<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"/>""")
+        // Laid out at the screen's own width, as an app's page is, rather
+        // than at a desktop's and shrunk, as a phone shows a web page.
+        sb.append("""<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>""")
         sb.append("<title>").append(escape(document.properties.title ?: "Document")).append("</title>")
         sb.append("<style>").append(CSS).append(pageCss(document.pageSetup, defaultDirection))
-            .append(sectionCss(shapes)).append(EDITOR_CSS).append("</style></head><body>\n")
+            .append(sectionCss(shapes)).append(editorCss(document.pageSetup)).append("</style></head><body>\n")
         sb.append("""<div id="doc" contenteditable="true" spellcheck="false">""").append("\n")
         sb.append(writeBody(document))
         sb.append("</div>\n<script>").append(editorScript()).append("</script></body></html>\n")
@@ -158,19 +161,51 @@ object HtmlWriter {
     }
 
     /**
-     * What the editor's page needs beyond the document's own style —
-     * among it the band in the margin beside a block the reading was
-     * not sure of, amber for a doubt and red for a recognition, which
-     * turns green once the reader has changed the block.
+     * What the editor's page needs beyond the document's own style.
+     *
+     * The document is a sheet. On a tablet it is the page the document is
+     * set on — its own size, its own margins — lying on a ground, with
+     * the shadow a sheet on a desk has; on a phone the sheet is the
+     * screen, the words running to its edges less a gutter a thumb can
+     * hold, and a table runs to the screen's width rather than the page's,
+     * as Word's and Docs' phone views have it, the widths staying in the
+     * document. The last line can rise above the keyboard. In the dark the
+     * ground darkens and the sheet stays paper, since a document's colours
+     * — a shaded cell, a word set red — are its author's and would not
+     * survive being inverted.
+     *
+     * Beside the words: the band in the margin beside a block the reading
+     * was not sure of, amber for a doubt and red for a recognition, green
+     * once the reader has changed the block; a note's words marked and its
+     * number drawn, not written; a picture tapped outlined; a selection in
+     * the blue every editor uses.
      */
-    private const val EDITOR_CSS =
-        "#doc{outline:none;min-height:60vh;}" +
+    private fun editorCss(setup: PageSetup?): String {
+        val page = setup ?: PageSetup.DEFAULT
+        val margins = "${pt(page.marginTopPt)} ${pt(page.marginRightPt)} ${pt(page.marginBottomPt)} ${pt(page.marginLeftPt)}"
+        return "html{color-scheme:light dark;background:#e9ecf1;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;}" +
+            "@media screen{body{margin:0;}}" +
+            "body{color:#1f2328;}" +
+            "#doc{outline:none;background:#fff;color:#1f2328;box-sizing:border-box;min-height:100vh;padding:22px 20px 45vh;" +
+            "caret-color:#1a73e8;overflow-wrap:break-word;}" +
+            "@media screen and (min-width:720px){html{padding:28px 0 64px;}" +
+            "#doc{width:${pt(page.widthPt)};max-width:calc(100% - 56px);min-height:${pt(page.heightPt)};margin:0 auto;padding:$margins;" +
+            "border-radius:3px;box-shadow:0 1px 2px rgba(20,30,50,.14),0 12px 36px rgba(20,30,50,.10);}}" +
+            "@media screen and (max-width:719px){#doc table{width:100%!important;table-layout:auto!important;}#doc col{width:auto!important;}}" +
+            "#doc ::selection,#doc::selection{background:#c2d7ff;color:inherit;}" +
             "[data-block]:empty{min-height:1.6em;}" +
-            "#doc td,#doc th{min-width:2em;}" +
+            "#doc td,#doc th{min-width:2em;border-color:#c3c8d0;}" +
+            "#doc a{color:#1a56db;text-underline-offset:2px;}" +
+            "#doc h1,#doc h2,#doc h3{color:#14181d;}" +
+            "#doc img{border-radius:2px;}#doc img.picked{outline:2px solid #1a73e8;outline-offset:3px;}" +
             "#doc [data-band]{border-inline-start:4px solid #e0a000;padding-inline-start:8px;margin-inline-start:-12px;}" +
             "#doc [data-band=low]{border-inline-start-color:#d03030;}" +
             "#doc [data-band].changed{border-inline-start-color:#2a9d4a;}" +
-            "#doc span.comment-mark::after{content:attr(data-comment);font-size:0.66em;vertical-align:super;color:#b08900;}"
+            "#doc span.commented{background:#fff1b8;border-bottom:1px dotted #b08900;border-radius:2px;}" +
+            "#doc span.comment-mark::after{content:attr(data-comment);font-size:0.66em;vertical-align:super;color:#b08900;margin-inline-start:1px;}" +
+            "@media (prefers-color-scheme:dark){html{background:#111418;}" +
+            "@media (min-width:720px){#doc{box-shadow:0 1px 2px rgba(0,0,0,.6),0 12px 36px rgba(0,0,0,.5);}}}"
+    }
 
     /** The editor's script, kept beside the writer that writes the page it runs in. */
     private fun editorScript(): String =
@@ -193,7 +228,7 @@ object HtmlWriter {
     }
 
     /** A tab the editor's page counts and nobody sees; see [appendTabbed]. */
-    private const val HIDDEN_TAB = """<span data-tab style="display:inline-block;width:0;overflow:hidden">""" + "\t</span>"
+    private const val HIDDEN_TAB = """<span data-tab style="position:absolute;width:0;height:0;overflow:hidden">""" + "\t</span>"
 
     /**
      * What was said about the document, numbered in the order the text

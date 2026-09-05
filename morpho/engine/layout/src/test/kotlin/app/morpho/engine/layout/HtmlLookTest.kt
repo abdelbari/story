@@ -55,7 +55,7 @@ class HtmlLookTest {
         // In the editor's markup it has: every character is counted there.
         val marked = HtmlWriter.writeBlock(document, 0)
         assertEquals(2, marked.count { it == '\t' }, "each tab kept once, out of sight: $marked")
-        assertTrue(marked.contains("""<span data-tab style="display:inline-block;width:0;overflow:hidden">""" + "\t</span>"), marked)
+        assertTrue(marked.contains("""<span data-tab style="position:absolute;width:0;height:0;overflow:hidden">""" + "\t</span>"), marked)
         assertEquals(2, Regex("inset-inline-start").findAll(marked).count(), "and the stretches are still placed at their stops")
     }
 

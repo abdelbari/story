@@ -231,7 +231,13 @@ The stage that changes what the app *is*. Review Mode's list is replaced
 by the document itself, laid out, with a caret in it.
 
 - The document renders as flowing pages, as the preview already draws
-  them, but editable.
+  them, but editable. **The page's look is done, 5 September**: a sheet
+  on a ground with the document's own margins on a tablet, the screen
+  as the sheet on a phone with tables reflowed, the ground dark in the
+  dark and the sheet paper, and the selection, caret, picked picture,
+  note and doubt marks drawn as an editor draws them — photographed in
+  Chromium by `spike/editor-look.mjs` from `EditorLookTest`'s pages.
+  What is left of the look is the app's chrome round it.
 - Type anywhere. Insert, delete, split a paragraph with Return, merge with
   Backspace at a boundary.
 - Select, including across blocks.
