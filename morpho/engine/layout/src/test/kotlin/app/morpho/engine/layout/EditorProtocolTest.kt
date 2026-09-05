@@ -188,12 +188,34 @@ class EditorProtocolTest {
             """{"op":"restyle","kind":"HEADING_9"}""", """{"op":"restyle","listLevel":2.5}""",
             """{"op":"select","anchor":[0,1,2],"focus":[0,1]}""", """{"op":"select","anchor":[0,"a"],"focus":[0,1]}""",
             """{"op":"removeBlock","block":-1}""", """{"op":"type","text":"${"x".repeat(EditorProtocol.MOST_TYPED + 1)}"}""",
+            """{"op":"paste","text":["a"]}""", """{"op":"paste","text":"${"y".repeat(EditorProtocol.MOST_TYPED + 1)}"}""",
+            """{"op":"tab","back":1}""", """{"op":"find","query":""}""".replace("\"query\":\"\"", "\"query\":null"),
+            """{"op":"link","url":7}""", """{"op":"link","url":"https://x","text":false}""",
+            """{"op":"describeImage","block":1.5,"description":"x"}""", """{"op":"describeImage","block":0,"description":["x"]}""",
+            """{"op":"resizeImage","block":0,"widthPt":"wide"}""", """{"op":"resizeImage","block":0,"heightPt":1e9}""",
+            """{"op":"shadeCells","rgb":-1}""", """{"op":"shadeCells","rgb":16777216}""", """{"op":"shadeCells","rgb":"red"}""",
+            """{"op":"ruleTable"}""", """{"op":"ruleTable","ruled":"no"}""", """{"op":"headRow","header":0}""",
+            """{"op":"setColumnWidth","widthPt":-5}""", """{"op":"setColumnWidth"}""",
         )) {
             assertNull(EditorProtocol.operation(bad), "read as an operation: ${bad.take(60)}")
             val step = EditorProtocol.step(state, bad)
             assertSame(state, step.state, "changed something: ${bad.take(60)}")
             assertEquals("refused", reply(step.reply)["error"], bad.take(60))
         }
+    }
+
+    @Test
+    fun `an address the writers cannot vouch for is kept in the document and never written as a link`() {
+        // The editor takes what it is given; the writers decide what goes out, as they do for a document read in.
+        val state = open(p("see here"))
+        val linked = EditorProtocol.step(state.select(Selection(Caret(0, 4), Caret(0, 8))), """{"op":"link","url":"javascript:alert(1)"}""")
+        assertEquals("javascript:alert(1)", (linked.state.document.blocks[0] as Paragraph).runs.last().link)
+        val html = ((reply(linked.reply)["splice"] as Map<*, *>)["blocks"] as List<*>)[0] as String
+        assertTrue(!html.contains("<a "), "not a link in the page: $html")
+        assertTrue(!html.contains("javascript"), html)
+        val typed = EditorProtocol.step(state.at(0, 8), """{"op":"link","url":"file:///etc/passwd","text":" there"}""")
+        val painted = ((reply(typed.reply)["splice"] as Map<*, *>)["blocks"] as List<*>)[0] as String
+        assertTrue(painted.contains("there") && !painted.contains("href"), painted)
     }
 
     @Test
