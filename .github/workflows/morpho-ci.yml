@@ -1,0 +1,200 @@
+name: Morpho CI
+
+# A branch with a pull request open was building everything twice: once
+# for the push and once for the pull request, two jobs each, each
+# resolving the whole dependency graph from scratch because the Gradle
+# cache is read-only anywhere but the default branch. Sixteen commits in
+# an afternoon came to sixty-four resolutions, and Maven Central answered
+# the last of them with 429 Too Many Requests — a build that failed while
+# configuring, before a line of this project was compiled.
+#
+# So push builds the default branch and a pull request builds the rest.
+# Every commit that reaches a pull request is still built and tested
+# exactly once, which is the coverage that was there before; what is gone
+# is the identical second run of it. A branch pushed with no pull request
+# open is not built, which is the one thing this gives up — and opening
+# the pull request builds it.
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "morpho/**"
+      - ".github/workflows/morpho-ci.yml"
+  pull_request:
+    paths:
+      - "morpho/**"
+      - ".github/workflows/morpho-ci.yml"
+
+jobs:
+  engine:
+    name: Engine (JVM) — build & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build and test engine
+        working-directory: morpho/engine
+        run: ./gradlew build
+
+      # The README states how many tests the engine has, and a number kept
+      # by hand goes stale in silence. Three README edits have already been
+      # abandoned half-written for asserting a count that an earlier commit
+      # the same day had moved, and a stale number in the one document that
+      # explains this project is worse than no number. The build counts
+      # them and says so.
+      - name: The README's test count is the number of tests
+        working-directory: morpho
+        run: |
+          set -uo pipefail
+          counted=$(find engine -path '*/build/test-results/test/*.xml' -exec \
+            grep -ho 'tests="[0-9]*"' {} + | grep -o '[0-9]*' | awk '{s+=$1} END {print s+0}')
+          if [ -z "${counted:-}" ] || [ "$counted" = "0" ]; then
+            echo "::error::Found no test results to count. The build layout changed — fix this guard, never skip it."
+            exit 1
+          fi
+          said=$(grep -o '\*\*Engine ([0-9]* tests):\*\*' README.md | grep -o '[0-9]*' || true)
+          if [ -z "$said" ]; then
+            echo "::error::README.md no longer states the engine's test count in the shape this guard reads. Restore it or fix the guard."
+            exit 1
+          fi
+          if [ "$said" != "$counted" ]; then
+            echo "::error::README.md says $said engine tests; the build ran $counted. Update the README."
+            exit 1
+          fi
+          echo "README.md and the build agree: $counted engine tests."
+
+  android:
+    name: Android app — assemble & lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Assemble debug and run lint
+        working-directory: morpho/android
+        run: ./gradlew :app:assembleDebug :app:lintDebug
+
+      # The launch artifact, built on every push: release runs R8 over code
+      # that debug never touches, and a keep rule that is missing there fails
+      # only in the hands of users. Unsigned here — signing needs a keystore
+      # that deliberately lives outside the repository.
+      - name: Assemble release bundle (R8 + resource shrinking)
+        working-directory: morpho/android
+        run: ./gradlew :app:assembleRelease :app:bundleRelease
+
+      # Recognition reads its language models out of the app's own assets at
+      # runtime. Nothing in a build says whether they are still in the
+      # artifact: resource shrinking does not touch assets today, and if a
+      # packaging option, an ABI split or a future tool ever did, the app
+      # would build, install, and fail at the first scan with an
+      # UnsatisfiedLinkError nobody saw coming — only for the people who
+      # installed a release build. An engine test already holds the language
+      # table to the packs in the source tree; this holds the shipped file
+      # to them.
+      - name: The language packs are in the file that ships
+        working-directory: morpho/android
+        run: |
+          set -uo pipefail
+          wanted=$(cd pdf/src/main/assets/tessdata && ls *.traineddata 2>/dev/null)
+          if [ -z "$wanted" ]; then
+            echo "::error::Found no language packs in the source tree to look for. The layout changed — fix this guard, never skip it."
+            exit 1
+          fi
+          bundle=$(find app/build/outputs -name '*.aab' 2>/dev/null | head -n 1)
+          apk=$(find app/build/outputs -name '*release*.apk' 2>/dev/null | head -n 1)
+          artifact="${bundle:-$apk}"
+          if [ -z "$artifact" ]; then
+            echo "::error::Found no release bundle or APK to inspect. The build layout changed — fix this guard, never skip it."
+            exit 1
+          fi
+          echo "Inspecting $artifact"
+          held=$(unzip -Z1 "$artifact" 2>/dev/null | grep -F '.traineddata' || true)
+          missing=""
+          for pack in $wanted; do
+            case "$held" in
+              *"$pack"*) ;;
+              *) missing="$missing $pack" ;;
+            esac
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::The release artifact is missing language packs:$missing. On-device recognition would fail for every scan in those languages, in release builds only. Packs found in the artifact:"
+            echo "$held"
+            exit 1
+          fi
+          echo "Every language pack the app can ask for is in $artifact:"
+          echo "$held"
+
+      # The Zero-Upload guarantee is a product promise, so it is checked by a
+      # machine rather than by memory: the merged manifest is what actually
+      # ships, and it includes every permission any dependency asks for.
+      - name: Zero-Upload guard — no network permission may reach the manifest
+        working-directory: morpho/android
+        run: |
+          set -uo pipefail
+          manifests=$(find app/build/intermediates -name AndroidManifest.xml -path '*merged*' 2>/dev/null || true)
+          if [ -z "$manifests" ]; then
+            manifests=$(find app/build -name AndroidManifest.xml 2>/dev/null || true)
+          fi
+          if [ -z "$manifests" ]; then
+            echo "::error::Zero-Upload guard found no merged manifest to inspect. The build layout changed — fix the guard, never skip it."
+            exit 1
+          fi
+          echo "Inspecting merged manifests:"
+          echo "$manifests"
+          if grep -Hn -E 'android\.permission\.(INTERNET|ACCESS_NETWORK_STATE|ACCESS_WIFI_STATE)' $manifests; then
+            echo "::error::A network permission reached the merged manifest. Morpho converts documents with no network access at all; if a dependency introduced this, remove it in the app manifest with tools:node=\"remove\" or drop the dependency."
+            exit 1
+          fi
+          echo "No network permissions in the merged manifest — the Zero-Upload guarantee holds."
+
+      # The editor's plan (morpho/EDITOR-PLAN.md, "Price one") says script in
+      # a WebView is a posture change to be decided by the owner, not acquired
+      # by a commit. Until it is decided, no WebView in the app may run script
+      # or carry a bridge, and none may read the device's files; when it is,
+      # this guard is what changes — to exactly one file — rather than what is
+      # skipped.
+      - name: Script posture guard — script in the editor's WebView alone, and no WebView reads files
+        working-directory: morpho/android
+        run: |
+          set -uo pipefail
+          editor=app/src/main/kotlin/app/morpho/converter/EditorScreen.kt
+          sources=$(find app/src/main -name '*.kt' 2>/dev/null || true)
+          if [ -z "$sources" ]; then
+            echo "::error::Script posture guard found no sources to inspect. The layout changed — fix the guard, never skip it."
+            exit 1
+          fi
+          if [ ! -f "$editor" ]; then
+            echo "::error::The editor screen moved from $editor. Point the guard at it — never widen the guard to more files."
+            exit 1
+          fi
+          # No WebView anywhere reads the app's files or the device's content.
+          if grep -Hn -E 'allowFileAccess\s*=\s*true|allowContentAccess\s*=\s*true|allowFileAccessFromFileURLs\s*=\s*true|allowUniversalAccessFromFileURLs\s*=\s*true' $sources; then
+            echo "::error::A WebView in the app reads files. No WebView may: every one keeps the four file-access settings false."
+            exit 1
+          fi
+          # Script and a bridge exist in exactly one file: the editor's screen.
+          others=$(printf '%s\n' $sources | grep -v -F "$editor")
+          if [ -n "$others" ] && grep -Hn -E 'javaScriptEnabled\s*=\s*true|addJavascriptInterface' $others; then
+            echo "::error::A WebView outside the editor runs script or carries a bridge. Script is the editor's alone (morpho/EDITOR-PLAN.md, Price one); everything else stays refused."
+            exit 1
+          fi
+          bridges=$(grep -c 'addJavascriptInterface' "$editor" || true)
+          if [ "$bridges" != "1" ]; then
+            echo "::error::The editor's WebView must carry exactly one bridge object; found $bridges addJavascriptInterface calls in $editor."
+            exit 1
+          fi
+          for setting in 'allowFileAccess = false' 'allowContentAccess = false' 'allowFileAccessFromFileURLs = false' 'allowUniversalAccessFromFileURLs = false' 'domStorageEnabled = false'; do
+            if ! grep -q -F "$setting" "$editor"; then
+              echo "::error::The editor's WebView must set '$setting' in $editor — script runs there, so everything else is refused explicitly."
+              exit 1
+            fi
+          done
+          echo "Script runs in the editor's WebView alone, over one bridge, with file access refused everywhere — the script posture holds."

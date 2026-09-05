@@ -1,0 +1,16 @@
+عقد كراء محل تجاري — ملخص البنود الأساسية
+
+يُبرم هذا العقد بين المالك والمكتري لمدة ثلاث سنوات قابلة للتجديد، ويحدَّد
+السومة الكرائية الشهرية في أربعة آلاف درهم تُؤدى في بداية كل شهر.
+
+Résumé en français : le présent contrat de bail commercial est conclu pour
+une durée de trois ans renouvelable. Le loyer mensuel est fixé à quatre
+mille dirhams, payable au début de chaque mois.
+
+يلتزم المكتري بأداء واجبات الماء والكهرباء، وبإرجاع المحل في الحالة التي
+تسلَّمه بها، مع مراعاة الاستعمال العادي المتعارف عليه، وتُرسل الإشعارات إلى العنوان contact@example.com عند الحاجة.
+
+Le locataire prend à sa charge l'eau et l'électricité et s'engage à
+restituer le local dans son état initial, compte tenu de l'usure normale.
+
+في حالة نزاع يُعرض الملف على المحكمة التجارية المختصة بمدينة الدار البيضاء.
