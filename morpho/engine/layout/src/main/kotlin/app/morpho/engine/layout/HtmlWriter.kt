@@ -152,7 +152,7 @@ object HtmlWriter {
         sb.append("<style>").append(CSS).append(pageCss(document.pageSetup, defaultDirection))
             .append(sectionCss(shapes)).append(EDITOR_CSS).append("</style></head><body>\n")
         sb.append("""<div id="doc" contenteditable="true" spellcheck="false">""").append("\n")
-        sb.append(writeBody(document, comments = false))
+        sb.append(writeBody(document))
         sb.append("</div>\n<script>").append(editorScript()).append("</script></body></html>\n")
         return sb.toString()
     }
@@ -169,7 +169,8 @@ object HtmlWriter {
             "#doc td,#doc th{min-width:2em;}" +
             "#doc [data-band]{border-inline-start:4px solid #e0a000;padding-inline-start:8px;margin-inline-start:-12px;}" +
             "#doc [data-band=low]{border-inline-start-color:#d03030;}" +
-            "#doc [data-band].changed{border-inline-start-color:#2a9d4a;}"
+            "#doc [data-band].changed{border-inline-start-color:#2a9d4a;}" +
+            "#doc span.comment-mark::after{content:attr(data-comment);font-size:0.66em;vertical-align:super;color:#b08900;}"
 
     /** The editor's script, kept beside the writer that writes the page it runs in. */
     private fun editorScript(): String =
@@ -721,8 +722,15 @@ object HtmlWriter {
         // a passage is marked once at the end of it and not on every run.
         for (id in about?.endingAt(run).orEmpty()) {
             val number = about?.numberOf(id) ?: continue
-            sb.append("""<sup class="comment-mark" id="comment-mark-$number">""")
-            sb.append("""<a href="#comment-$number">$number</a></sup>""")
+            if (editing.get()) {
+                // In the editor's markup the number is drawn by the page's
+                // style and is not text, so the count of characters the
+                // page and the engine agree on is not thrown off by it.
+                sb.append("""<span class="comment-mark" data-comment="$number" data-id="$id"></span>""")
+            } else {
+                sb.append("""<sup class="comment-mark" id="comment-mark-$number">""")
+                sb.append("""<a href="#comment-$number">$number</a></sup>""")
+            }
         }
     }
 

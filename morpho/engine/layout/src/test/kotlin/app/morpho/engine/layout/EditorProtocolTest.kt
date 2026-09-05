@@ -171,6 +171,34 @@ class EditorProtocolTest {
     }
 
     @Test
+    fun `a note over the bridge marks the words with no text of its own, and renumbers the whole body`() {
+        val state = open(p("see the site now"), p("later words")).select(Selection(Caret(1, 0), Caret(1, 5)))
+        val later = EditorProtocol.step(state, """{"op":"comment","text":"second","author":"R"}""")
+        assertEquals(listOf(Comment(1, "second", "R")), later.state.document.comments)
+        assertEquals(true, reply(later.reply)["all"], "a note renumbers, so the whole body is painted")
+        val body = reply(later.reply)["body"] as String
+        assertTrue(body.contains("""<span class="comment-mark" data-comment="1" data-id="1"></span>"""), body)
+        assertTrue(!body.contains("<sup"), "no text stands for the number: $body")
+        assertTrue(body.contains("""<span class="commented" title="R: second">"""), body)
+        val earlier = EditorProtocol.step(later.state.select(Selection(Caret(0, 4), Caret(0, 12))), """{"op":"comment","text":"first"}""")
+        val renumbered = reply(earlier.reply)["body"] as String
+        assertTrue(renumbered.contains("""data-comment="1" data-id="2"""") && renumbered.contains("""data-comment="2" data-id="1""""), "numbered as the text meets them: $renumbered")
+        val at = reply(EditorProtocol.reply(earlier.state, earlier.state.at(0, 8)))
+        assertEquals(listOf(mapOf("id" to 2.0, "text" to "first", "author" to null)), at["comments"])
+        val stripped = EditorProtocol.step(earlier.state, """{"op":"uncomment","id":2}""")
+        assertEquals(listOf(1), stripped.state.document.comments.map { it.id })
+        assertTrue(!(reply(stripped.reply)["body"] as String).contains("""data-id="2""""))
+        assertNull(EditorProtocol.operation("""{"op":"uncomment","id":0}"""))
+        assertNull(EditorProtocol.operation("""{"op":"comment"}"""))
+        val paged = EditorProtocol.step(state, """{"op":"setPage","widthPt":595,"heightPt":842,"marginTopPt":72,"marginBottomPt":72,"marginLeftPt":60,"marginRightPt":60}""")
+        assertEquals(PageSetup(595f, 842f, 72f, 72f, 60f, 60f), paged.state.document.pageSetup)
+        assertNull(EditorProtocol.operation("""{"op":"setPage","widthPt":595}"""))
+        val described = EditorProtocol.step(state, """{"op":"describeDocument","title":"The paper","author":null}""")
+        assertEquals("The paper", described.state.document.properties.title)
+        assertNull(EditorProtocol.operation("""{"op":"describeDocument","title":7}"""))
+    }
+
+    @Test
     fun `a property set to nothing and a property left out are told apart`() {
         val state = open(Paragraph(listOf(TextRun("the site", link = "https://x", bold = false))))
             .select(Selection(Caret(0, 0), Caret(0, 8)))
@@ -314,7 +342,11 @@ class EditorProtocolTest {
                 """{"op":"ruleTable","ruled":${random.nextBoolean()}}""",
                 """{"op":"headRow","header":${random.nextBoolean()}}""",
                 """{"op":"setColumnWidth","widthPt":${random.nextInt(1, 300)}}""",
-            )[random.nextInt(9)]
+                """{"op":"comment","text":"note ${random.nextInt(9)}"}""",
+                """{"op":"uncomment","id":${random.nextInt(1, 4)}}""",
+                """{"op":"setPage","widthPt":612,"heightPt":792,"marginTopPt":72,"marginBottomPt":72,"marginLeftPt":72,"marginRightPt":72}""",
+                """{"op":"describeDocument","title":${if (random.nextBoolean()) "null" else "\"t\""}}""",
+            )[random.nextInt(13)]
             21 -> """{"op":"mergeCells"}"""
             22 -> """{"op":"splitCell"}"""
             14 -> """{"op":"select","anchor":[${random.nextInt(n)},${random.nextInt(4)},${random.nextInt(-1, 3)},${random.nextInt(-1, 3)},${random.nextInt(-1, 2)}],"focus":[${random.nextInt(n)},${random.nextInt(4)},${random.nextInt(3)},${random.nextInt(3)},0]}"""

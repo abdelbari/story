@@ -420,6 +420,50 @@ class EditorStateTest {
     }
 
     @Test
+    fun `a note is left about the words selected, shown at the caret, and taken off again`() {
+        val state = EditorState.open(doc(p("see the site now"), grid(listOf("a", "b")))).over(0, 4, 0, 12)
+        val noted = state.comment("  check this  ", "R")
+        val runs = (noted.document.blocks[0] as Paragraph).runs
+        assertEquals(listOf("see " to emptyList(), "the site" to listOf(1), " now" to emptyList<Int>()), runs.map { it.text to it.commentIds })
+        assertEquals(listOf(Comment(1, "check this", "R")), noted.document.comments)
+        assertEquals(listOf(Comment(1, "check this", "R")), noted.commentsAt(Caret(0, 6)), "at a character the note is about")
+        assertEquals(emptyList<Comment>(), noted.commentsAt(Caret(0, 2)))
+        assertEquals(noted.selection, state.selection, "the words stay selected")
+        val second = noted.over(0, 0, 0, 6).comment("again")
+        assertEquals(2, second.document.comments.size)
+        assertEquals(listOf(1, 2), second.commentsAt(Caret(0, 6)).map { it.id }, "two notes about one place")
+        val stripped = second.uncomment(1)
+        assertEquals(listOf(Comment(2, "again", null)), stripped.document.comments)
+        assertTrue((stripped.document.blocks[0] as Paragraph).runs.none { 1 in it.commentIds })
+        assertEquals(listOf("see th" to listOf(2), "e site now" to emptyList<Int>()), (stripped.document.blocks[0] as Paragraph).runs.map { it.text to it.commentIds }, "and the runs set alike again are one")
+        assertSame(stripped, stripped.uncomment(1), "gone is gone")
+        val collapsed = state.at(0, 1)
+        assertSame(collapsed, collapsed.comment("nothing selected"))
+        assertSame(state, state.comment("   "))
+        val cells = state.select(Selection(Caret(1, 0, Cell(0, 0, 0)), Caret(1, 0, Cell(0, 1, 0)))).comment("both")
+        assertTrue((cells.document.blocks[1] as Table).rows[0].cells.all { c -> (c.blocks[0] as Paragraph).runs.all { 1 in it.commentIds } })
+        assertEquals(state.document, noted.undo().document)
+    }
+
+    @Test
+    fun `the page is set and the document described, within bounds`() {
+        val state = EditorState.open(doc(p("x")))
+        val set = state.setPage(595f, 842f, 72f, 72f, 60f, 60f)
+        assertEquals(PageSetup(595f, 842f, 72f, 72f, 60f, 60f), set.document.pageSetup)
+        assertSame(set, set.setPage(595f, 842f, 72f, 72f, 60f, 60f))
+        val wild = set.setPage(1f, 1_000_000f, -5f, 9_000f, 10f, 10f).document.pageSetup!!
+        assertEquals(listOf(EditorState.LEAST_PAGE_PT, EditorState.MOST_PAGE_PT, 0f, EditorState.MOST_PAGE_PT / 2), listOf(wild.widthPt, wild.heightPt, wild.marginTopPt, wild.marginBottomPt))
+        val kept = EditorState.open(doc(p("x")).copy(pageSetup = PageSetup(612f, 792f, 72f, 72f, 72f, 72f, headerDistancePt = 36f, firstPageNumber = 3))).setPage(612f, 792f, 50f, 72f, 72f, 72f).document.pageSetup!!
+        assertEquals(36f to 3, kept.headerDistancePt to kept.firstPageNumber, "what the page had of a head's distance and a first number is kept")
+        val described = state.describeDocument(title = Put(" The paper "), author = Put("A. Writer"))
+        assertEquals("The paper" to "A. Writer", described.document.properties.title to described.document.properties.author)
+        val cleared = described.describeDocument(title = Put(null), subject = Put("  "))
+        assertEquals(null to "A. Writer", cleared.document.properties.title to cleared.document.properties.author, "cleared, and left alone")
+        assertSame(described, described.describeDocument(), "nothing said changes nothing")
+        assertEquals(state.document, described.undo().document)
+    }
+
+    @Test
     fun `a table's cells are filled, its rules drawn or not, its head set, and a column made a width`() {
         val state = EditorState.open(doc(grid(listOf("a", "b"), listOf("c", "d")), p("after")))
         val shaded = state.select(Selection(Caret(0, 0, Cell(0, 0, 0)), Caret(0, 0, Cell(0, 1, 0)))).shadeCells(0xFFEE88)

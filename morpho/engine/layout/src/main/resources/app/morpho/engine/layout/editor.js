@@ -13,6 +13,7 @@
   var lastSelection = '';
   var look = {};
   var paragraph = {};
+  var status = {};
   var queue = Promise.resolve();
 
   // The bridge. On the phone it is an object the app gives the page,
@@ -203,10 +204,11 @@
   function tell(reply) {
     look = reply.look || {};
     paragraph = reply.paragraph || {};
+    status = reply;
     if (window.Morpho && typeof window.Morpho.status === 'function') {
       window.Morpho.status(JSON.stringify({
         look: reply.look, paragraph: reply.paragraph, canUndo: reply.canUndo, canRedo: reply.canRedo, modified: reply.modified,
-        cells: reply.cells, canMerge: reply.canMerge, canSplit: reply.canSplit, table: reply.table,
+        cells: reply.cells, canMerge: reply.canMerge, canSplit: reply.canSplit, table: reply.table, comments: reply.comments,
       }));
     }
   }
@@ -353,6 +355,12 @@
     ruleTable: function (ruled) { return op({ op: 'ruleTable', ruled: !!ruled }); },
     headRow: function (header) { return op({ op: 'headRow', header: !!header }); },
     setColumnWidth: function (widthPt) { return op({ op: 'setColumnWidth', widthPt: widthPt }); },
+    comment: function (text, author) { return op(author == null ? { op: 'comment', text: String(text) } : { op: 'comment', text: String(text), author: String(author) }); },
+    uncomment: function (id) { return op({ op: 'uncomment', id: id }); },
+    setPage: function (widthPt, heightPt, top, bottom, left, right) {
+      return op({ op: 'setPage', widthPt: widthPt, heightPt: heightPt, marginTopPt: top, marginBottomPt: bottom, marginLeftPt: left, marginRightPt: right });
+    },
+    describeDocument: function (properties) { return op(Object.assign({ op: 'describeDocument' }, properties)); },
     find: function (query, ignoreCase) {
       return op({ op: 'find', query: query, ignoreCase: !!ignoreCase }).then(function (r) { return r && r.matches ? r.matches : []; });
     },
@@ -395,6 +403,7 @@
     },
     look: function () { return look; },
     paragraph: function () { return paragraph; },
+    status: function () { return status; },
   };
 
   doc.focus();

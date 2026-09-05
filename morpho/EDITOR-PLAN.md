@@ -257,6 +257,11 @@ want splitting).
 - Lists: bullet and numbered, nesting, and the numbering formats the model
   already carries (including `arabicAlpha`, which matters here).
 - Insert and delete blocks; page breaks; links.
+- **Done 5 September, in the engine and the page:** notes (`comment`,
+  `uncomment`), shown as marked words with the number drawn by the
+  page's style and not written as text, every reply naming the notes at
+  the caret; the page set (`setPage`) and the document described
+  (`describeDocument`). The sheets for all three are the app's.
 
 Most of this is model → HTML → model plumbing once Stage 1 stands, because
 `ParagraphStyle` already holds nearly all of it.

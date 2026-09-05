@@ -18,7 +18,7 @@ class EditorPageTest {
 
     private fun document() = DocumentModel(
         listOf(
-            Paragraph(listOf(TextRun("The form "), TextRun("arrives", bold = true), TextRun(" today."))),
+            Paragraph(listOf(TextRun("The form "), TextRun("arrives", bold = true, commentIds = listOf(1)), TextRun(" today."))),
             Paragraph(
                 listOf(TextRun("الاستمارة في البحث العلمي"), TextRun(" and English", italic = true)),
                 ParagraphStyle(direction = TextDirection.RTL),
@@ -40,7 +40,8 @@ class EditorPageTest {
         assertTrue(html.contains("""<div id="doc" contenteditable="true""""), "not editable")
         for (at in 0..3) assertTrue(html.contains("""data-block="$at""""), "block $at is not marked")
         assertTrue(html.contains("window.morphoEditor"), "the script is not in the page")
-        assertFalse(html.contains("""<sup class="comment-mark""""), "a remark's mark is the page's, not the document's, and would throw every offset off")
+        assertFalse(html.contains("""<sup class="comment-mark""""), "a remark's number is drawn by the page's style, not written as text, which would throw every offset off")
+        assertTrue(html.contains("""<span class="comment-mark" data-comment="1" data-id="1"></span>"""), html)
         assertFalse(html.contains("""class="page-header""""), "a running head is not a block an edit can name")
     }
 

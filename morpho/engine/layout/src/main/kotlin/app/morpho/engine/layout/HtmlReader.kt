@@ -441,6 +441,8 @@ object HtmlReader {
             styles["font-family"]?.let { Styles.family(it)?.let { family -> look = look.copy(fontFamily = family) } }
             if (tag !in BLOCKS && tag !in TABLE_PARTS) styles["direction"]?.let { look = look.copy(direction = direction(it)) }
             styles["white-space"]?.lowercase()?.let { if (it.startsWith("pre")) look = look.copy(pre = true) }
+            // This app's own page keeps a tab a stop places out of sight in such a span; it is a tab.
+            if ("data-tab" in attributes) look = look.copy(pre = true)
             return look
         }
 

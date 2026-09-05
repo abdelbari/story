@@ -188,6 +188,20 @@ await p.keyboard.press('Enter'); await p.keyboard.type('item two'); await check(
   assert.equal(await p.evaluate(i => document.querySelectorAll('[data-block]')[i].tagName, first + 1), 'H2');
   await p.keyboard.press('Control+z'); await check('a rich paste undone is one step');
 }
+// A note is left about a selection: the words marked, the number drawn and not written, the note at the caret.
+{
+  const first = (await truth()).texts.findIndex(t => typeof t === 'string');
+  const marked = i => p.evaluate(i => document.querySelectorAll('[data-block]')[i].querySelectorAll('span.commented').length, i);
+  const before = await marked(first);
+  await select([first, 0], [first, 4]); await p.evaluate(() => window.morphoEditor.comment('check this', 'R')); await check('a note left');
+  assert.equal(await marked(first), before + 1, 'the words marked');
+  assert.equal(await p.evaluate(i => document.querySelectorAll('[data-block]')[i].querySelector('span.comment-mark').textContent, first), '', 'the number is not text');
+  await select([first, 2]); await settled();
+  const notes = await p.evaluate(() => window.morphoEditor.status().comments);
+  assert.deepEqual(notes.map(n => n.text), ['check this'], 'the note at the caret');
+  await p.evaluate(id => window.morphoEditor.uncomment(id), notes[0].id); await check('the note taken off');
+  assert.equal(await marked(first), before);
+}
 // A table's cells are filled, its rules taken off, its head set, and a column made a width.
 {
   const tb = (await truth()).texts.findIndex(t => Array.isArray(t) && t.length >= 2);

@@ -67,6 +67,10 @@ object EditorProtocol {
         data class RuleTable(val ruled: Boolean) : Operation
         data class HeadRow(val header: Boolean) : Operation
         data class SetColumnWidth(val widthPt: Float) : Operation
+        data class CommentOn(val text: String, val author: String?) : Operation
+        data class Uncomment(val id: Int) : Operation
+        data class SetPage(val widthPt: Float, val heightPt: Float, val top: Float, val bottom: Float, val left: Float, val right: Float) : Operation
+        data class DescribeDocument(val title: Put<String?>?, val author: Put<String?>?, val subject: Put<String?>?, val keywords: Put<String?>?) : Operation
         data object Count : Operation
         data class Tab(val back: Boolean) : Operation
         data object MergeCells : Operation
@@ -160,6 +164,19 @@ object EditorProtocol {
                 "ruleTable" -> Operation.RuleTable(flag(map, "ruled") ?: return null)
                 "headRow" -> Operation.HeadRow(flag(map, "header") ?: return null)
                 "setColumnWidth" -> Operation.SetColumnWidth(size(map["widthPt"] ?: return null))
+                "comment" -> Operation.CommentOn(typed(map, "text") ?: return null, map["author"]?.let { (it as? String ?: return null).take(200) })
+                "uncomment" -> Operation.Uncomment(whole(map["id"] as? Double ?: return null, 1, Int.MAX_VALUE))
+                "setPage" -> Operation.SetPage(
+                    size(map["widthPt"] ?: return null), size(map["heightPt"] ?: return null),
+                    size(map["marginTopPt"] ?: return null), size(map["marginBottomPt"] ?: return null),
+                    size(map["marginLeftPt"] ?: return null), size(map["marginRightPt"] ?: return null),
+                )
+                "describeDocument" -> Operation.DescribeDocument(
+                    title = put(map, "title") { (it as? String ?: throw Refused()).take(MOST_TYPED) },
+                    author = put(map, "author") { (it as? String ?: throw Refused()).take(MOST_TYPED) },
+                    subject = put(map, "subject") { (it as? String ?: throw Refused()).take(MOST_TYPED) },
+                    keywords = put(map, "keywords") { (it as? String ?: throw Refused()).take(MOST_TYPED) },
+                )
                 "tab" -> Operation.Tab(flag(map, "back") ?: false)
                 "mergeCells" -> Operation.MergeCells
                 "splitCell" -> Operation.SplitCell
@@ -208,6 +225,10 @@ object EditorProtocol {
         is Operation.RuleTable -> state.ruleTable(operation.ruled)
         is Operation.HeadRow -> state.headRow(operation.header)
         is Operation.SetColumnWidth -> state.setColumnWidth(operation.widthPt)
+        is Operation.CommentOn -> state.comment(operation.text, operation.author)
+        is Operation.Uncomment -> state.uncomment(operation.id)
+        is Operation.SetPage -> state.setPage(operation.widthPt, operation.heightPt, operation.top, operation.bottom, operation.left, operation.right)
+        is Operation.DescribeDocument -> state.describeDocument(operation.title, operation.author, operation.subject, operation.keywords)
         is Operation.Tab -> state.tab(operation.back)
         Operation.MergeCells -> state.mergeCells()
         Operation.SplitCell -> state.splitCell()
@@ -256,7 +277,7 @@ object EditorProtocol {
 
     /** What the screen needs to paint [state] from nothing: the whole body. */
     fun opening(state: EditorState): String = Json.write(
-        status(state) + mapOf("all" to true, "body" to HtmlWriter.writeBody(state.document, comments = false)),
+        status(state) + mapOf("all" to true, "body" to HtmlWriter.writeBody(state.document)),
     )
 
     /**
@@ -273,18 +294,21 @@ object EditorProtocol {
         while (tail < was.size - head && tail < now.size - head && was[was.size - 1 - tail] == now[now.size - 1 - tail]) tail++
         val gone = was.subList(head, was.size - tail)
         val come = now.subList(head, now.size - tail)
-        val wholeBody = (gone + come).any { block ->
+        // A note's number is its place among the notes the text meets, so
+        // a note put in or taken out renumbers the ones after it: the
+        // whole body again, as for a list.
+        val wholeBody = before.document.comments != after.document.comments || (gone + come).any { block ->
             block is Paragraph && (block.style.listMarker != null || block.style.sectionSetup != null)
         }
         val painting: Map<String, Any?> = if (wholeBody) {
-            mapOf("all" to true, "body" to HtmlWriter.writeBody(after.document, comments = false))
+            mapOf("all" to true, "body" to HtmlWriter.writeBody(after.document))
         } else {
             mapOf(
                 "all" to false,
                 "splice" to mapOf(
                     "from" to head,
                     "to" to was.size - tail,
-                    "blocks" to come.indices.map { HtmlWriter.writeBlock(after.document, head + it, comments = false) },
+                    "blocks" to come.indices.map { HtmlWriter.writeBlock(after.document, head + it) },
                 ),
             )
         }
@@ -315,6 +339,8 @@ object EditorProtocol {
             "table" to state.tableAt(state.selection.start)?.let {
                 mapOf("ruled" to it.ruled, "headRow" to it.headRow, "shadingRgb" to it.shadingRgb, "columnWidthPt" to it.columnWidthPt)
             },
+            // The notes about the character left of the caret, for the margin.
+            "comments" to state.commentsAt(state.selection.start).map { mapOf("id" to it.id, "text" to it.text, "author" to it.author) },
             "look" to mapOf(
                 "bold" to look.bold,
                 "italic" to look.italic,

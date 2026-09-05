@@ -321,6 +321,41 @@ class EditorState private constructor(
         )
     }
 
+    /**
+     * This document with every run [selection] covers replaced by what
+     * [change] makes of it — split where the selection cuts through a
+     * run, so that setting half a link bold leaves the whole of it a
+     * link — across paragraphs, or across the cells selected, where an
+     * empty cell's placeholder takes the change too, so that typing into
+     * it afterwards takes it. This document itself where nothing changed.
+     */
+    private fun DocumentModel.withRunsIn(selection: Selection, change: (TextRun) -> TextRun): DocumentModel {
+        selectedCellsOf(selection)?.let { selected ->
+            val table = eachParagraphOf(selected) { paragraph ->
+                val runs = ParagraphEdit.merged(paragraph.runs.map(change))
+                paragraph.copy(runs = runs.ifEmpty { emptied(change(lookIn(paragraph.runs, 0))) })
+            }
+            return if (table == selected.table) this else replacing(selected.block, table)
+        }
+        val start = normalisedIn(this, selection.start)
+        val end = normalisedIn(this, selection.end)
+        var doc = this
+        for (at in doc.paragraphsBetween(start, end)) {
+            val paragraph = doc.paragraphAt(at)
+            val length = paragraph.text.length
+            val from = if (at.sameParagraphAs(start)) start.offset else 0
+            val to = if (at.sameParagraphAs(end)) end.offset else length
+            if (from >= to) continue
+            val runs = ParagraphEdit.merged(
+                ParagraphEdit.slice(paragraph.runs, 0, from) +
+                    ParagraphEdit.slice(paragraph.runs, from, to).map(change) +
+                    ParagraphEdit.slice(paragraph.runs, to, length),
+            )
+            doc = doc.replacingAt(at, paragraph.copy(runs = runs))
+        }
+        return doc
+    }
+
     /** The runs, cut to the selection, that [selection] covers, across paragraphs and cells. */
     private fun runsIn(selection: Selection): List<TextRun> {
         selectedCellsOf(selection)?.let { selected ->
@@ -635,34 +670,84 @@ class EditorState private constructor(
     fun format(change: RunChange): EditorState {
         if (change.isEmpty) return this
         if (selection.collapsed) return with(pending = (pending ?: RunChange()).over(change))
-        selectedCellsOf(selection)?.let { selected ->
-            // Every run of every cell selected, an empty cell's placeholder
-            // included, so that typing into it afterwards takes the change.
-            val table = eachParagraphOf(selected) { paragraph ->
-                val runs = ParagraphEdit.merged(paragraph.runs.map(change::applyTo))
-                paragraph.copy(runs = runs.ifEmpty { emptied(change.applyTo(lookIn(paragraph.runs, 0))) })
-            }
-            if (table == selected.table) return this
-            return committed(Change(document.replacing(selected.block, table), origins, selection))
-        }
-        val start = normalised(selection.start)
-        val end = normalised(selection.end)
-        var doc = document
-        for (at in doc.paragraphsBetween(start, end)) {
-            val paragraph = doc.paragraphAt(at)
-            val length = paragraph.text.length
-            val from = if (at.sameParagraphAs(start)) start.offset else 0
-            val to = if (at.sameParagraphAs(end)) end.offset else length
-            if (from >= to) continue
-            val runs = ParagraphEdit.merged(
-                ParagraphEdit.slice(paragraph.runs, 0, from) +
-                    ParagraphEdit.slice(paragraph.runs, from, to).map(change::applyTo) +
-                    ParagraphEdit.slice(paragraph.runs, to, length),
-            )
-            doc = doc.replacingAt(at, paragraph.copy(runs = runs))
-        }
+        val doc = document.withRunsIn(selection, change::applyTo)
         if (doc === document) return this
         return committed(Change(doc, origins, selection))
+    }
+
+    /**
+     * A note left about the words selected, saying [text], signed
+     * [author] where the app knows a name — numbered after every note
+     * the document has, and shown as Word shows one, the words marked
+     * and the note in the margin. Nothing selected, nothing to note.
+     */
+    fun comment(text: String, author: String? = null): EditorState {
+        if (selection.collapsed || text.isBlank()) return this
+        val id = (document.comments.maxOfOrNull { it.id } ?: 0) + 1
+        val doc = document.withRunsIn(selection) { run -> run.copy(commentIds = run.commentIds + id) }
+        if (doc === document) return this
+        val note = Comment(id, text.trim(), author?.trim()?.takeIf { it.isNotEmpty() })
+        return committed(Change(doc.copy(comments = doc.comments + note), origins, selection))
+    }
+
+    /** The note [id] taken off the words it was about, and out of the document. */
+    fun uncomment(id: Int): EditorState {
+        if (document.comments.none { it.id == id }) return this
+        fun strip(blocks: List<Block>): List<Block> = blocks.map { block ->
+            when (block) {
+                is Paragraph -> if (block.runs.any { id in it.commentIds }) {
+                    val runs = ParagraphEdit.merged(block.runs.map { if (id in it.commentIds) it.copy(commentIds = it.commentIds - id) else it })
+                    block.copy(runs = runs.ifEmpty { block.runs })
+                } else block
+                is Table -> block.copy(rows = block.rows.map { row -> row.copy(cells = row.cells.map { cell -> cell.copy(blocks = strip(cell.blocks)) }) })
+                is ImageBlock -> block
+            }
+        }
+        val doc = document.copy(blocks = strip(document.blocks), comments = document.comments.filter { it.id != id })
+        return committed(Change(doc, origins, selection))
+    }
+
+    /** The notes about the character left of [caret], for the margin to show. */
+    fun commentsAt(caret: Caret): List<Comment> {
+        val at = normalised(caret)
+        val ids = lookIn(document.paragraphAt(at).runs, at.offset).commentIds
+        return ids.mapNotNull { id -> document.comments.firstOrNull { it.id == id } }
+    }
+
+    /**
+     * The document set on a page [widthPt] by [heightPt] with the margins
+     * given, what it had of a running head's distance and a first page
+     * number kept. Word's page setup, without the dialog.
+     */
+    fun setPage(widthPt: Float, heightPt: Float, marginTopPt: Float, marginBottomPt: Float, marginLeftPt: Float, marginRightPt: Float): EditorState {
+        val was = document.pageSetup
+        val setup = PageSetup(
+            widthPt = widthPt.coerceIn(LEAST_PAGE_PT, MOST_PAGE_PT),
+            heightPt = heightPt.coerceIn(LEAST_PAGE_PT, MOST_PAGE_PT),
+            marginTopPt = marginTopPt.coerceIn(0f, MOST_PAGE_PT / 2),
+            marginBottomPt = marginBottomPt.coerceIn(0f, MOST_PAGE_PT / 2),
+            marginLeftPt = marginLeftPt.coerceIn(0f, MOST_PAGE_PT / 2),
+            marginRightPt = marginRightPt.coerceIn(0f, MOST_PAGE_PT / 2),
+            headerDistancePt = was?.headerDistancePt,
+            footerDistancePt = was?.footerDistancePt,
+            firstPageNumber = was?.firstPageNumber ?: 1,
+        )
+        if (setup == was) return this
+        return committed(Change(document.copy(pageSetup = setup), origins, selection))
+    }
+
+    /** What the document says of itself — its title, its author, its subject, its keywords — each set, cleared with [Put] of null, or left alone. */
+    fun describeDocument(title: Put<String?>? = null, author: Put<String?>? = null, subject: Put<String?>? = null, keywords: Put<String?>? = null): EditorState {
+        fun String?.tidy() = this?.trim()?.takeIf { it.isNotEmpty() }
+        val was = document.properties
+        val properties = was.copy(
+            title = if (title != null) title.value.tidy() else was.title,
+            author = if (author != null) author.value.tidy() else was.author,
+            subject = if (subject != null) subject.value.tidy() else was.subject,
+            keywords = if (keywords != null) keywords.value.tidy() else was.keywords,
+        )
+        if (properties == was) return this
+        return committed(Change(document.copy(properties = properties), origins, selection))
     }
 
     /** Every paragraph the selection touches set as [change] says. */
@@ -1540,6 +1625,10 @@ class EditorState private constructor(
 
         /** The width of the text on a Letter page with inch margins, for a table that never knew its widths. */
         const val TEXT_WIDTH_PT = 468f
+
+        /** The smallest and the largest a page may be set: an inch, and about six feet. */
+        const val LEAST_PAGE_PT = 72f
+        const val MOST_PAGE_PT = 5_000f
 
         /**
          * A session [saved] earlier, as it was — with nothing to undo,
