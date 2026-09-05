@@ -102,6 +102,8 @@ import com.kinetic.editor.ui.theme.KineticIcons
 import com.kinetic.editor.ui.theme.SectionLabel
 import com.kinetic.editor.ui.theme.Type
 import com.kinetic.editor.ui.theme.ValueSlider
+import com.kinetic.editor.core.model.SpeedCurve
+import com.kinetic.editor.core.model.SpeedPreset
 import com.kinetic.editor.core.model.StickerSpec
 import com.kinetic.editor.core.model.PipSpec
 import com.kinetic.editor.core.model.ChromaKeySpec
@@ -109,6 +111,12 @@ import com.kinetic.editor.core.model.ClipEffect
 import com.kinetic.editor.core.model.MaskShape
 import com.kinetic.editor.core.model.MaskSpec
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import kotlin.math.ln
+import kotlin.math.roundToLong
 
 /**
  * Screen-level wiring. The two LaunchedEffects below are the ENTIRE
@@ -259,6 +267,9 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
             hasSelection = selected != null,
             canDetachAudio = selected?.let { (track, c) ->
                 track.type != TrackType.AUDIO && c.media.hasAudio
+            } == true,
+            canFreeze = selected?.let { (track, c) ->
+                track.type == TrackType.VIDEO_MAIN && c.media.hasVideo && c.freezeMs == 0L
             } == true,
         )
     }
@@ -431,6 +442,7 @@ private fun ToolBar(
     recording: Boolean,
     hasSelection: Boolean,
     canDetachAudio: Boolean,
+    canFreeze: Boolean,
 ) {
     val context = LocalContext.current
     val state by vm.store.timeline.collectAsState()
@@ -500,6 +512,11 @@ private fun ToolBar(
         IconAction(KineticIcons.Split, "Split", enabled = hasSelection) {
             vm.store.selection.value?.let { id ->
                 vm.store.dispatch(EditorIntent.SplitClip(id, viewport.playheadMs))
+            }
+        }
+        IconAction(KineticIcons.Freeze, "Freeze", enabled = canFreeze) {
+            vm.store.selection.value?.let { id ->
+                vm.store.dispatch(EditorIntent.FreezeFrame(id, viewport.playheadMs))
             }
         }
         IconAction(KineticIcons.Duplicate, "Copy", enabled = hasSelection) {
@@ -1043,26 +1060,50 @@ private fun SoundSection(clip: ClipModel, dispatch: (EditorIntent) -> Unit) {
     }
 }
 
-/** The clip itself: how fast it plays, whether its track is heard, how it cuts. */
+/**
+ * The clip itself: how fast it plays, whether its track is heard, how it cuts.
+ *
+ * A freeze has a hold instead of a speed: it is one frame, and how long that
+ * frame stays is the only timing it has.
+ */
 @Composable
 private fun ClipSection(clip: ClipModel, track: Track, dispatch: (EditorIntent) -> Unit) {
-    ChipRow("Speed") {
-        for (speed in floatArrayOf(0.5f, 1f, 2f, 4f)) {
-            Chip("${speed}x", clip.speed == speed) {
-                dispatch(EditorIntent.SetSpeed(clip.id, speed))
+    if (clip.freezeMs > 0L) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Dim.sm)) {
+            ValueSlider("Hold", clip.freezeMs / 1000f, 0.1f..15f, Modifier.weight(1f)) {
+                dispatch(EditorIntent.SetFreezeHold(clip.id, (it * 1000f).roundToLong()))
             }
         }
-        if (track.type == TrackType.AUDIO || track.type == TrackType.VIDEO_MAIN) {
-            ChipBox(
-                active = track.muted,
-                onClick = { dispatch(EditorIntent.SetTrackMuted(track.id, !track.muted)) },
-            ) {
-                Text(
-                    if (track.muted) "Muted" else "Mute",
-                    style = Type.control.copy(color = if (track.muted) Ink.danger else Ink.textMuted),
-                )
+    } else {
+        ChipRow("Speed") {
+            for (speed in floatArrayOf(0.5f, 1f, 2f, 4f)) {
+                Chip("${speed}x", clip.speed == speed) {
+                    dispatch(EditorIntent.SetSpeed(clip.id, speed))
+                }
+            }
+            if (track.type == TrackType.AUDIO || track.type == TrackType.VIDEO_MAIN) {
+                ChipBox(
+                    active = track.muted,
+                    onClick = { dispatch(EditorIntent.SetTrackMuted(track.id, !track.muted)) },
+                ) {
+                    Text(
+                        if (track.muted) "Muted" else "Mute",
+                        style = Type.control.copy(color = if (track.muted) Ink.danger else Ink.textMuted),
+                    )
+                }
             }
         }
+        // A curve shapes the speed above: the chips set the overall rate, the
+        // curve says where within the clip it runs faster or slower.
+        ChipRow("Curve") {
+            Chip("Off", clip.curve == null) { dispatch(EditorIntent.SetSpeedCurve(clip.id, null)) }
+            for (preset in SpeedPreset.entries) {
+                Chip(preset.label, clip.curve == preset.curve) {
+                    dispatch(EditorIntent.SetSpeedCurve(clip.id, preset.curve))
+                }
+            }
+        }
+        clip.curve?.let { CurveGraph(it) }
     }
     // A transition is a cut between neighbours on the main track; nothing else
     // has a cut to sit on.
@@ -1082,6 +1123,38 @@ private fun ClipSection(clip: ClipModel, track: Track, dispatch: (EditorIntent) 
         }
     }
 }
+/**
+ * The curve, drawn: time across, rate up, on a log scale so 0.5x and 2x sit
+ * evenly either side of the 1x line. Read-only; the shape is the preset's.
+ */
+@Composable
+private fun CurveGraph(curve: SpeedCurve) {
+    androidx.compose.foundation.Canvas(
+        Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .padding(horizontal = Dim.xs, vertical = Dim.xs),
+    ) {
+        val lo = ln(0.1f)
+        val hi = ln(10f)
+        fun y(speed: Float) = size.height * (1f - (ln(speed.coerceIn(0.1f, 10f)) - lo) / (hi - lo))
+        drawLine(Ink.hairline, Offset(0f, y(1f)), Offset(size.width, y(1f)), Dim.hair.toPx())
+        val path = Path()
+        val steps = 48
+        for (i in 0..steps) {
+            val t = i / steps.toFloat()
+            val px = t * size.width
+            val py = y(curve.speedAt(t))
+            if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
+        }
+        drawPath(
+            path,
+            Ink.accent,
+            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
+    }
+}
+
 /** Ships in app/src/main/assets — a 64-cube teal/orange film LUT. */
 /**
  * The looks offered as one tap. Each is nothing but preset values of the grade

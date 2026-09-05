@@ -47,14 +47,23 @@ fun transitionWindowsUs(clip: ClipModel, previousTransition: TransitionSpec?): T
     val halfCap = durationUs / 2
 
     // A transition's duration is authored in TIMELINE ms; this clip's own
-    // timestamps run at source rate, so the conversion is * speed.
-    fun halfUs(spec: TransitionSpec?): Long {
-        if (spec == null || spec.type == TransitionType.NONE) return 0L
-        return (spec.durationMs * 500L * clip.speed).roundToLong().coerceIn(0L, halfCap)
+    // timestamps run at source rate, so the conversion goes through the clip's
+    // speed — at the end the half sits on, when that speed is not constant.
+    // A freeze takes no transition: its export frames are not source frames.
+    fun halfUs(spec: TransitionSpec?, atStart: Boolean): Long {
+        if (spec == null || spec.type == TransitionType.NONE || clip.freezeMs > 0L) return 0L
+        val halfMs = spec.durationMs / 2
+        val sourceUs = when {
+            clip.hasConstantSpeed -> (spec.durationMs * 500L * clip.speed).roundToLong()
+            atStart -> clip.timelineToSourceMs(halfMs) * 1_000L
+            else -> (clip.sourceSpanMs -
+                clip.timelineToSourceMs((clip.durationMs - halfMs).coerceAtLeast(0L))) * 1_000L
+        }
+        return sourceUs.coerceIn(0L, halfCap)
     }
 
-    val inHalf = halfUs(previousTransition)
-    val outHalf = halfUs(clip.transitionOut)
+    val inHalf = halfUs(previousTransition, atStart = true)
+    val outHalf = halfUs(clip.transitionOut, atStart = false)
     return TransitionWindowsUs(
         durationUs = durationUs,
         inTypeOrdinal = if (inHalf > 0) previousTransition!!.type.ordinal else 0,
@@ -83,7 +92,7 @@ data class SequenceItemPlan(
 ) {
     /** Timeline duration this item occupies after its (possibly trimmed) head. */
     val timelineDurationMs: Long
-        get() = ((trimOutMs - trimInMs) / clip.speed.toDouble()).roundToLong()
+        get() = clip.timelineSpanMs(trimInMs - clip.trimInMs, trimOutMs - clip.trimInMs)
 }
 
 fun planSequence(placements: List<PlacedClip>): List<SequenceItemPlan> {
@@ -96,7 +105,7 @@ fun planSequence(placements: List<PlacedClip>): List<SequenceItemPlan> {
 
         val overlapMs = cursorMs - startMs
         if (overlapMs > 0) {
-            trimInMs += (overlapMs * clip.speed.toDouble()).roundToLong()
+            trimInMs += clip.timelineToSourceMs(overlapMs)
             startMs = cursorMs
             if (trimInMs >= clip.trimOutMs) continue // fully covered by the previous clip
         }

@@ -225,6 +225,18 @@ object KineticIcons {
         }
     }
 
+    /** Freeze: a frame holding still, with a pause mark inside it. */
+    val Freeze: ImageVector by lazy {
+        icon("Freeze") {
+            stroke {
+                moveTo(3.5f, 5.5f); horizontalLineTo(20.5f); verticalLineTo(18.5f)
+                horizontalLineTo(3.5f); close()
+            }
+            stroke { moveTo(10f, 9f); verticalLineTo(15f) }
+            stroke { moveTo(14f, 9f); verticalLineTo(15f) }
+        }
+    }
+
     /** Backdrop: a frame with a letterboxed picture inside it. */
     val Backdrop: ImageVector by lazy {
         icon("Backdrop") {

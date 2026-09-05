@@ -51,7 +51,7 @@ environment, so the app has not been assembled by Gradle there. Instead:
   the shader on purpose: it catches both a renamed uniform and a syntax error.
 - The pure-logic core (models, reducer, undo store, timeline<->preview mapping,
   shared transition/sequence/PiP planning math, project codec, timeline
-  geometry) runs on the JVM: the 66 tests in `app/src/test` pass under JUnit
+  geometry) runs on the JVM: the 72 tests in `app/src/test` pass under JUnit
   4.13.2, alongside a 58-scenario executable sandbox suite. The harness
   compiles the tests against the real effect classes with only the GL calls
   stubbed out, which is what caught two test call sites that had drifted
@@ -329,7 +329,7 @@ the exporter — the model, the preview and the export path agree on all three.
 | Area | Controls |
 |---|---|
 | Timeline | pinch zoom, momentum scrub, trim, split at playhead, drag-reorder, delete |
-| Clips | speed presets (0.5–4x), per-clip brightness/contrast/saturation, film LUT toggle |
+| Clips | speed presets (0.5–4x) and six **speed curves** (Montage, Hero, Bullet, Jump cut, Flash in, Flash out) on top of them; **freeze frame** at the playhead with an adjustable hold; per-clip brightness/contrast/saturation, film LUT toggle |
 | Transitions | dip-to-black, wipe, zoom-punch on any clip boundary |
 | Audio | music and voiceover lanes, per-clip volume, fade in/out, track mute |
 | Text | editable content (multi-line), four type faces, bold, italic, eight colours, size, position, five entrance animations (cut, fade, pop, rise, type-on), and outline / shadow / backing box for legibility over footage |
@@ -337,7 +337,7 @@ the exporter — the model, the preview and the export path agree on all three.
 | Overlays | picture-in-picture (size, position, rotation, opacity) — every control is the number the export consumes |
 | Looks | ten one-tap filters, plus brightness, contrast, saturation, warmth, **film grain** and **vignette** — a preset is a starting point rather than a mode, because it sets the same fields the sliders edit |
 | Canvas | 9:16, 16:9, 1:1 and 4:5 presets, each fitted, filled (cropped) or stretched — applied by the same `Presentation` in preview and export; letterbox bars black, white, or **the clip itself blurred** behind the picture |
-| Editing | trim, split, move, reorder, duplicate, delete, per-clip speed, detach audio |
+| Editing | trim, split, move, reorder, duplicate, delete, per-clip speed, freeze frame, detach audio |
 | Transform | pan, zoom and rotate the picture inside its frame, on any video clip |
 | Chroma key | green or blue screen with tolerance and edge feather, on any video clip — meant for picture-in-picture, where there is something behind to reveal |
 | Motion | one-tap push in, pull out, pan and drift, or a move of your own: set a start and an end framing and the clip travels between them |
@@ -498,6 +498,40 @@ re-focuses it before the last pass; the small textures are its own, created on
 with the first two passes skipped; black stays with `Presentation`, the proven
 path, and the factory that decides is shared by both pipelines.
 
+### Speed curves and freeze frames
+
+Speed lives in one file now (`core/model/Speed.kt`). A clip's timing is a list
+of *runs* — constant-speed spans of source time — and everything that converts
+between source and timeline time goes through them: the reducer's split, the
+preview's seek mapping and playback rate, the export's `SpeedProvider`, the
+timeline's thumbnail slots, the trim gesture. A constant speed is one run and
+takes a one-line fast path through each function; nothing about an untouched
+clip changed.
+
+A **curve** is a handful of points over the clip's source span, interpolated in
+log space (halfway between 1x and 4x is 2x, not 2.5x), played as 24 equal steps
+of source time at the curve's rate at each midpoint. media3's speed API is
+piecewise-constant, so those steps are exactly what the export plays, and the
+preview sets the player's rate from the same steps at its 10Hz tick. A split
+slices the curve so the rate on either side of the cut is the rate that was
+there. `SpeedRunLookup` is the pure half of the export's `SpeedProvider`, and
+its test pins media3's one surprising rule: the *next* change must be strictly
+after the time asked, because media3 walks changes with `while (next <= now)`
+and an equal answer never ends.
+
+A **freeze** is a clip of its own: the frame under the playhead, one source
+frame long, held for its `freezeMs`, inserted between the two halves of the
+clip it came from — the frame belongs to the second half, so the picture
+resumes from the very frame it held on. The preview plays it as one very slow
+run (a 33ms frame over a 2s hold is a rate of 0.0167), silent, which holds the
+frame with no new machinery. The export does better: `FreezeFrames` decodes the
+held frame to a PNG off the main thread before the render starts, and the
+mapper builds an *image item* from it, which produces real frames at the
+project's rate for the whole hold — so captions animate across it and a
+picture-in-picture keeps moving, as they do on screen. The effect clock and a
+move's progress are scaled by the hold on the preview side so the two agree
+about time. If the frame cannot be read, the slow run renders instead.
+
 ## 5b. Lifecycle
 
 `MainActivity.onStop` → `EditorViewModel.onEnterBackground`, which is the only
@@ -612,6 +646,7 @@ kinetic-editor/
         ├── core/
         │   ├── model/Models.kt          TimelineState, Track, ClipModel, hashes
         │   ├── model/Planning.kt        shared transition/sequence/fade/PiP math
+        │   ├── Speed.kt                 runs, curves, freeze: source<->timeline mapping
         │   ├── model/ProjectCodec.kt    JSON persistence, atomic save, soft decode
         │   ├── model/MediaProbe.kt      import-time metadata probe
         │   └── mvi/                     EditorIntent, reduce(), EditorStore+undo
@@ -627,6 +662,7 @@ kinetic-editor/
         │   ├── ThumbnailEngine.kt · WaveformEngine.kt
         │   ├── CompositionMapper.kt     TimelineState -> Composition
         │   ├── ExportEngine.kt          Transformer flow + ExportWorker
+        │   ├── FreezeFrames.kt          held frames as PNGs for the export's image items
         │   └── MediaStorePublisher.kt   render -> shared Movies collection
         ├── effects/
         │   ├── Shaders.kt               shared GLSL (grade/LUT/transitions/mask/effects, canvas fill)
@@ -683,10 +719,6 @@ Pinned to `media3 = 1.8.0`. If you move:
 
 ## Known scope cuts (deliberate, documented)
 
-- **Speed ramps** are modeled as stepped constant-speed segments (split a clip,
-  set per-segment speeds) — the same rendering strategy CapCut uses for its
-  curve presets. A `SpeedProvider`-based continuous ramp can replace
-  `SpeedChangeEffect` later without touching the model.
 - **True A/B cross-dissolves** need overlapping streams (compositor); the three
   shipped transitions are single-stream by design and export-identical.
 - **Still images as clips** are not supported, and the reason is worth writing
@@ -697,8 +729,9 @@ Pinned to `media3 = 1.8.0`. If you move:
   transform and motion the export would apply to it. Adding images means
   either accepting that the preview stops telling the truth for them, or
   routing them through the video graph separately. It is a real piece of work,
-  not a missing call, and everything downstream of it (freeze frame, photo
-  slideshows) waits on the same decision.
+  not a missing call, and photo slideshows wait on it. Freeze frames do not:
+  the preview holds a frame by playing its one source frame very slowly, and
+  only the export uses an image item (see *Speed curves and freeze frames*).
 - Trim commits currently snap to whole milliseconds on the source frame grid
   (`snapToFrame`); at 29.97/59.94 fps switch the model to µs if you need
   sub-frame-exact conform. The same millisecond model is what `planSequence`

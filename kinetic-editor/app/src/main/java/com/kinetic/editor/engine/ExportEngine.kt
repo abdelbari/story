@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.net.Uri
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Environment
@@ -22,6 +23,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ProjectCodec
 import com.kinetic.editor.core.model.TimelineState
 import kotlinx.coroutines.Dispatchers
@@ -57,7 +59,12 @@ class ExportEngine(private val context: Context) {
      * Runs on Main because Transformer requires a Looper thread — the pipeline
      * itself works on its own internal threads, the Looper only carries callbacks.
      */
-    fun export(state: TimelineState, spec: ExportSpec, outputFile: File): Flow<Event> =
+    fun export(
+        state: TimelineState,
+        spec: ExportSpec,
+        outputFile: File,
+        freezeFrames: Map<ClipId, Uri> = emptyMap(),
+    ): Flow<Event> =
         callbackFlow {
             var finished = false
             val transformer = Transformer.Builder(context)
@@ -90,7 +97,7 @@ class ExportEngine(private val context: Context) {
                 })
                 .build()
 
-            val composition = CompositionMapper.build(context, state, spec)
+            val composition = CompositionMapper.build(context, state, spec, freezeFrames)
             transformer.start(composition, outputFile.absolutePath)
 
             val poller = launch {
@@ -139,11 +146,15 @@ class ExportWorker(
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val outputFile = File(dir, "kinetic_$stamp.mp4")
 
+        // Held frames are decoded here, off the main thread, before the
+        // Transformer is started on it.
+        val freezeFrames = withContext(Dispatchers.IO) { FreezeFrames.extract(applicationContext, state) }
+
         var result: Result = Result.failure()
         // Collect on Main: Transformer's contract, see ExportEngine.export.
         withContext(Dispatchers.Main) {
             ExportEngine(applicationContext)
-                .export(state, spec, outputFile)
+                .export(state, spec, outputFile, freezeFrames)
                 .catch { result = Result.failure(workDataOf(KEY_ERROR to it.message)) }
                 .collect { event ->
                     when (event) {

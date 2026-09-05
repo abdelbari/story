@@ -3,6 +3,7 @@ package com.kinetic.editor.engine
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -19,6 +20,10 @@ import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import com.kinetic.editor.audio.VolumeEnvelopeAudioProcessor
 import com.kinetic.editor.core.model.CanvasFit
+import com.kinetic.editor.core.model.ClipId
+import com.kinetic.editor.core.model.ClipModel
+import com.kinetic.editor.core.model.SpeedRunLookup
+import com.kinetic.editor.core.model.speedRuns
 import com.kinetic.editor.core.model.PipWindow
 import com.kinetic.editor.core.model.pipWindows
 import com.kinetic.editor.core.model.PlacedClip
@@ -33,6 +38,7 @@ import com.kinetic.editor.effects.ClipGradeProvider
 import com.kinetic.editor.effects.GradeGlEffect
 import com.kinetic.editor.effects.canvasFillEffect
 import com.kinetic.editor.effects.PipCompositorSettings
+import kotlin.math.roundToInt
 
 data class ExportSpec(
     val width: Int = 1080,
@@ -68,7 +74,18 @@ data class ExportSpec(
  */
 object CompositionMapper {
 
-    fun build(context: Context, state: TimelineState, spec: ExportSpec): Composition {
+    /**
+     * @param freezeFrames the held frame of each freeze on the main track, as
+     *   [FreezeFrames] extracted it; a freeze without one plays its video item
+     *   very slowly instead (see `speedRuns`), which holds the frame but gives
+     *   the overlays nothing to animate over.
+     */
+    fun build(
+        context: Context,
+        state: TimelineState,
+        spec: ExportSpec,
+        freezeFrames: Map<ClipId, Uri> = emptyMap(),
+    ): Composition {
         val mainPlacements = state.placements(state.mainTrack)
         require(mainPlacements.isNotEmpty()) { "Export requires at least one clip on the main track" }
         val mainDurationMs = mainPlacements.last().endMs
@@ -79,8 +96,10 @@ object CompositionMapper {
         val mainBuilder = EditedMediaItemSequence.Builder()
         var previousTransition: TransitionSpec? = null
         for (placed in mainPlacements) {
+            val frame = if (placed.clip.freezeMs > 0L) freezeFrames[placed.clip.id] else null
             mainBuilder.addItem(
-                mainTrackItem(context, state, spec, placed, previousTransition, lutCache),
+                if (frame != null) freezeItem(context, state, spec, placed.clip, frame, lutCache)
+                else mainTrackItem(context, state, spec, placed, previousTransition, lutCache),
             )
             previousTransition = placed.clip.transitionOut
         }
@@ -159,8 +178,10 @@ object CompositionMapper {
             }
         }
 
-        val removeAudio = track.muted || !clip.media.hasAudio
-        val speed = speedEffects(clip.speed, keepsAudio = !removeAudio)
+        // A freeze without an extracted frame plays here, very slowly and
+        // silently: a frame of sound stretched over seconds is not audio.
+        val removeAudio = track.muted || !clip.media.hasAudio || clip.freezeMs > 0L
+        val speed = speedEffects(clip, headOffsetMs = 0L, keepsAudio = !removeAudio)
 
         val videoEffects = buildList<Effect> {
             add(
@@ -215,6 +236,76 @@ object CompositionMapper {
             .build()
     }
 
+    /**
+     * A freeze frame as media3 renders it best: an image item, which produces
+     * real frames at the project's rate for the whole hold — so captions
+     * animate across it and picture-in-picture keeps moving, exactly as they
+     * do in the preview. Grade, mask and effects apply to those frames as to
+     * any other; there is no speed change and no audio.
+     */
+    private fun freezeItem(
+        context: Context,
+        state: TimelineState,
+        spec: ExportSpec,
+        clip: ClipModel,
+        frame: Uri,
+        lutCache: MutableMap<String, Bitmap?>,
+    ): EditedMediaItem {
+        val holdUs = clip.freezeMs * 1_000L
+        val mediaItem = MediaItem.Builder()
+            .setUri(frame)
+            .setMimeType(MimeTypes.IMAGE_PNG)
+            // The asset loader treats an item as an image only with this set.
+            .setImageDurationMs(clip.freezeMs)
+            .build()
+
+        val lutBitmap = clip.lut?.let { lut ->
+            lutCache.getOrPut(lut.assetPath) {
+                runCatching {
+                    context.assets.open(lut.assetPath).use(BitmapFactory::decodeStream)
+                }.getOrNull()
+            }
+        }
+
+        val videoEffects = buildList<Effect> {
+            add(
+                GradeGlEffect(
+                    ClipGradeProvider(
+                        grade = clip.grade,
+                        chroma = clip.chroma,
+                        transform = clip.transform,
+                        transformEnd = clip.transformEnd,
+                        motion = clip.motion,
+                        // Image frames arrive in timeline time, over the hold.
+                        spanUs = holdUs,
+                        flipX = clip.flipX,
+                        flipY = clip.flipY,
+                        mask = clip.mask,
+                        effect = clip.effect,
+                        effectAmount = clip.effectAmount,
+                        opaque = true,
+                        lutBitmap = lutBitmap,
+                        lutIntensity = clip.lut?.intensity ?: 0f,
+                        transOutType = TransitionType.NONE,
+                        transOutStartUs = 0L,
+                        transOutEndUs = 0L,
+                        transInType = TransitionType.NONE,
+                        transInEndUs = 0L,
+                    ),
+                ),
+            )
+            canvasFillEffect(spec.width, spec.height, state.canvasFit, state.canvasBackground)
+                ?.let(::add)
+            add(presentation(spec, state.canvasFit))
+        }
+
+        return EditedMediaItem.Builder(mediaItem)
+            .setDurationUs(holdUs)
+            .setFrameRate(state.projectFps.roundToInt().coerceAtLeast(1))
+            .setEffects(Effects(/* audioProcessors= */ emptyList(), videoEffects))
+            .build()
+    }
+
     /** The canvas, and how a differently-shaped clip is fitted into it. */
     private fun presentation(spec: ExportSpec, fit: CanvasFit): Presentation =
         Presentation.createForWidthAndHeight(
@@ -236,21 +327,31 @@ object CompositionMapper {
      * pair for exactly this, and documents the plain video effect as the choice
      * "when input has no audio" — which is the split here.
      */
-    private fun speedEffects(speed: Float, keepsAudio: Boolean): SpeedEffects = when {
-        speed == 1f -> SpeedEffects(null, null)
-        keepsAudio -> {
-            val pair = Effects.createExperimentalSpeedChangingEffect(ConstantSpeedProvider(speed))
-            SpeedEffects(pair.first, pair.second)
+    private fun speedEffects(clip: ClipModel, headOffsetMs: Long, keepsAudio: Boolean): SpeedEffects {
+        val lookup = SpeedRunLookup(clip.speedRuns(), headOffsetMs)
+        if (lookup.isConstant && lookup.constantSpeed == 1f) return SpeedEffects(null, null)
+        val provider = RunSpeedProvider(lookup)
+        return when {
+            keepsAudio -> {
+                val pair = Effects.createExperimentalSpeedChangingEffect(provider)
+                SpeedEffects(pair.first, pair.second)
+            }
+            lookup.isConstant -> SpeedEffects(null, SpeedChangeEffect(lookup.constantSpeed))
+            else -> SpeedEffects(null, SpeedChangeEffect(provider))
         }
-        else -> SpeedEffects(null, SpeedChangeEffect(speed))
     }
 
     private class SpeedEffects(val audioProcessor: AudioProcessor?, val videoEffect: Effect?)
 
-    /** One speed for the whole item; the clip is the unit of retiming here. */
-    private class ConstantSpeedProvider(private val speed: Float) : SpeedProvider {
-        override fun getSpeed(timeUs: Long): Float = speed
-        override fun getNextSpeedChangeTimeUs(timeUs: Long): Long = C.TIME_UNSET
+    /**
+     * media3's view of a clip's runs. The rule about the next change being
+     * strictly after the time asked lives in [SpeedRunLookup], where it is
+     * tested; this only translates its "none" into media3's TIME_UNSET.
+     */
+    private class RunSpeedProvider(private val lookup: SpeedRunLookup) : SpeedProvider {
+        override fun getSpeed(timeUs: Long): Float = lookup.speedAtUs(timeUs)
+        override fun getNextSpeedChangeTimeUs(timeUs: Long): Long =
+            lookup.nextChangeUs(timeUs).let { if (it < 0L) C.TIME_UNSET else it }
     }
 
     /**
@@ -292,7 +393,13 @@ object CompositionMapper {
             }
 
             val removeAudio = track.muted || !clip.media.hasAudio
-            val speed = speedEffects(clip.speed, keepsAudio = !removeAudio)
+            // Item-local time starts at the plan's head, which an overlap may
+            // have trimmed into the clip.
+            val speed = speedEffects(
+                clip,
+                headOffsetMs = plan.trimInMs - clip.trimInMs,
+                keepsAudio = !removeAudio,
+            )
 
             val videoEffects = buildList<Effect> {
                 add(
@@ -368,8 +475,9 @@ object CompositionMapper {
             val processors = buildList<AudioProcessor> {
                 // No video on this sequence, so the audio half of the pair stands
                 // alone — the same processor media3's own audio graph uses.
-                if (clip.speed != 1f) {
-                    add(SpeedChangingAudioProcessor(ConstantSpeedProvider(clip.speed)))
+                val lookup = SpeedRunLookup(clip.speedRuns(), plan.trimInMs - clip.trimInMs)
+                if (!(lookup.isConstant && lookup.constantSpeed == 1f)) {
+                    add(SpeedChangingAudioProcessor(RunSpeedProvider(lookup)))
                 }
                 add(VolumeEnvelopeAudioProcessor(clip.volume * track.volume, clip.volumeKeyframes))
             }

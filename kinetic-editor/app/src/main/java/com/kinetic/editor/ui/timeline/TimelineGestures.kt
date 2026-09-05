@@ -17,6 +17,7 @@ import com.kinetic.editor.core.model.ClipModel
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.snapToFrame
+import com.kinetic.editor.core.model.speedAtSourceMs
 import kotlinx.coroutines.CoroutineScope
 import kotlin.math.abs
 import kotlin.math.roundToLong
@@ -225,6 +226,17 @@ private suspend fun AwaitPointerEventScope.trimGesture(
     val fps = clip.media.fps
     val frameMs = if (fps > 0f) (1000f / fps).roundToLong().coerceAtLeast(1L) else 33L
 
+    // A freeze frame is one frame; its length is its hold, set in the inspector.
+    if (clip.freezeMs > 0L) {
+        drag(down.id) { it.consume() }
+        return
+    }
+    // Handle moves in TIMELINE pixels; the source-domain delta scales by the
+    // rate the clip plays at, at the edge being dragged.
+    val rate = clip.speedAtSourceMs(
+        if (hit.edge == TrimEdge.START) 0L else (clip.sourceSpanMs - 1L).coerceAtLeast(0L),
+    ).toDouble()
+
     callbacks.onEditStart()
     viewport.trimming = TrimGhost(clip.id, hit.edge, clip.trimInMs, clip.trimOutMs, placed.startMs)
     var accumPx = 0f
@@ -232,14 +244,13 @@ private suspend fun AwaitPointerEventScope.trimGesture(
     drag(down.id) { change ->
         accumPx += change.positionChange().x
         change.consume()
-        // Handle moves in TIMELINE pixels; the source-domain delta scales by speed.
-        val sourceDeltaMs = (geometry.pxToMs(accumPx) * clip.speed.toDouble()).roundToLong()
+        val sourceDeltaMs = (geometry.pxToMs(accumPx) * rate).roundToLong()
         viewport.trimming = when (hit.edge) {
             TrimEdge.START -> {
                 val tin = (clip.trimInMs + sourceDeltaMs)
                     .snapToFrame(fps)
                     .coerceIn(0L, clip.trimOutMs - frameMs)
-                val startShiftMs = ((tin - clip.trimInMs) / clip.speed.toDouble()).roundToLong()
+                val startShiftMs = ((tin - clip.trimInMs) / rate).roundToLong()
                 TrimGhost(
                     clipId = clip.id,
                     edge = hit.edge,

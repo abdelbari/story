@@ -6,6 +6,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
 import java.util.UUID
+import kotlin.math.exp
+import kotlin.math.ln
 import kotlin.math.roundToLong
 
 /*
@@ -331,6 +333,120 @@ data class StickerSpec(
     val anim: OverlayAnim = OverlayAnim.FADE,
 )
 
+/** One point of a speed curve: at fraction [t] of the clip's source span, play at [speed]. */
+@Serializable
+@Immutable
+data class SpeedPoint(val t: Float, val speed: Float)
+
+/**
+ * A speed that changes across the clip — CapCut's curve speed.
+ *
+ * Points are over the clip's SOURCE span, so a preset keeps its shape whatever
+ * the clip's length, and the speed between points is interpolated in log
+ * space, which is what makes a ramp from 0.5x to 4x feel even rather than
+ * lurch through 2x. Both pipelines play it as [speedRuns]: media3's speed API
+ * is piecewise-constant, and the preview sets the player's rate the same way,
+ * so the two cannot disagree about where a ramp lands.
+ */
+@Serializable
+@Immutable
+data class SpeedCurve(val points: List<SpeedPoint>) {
+
+    /** The rate at fraction [t] of the source span; flat beyond the end points. */
+    fun speedAt(t: Float): Float {
+        if (points.isEmpty()) return 1f
+        if (t <= points.first().t) return points.first().speed
+        if (t >= points.last().t) return points.last().speed
+        for (i in 0 until points.size - 1) {
+            val a = points[i]
+            val b = points[i + 1]
+            if (t >= a.t && t <= b.t) {
+                // Two points at one t are a step; the later one wins from there on.
+                if (b.t <= a.t) return b.speed
+                val f = (t - a.t) / (b.t - a.t)
+                return exp(ln(a.speed) + (ln(b.speed) - ln(a.speed)) * f)
+            }
+        }
+        return points.last().speed
+    }
+
+    /**
+     * The curve between two fractions, re-parametrised to 0..1: what a split
+     * leaves each half, so a cut clip keeps playing exactly as it did.
+     */
+    fun slice(t0: Float, t1: Float): SpeedCurve {
+        val span = t1 - t0
+        if (span <= 0f) return this
+        val inner = points
+            .filter { it.t > t0 && it.t < t1 }
+            .map { SpeedPoint((it.t - t0) / span, it.speed) }
+        return SpeedCurve(
+            listOf(SpeedPoint(0f, speedAt(t0))) + inner + listOf(SpeedPoint(1f, speedAt(t1))),
+        )
+    }
+
+    companion object {
+        /** Steps a curve is played as; see [speedRuns]. */
+        const val RUNS = 24
+    }
+}
+
+/**
+ * The curve shapes offered as one tap. The clip stores the points rather than
+ * the name, so a shape can be adjusted later without the document knowing
+ * what it started as; the inspector recognises a preset by its points.
+ */
+enum class SpeedPreset(val label: String, val curve: SpeedCurve) {
+    MONTAGE(
+        "Montage",
+        SpeedCurve(
+            listOf(
+                SpeedPoint(0f, 1f), SpeedPoint(0.25f, 2.2f), SpeedPoint(0.5f, 0.6f),
+                SpeedPoint(0.75f, 2.2f), SpeedPoint(1f, 1f),
+            ),
+        ),
+    ),
+    HERO(
+        "Hero",
+        SpeedCurve(
+            listOf(
+                SpeedPoint(0f, 1f), SpeedPoint(0.3f, 4f), SpeedPoint(0.5f, 0.4f),
+                SpeedPoint(0.7f, 4f), SpeedPoint(1f, 1f),
+            ),
+        ),
+    ),
+    BULLET(
+        "Bullet",
+        SpeedCurve(
+            listOf(
+                SpeedPoint(0f, 1.5f), SpeedPoint(0.35f, 6f), SpeedPoint(0.5f, 0.3f),
+                SpeedPoint(0.65f, 6f), SpeedPoint(1f, 1.5f),
+            ),
+        ),
+    ),
+    JUMP_CUT(
+        "Jump cut",
+        SpeedCurve(
+            listOf(
+                SpeedPoint(0f, 1f), SpeedPoint(0.45f, 1f), SpeedPoint(0.5f, 8f),
+                SpeedPoint(0.55f, 1f), SpeedPoint(1f, 1f),
+            ),
+        ),
+    ),
+    FLASH_IN(
+        "Flash in",
+        SpeedCurve(
+            listOf(SpeedPoint(0f, 4f), SpeedPoint(0.3f, 4f), SpeedPoint(0.6f, 1f), SpeedPoint(1f, 1f)),
+        ),
+    ),
+    FLASH_OUT(
+        "Flash out",
+        SpeedCurve(
+            listOf(SpeedPoint(0f, 1f), SpeedPoint(0.4f, 1f), SpeedPoint(0.7f, 4f), SpeedPoint(1f, 4f)),
+        ),
+    ),
+}
+
 @Serializable
 @Immutable
 data class ClipModel(
@@ -374,12 +490,24 @@ data class ClipModel(
     val effect: ClipEffect = ClipEffect.NONE,
     /** How strongly [effect] is applied, [0, 1]. Kept when the effect is switched, like a mix knob. */
     val effectAmount: Float = 0.6f,
+    /** A speed that changes across the clip, on top of [speed]. Null plays at [speed] throughout. */
+    val curve: SpeedCurve? = null,
+    /**
+     * Above zero, the clip is a freeze frame: its first frame, held for this
+     * long. The trim window is then a single frame and [durationMs] is this.
+     */
+    val freezeMs: Long = 0L,
 ) {
     /** Source-domain span (what the decoder actually reads). */
     val sourceSpanMs: Long get() = trimOutMs - trimInMs
 
-    /** Timeline-domain duration after speed. */
-    val durationMs: Long get() = (sourceSpanMs / speed.toDouble()).roundToLong()
+    /** Timeline-domain duration after speed; see Speed.kt for the mapping. */
+    val durationMs: Long
+        get() = when {
+            freezeMs > 0L -> freezeMs
+            curve == null -> (sourceSpanMs / speed.toDouble()).roundToLong()
+            else -> sourceToTimelineMs(sourceSpanMs)
+        }
 
     init {
         require(trimOutMs > trimInMs) { "Empty clip: trimOut <= trimIn" }

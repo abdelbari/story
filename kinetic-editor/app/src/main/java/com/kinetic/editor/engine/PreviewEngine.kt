@@ -24,6 +24,9 @@ import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.TransitionSpec
 import com.kinetic.editor.core.model.transitionWindowsUs
 import com.kinetic.editor.core.model.gainAt
+import com.kinetic.editor.core.model.sourceToTimelineMs
+import com.kinetic.editor.core.model.speedAtSourceMs
+import com.kinetic.editor.core.model.timelineToSourceMs
 import com.kinetic.editor.core.model.transformAt
 import com.kinetic.editor.effects.ClipFx
 import com.kinetic.editor.effects.canvasFillEffect
@@ -388,11 +391,17 @@ class PreviewEngine(
         val tl = timelinePositionMs()
         val seg = segments.segmentAtTimeline(tl)
         if (seg != null) {
-            if (player.playbackParameters.speed != seg.speed) {
-                player.playbackParameters = PlaybackParameters(seg.speed)
+            // The rate of the run under the decoder, so a curve ramps and a
+            // freeze holds; a 10Hz tick follows a 24-step curve closely enough.
+            val sourceRelMs = (player.currentPosition - seg.previewStartMs).coerceAtLeast(0L)
+            val rate = seg.clip.speedAtSourceMs(sourceRelMs)
+            if (player.playbackParameters.speed != rate) {
+                player.playbackParameters = PlaybackParameters(rate)
             }
             val clipRelMs = tl - seg.timelineStartMs
-            val gain = if (latestState.mainTrack.muted) 0f
+            // A freeze is silent: its export carries no audio, and its preview
+            // would be one frame of sound stretched over seconds.
+            val gain = if (latestState.mainTrack.muted || seg.clip.freezeMs > 0L) 0f
             else seg.clip.gainAt(clipRelMs) * latestState.mainTrack.volume
             player.volume = gain.coerceIn(0f, 1f)
         }
@@ -455,6 +464,9 @@ class PreviewEngine(
                     mask = clip.mask,
                     effect = clip.effect,
                     effectAmount = clip.effectAmount,
+                    // A freeze's one source frame stands for its whole hold,
+                    // which the export renders as real frames in timeline time.
+                    timeScale = if (clip.freezeMs > 0L) clip.freezeMs * 1_000f / w.durationUs else 1f,
                     grain = clip.grade.grain,
                     vignette = clip.grade.vignette,
                     brightness = clip.grade.brightness,
@@ -488,7 +500,6 @@ class PreviewEngine(
                     timelineEndMs = p.endMs,
                     previewStartMs = previewMs,
                     previewEndMs = previewMs + p.clip.sourceSpanMs,
-                    speed = p.clip.speed,
                     clip = p.clip,
                 ),
             )
@@ -625,14 +636,15 @@ class PreviewEngine(
             }
             val p = placements[idx]
             val clipRelMs = timelineMs - p.startMs
-            val sourcePosMs = (clipRelMs * p.clip.speed).roundToLong()
+            val sourcePosMs = p.clip.timelineToSourceMs(clipRelMs)
             if (player.currentMediaItemIndex != idx) {
                 player.seekTo(idx, sourcePosMs)
             } else if (abs(player.currentPosition - sourcePosMs) > 80) {
                 player.seekTo(idx, sourcePosMs)
             }
-            if (p.clip.speed != player.playbackParameters.speed) {
-                player.playbackParameters = PlaybackParameters(p.clip.speed)
+            val rate = p.clip.speedAtSourceMs(sourcePosMs)
+            if (rate != player.playbackParameters.speed) {
+                player.playbackParameters = PlaybackParameters(rate)
             }
             player.volume =
                 if (t.muted) 0f else (p.clip.gainAt(clipRelMs) * t.volume).coerceIn(0f, 1f)
@@ -648,7 +660,6 @@ internal class Segment(
     val timelineEndMs: Long,
     val previewStartMs: Long,
     val previewEndMs: Long,
-    val speed: Float,
     val clip: com.kinetic.editor.core.model.ClipModel,
 )
 
@@ -674,8 +685,9 @@ internal class PreviewSegments(private val list: List<Segment>) {
     fun timelineToPreviewMs(timelineMs: Long): Long {
         val s = segmentAtTimeline(timelineMs) ?: return 0L
         val rel = (timelineMs - s.timelineStartMs).coerceAtLeast(0L)
-        return (s.previewStartMs + rel * s.speed.toDouble())
-            .roundToLong()
+        // Through the clip's own mapping, so a curve or a freeze seeks to the
+        // frame the timeline actually shows there.
+        return (s.previewStartMs + s.clip.timelineToSourceMs(rel))
             .coerceIn(s.previewStartMs, s.previewEndMs)
     }
 
@@ -695,8 +707,7 @@ internal class PreviewSegments(private val list: List<Segment>) {
         }
         val s = found ?: list.last()
         val rel = (previewMs - s.previewStartMs).coerceAtLeast(0L)
-        return (s.timelineStartMs + rel / s.speed.toDouble())
-            .roundToLong()
+        return (s.timelineStartMs + s.clip.sourceToTimelineMs(rel))
             .coerceIn(s.timelineStartMs, s.timelineEndMs)
     }
 }

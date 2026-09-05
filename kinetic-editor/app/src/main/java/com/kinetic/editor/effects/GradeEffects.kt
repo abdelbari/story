@@ -402,6 +402,10 @@ class PreviewFxProvider : GradeUniformsProvider {
     override fun fill(presentationTimeUs: Long, out: GradeUniformsBuffer) {
         out.reset()
         val seg = timeline.segmentAt(presentationTimeUs) ?: return
+        // Source time since the segment began, scaled for a freeze (see
+        // FxSegment.timeScale); one clock for the move and the effect.
+        val localUs = ((presentationTimeUs - seg.startUs) * seg.timeScale.toDouble()).toLong()
+        val spanUs = ((seg.endUs - seg.startUs) * seg.timeScale.toDouble()).toLong()
         out.brightness = seg.brightness
         out.contrast = seg.contrast
         out.saturation = seg.saturation
@@ -411,16 +415,11 @@ class PreviewFxProvider : GradeUniformsProvider {
         out.setChroma(seg.chroma)
         out.seedGrainAt(presentationTimeUs)
         out.setTransform(
-            transformAt(
-                seg.transform,
-                seg.transformEnd,
-                seg.motion,
-                progressOf(presentationTimeUs - seg.startUs, seg.endUs - seg.startUs),
-            ),
+            transformAt(seg.transform, seg.transformEnd, seg.motion, progressOf(localUs, spanUs)),
         )
         out.setFlip(seg.flipX, seg.flipY)
         out.setMask(seg.mask)
-        out.setEffect(seg.effect, seg.effectAmount, presentationTimeUs - seg.startUs)
+        out.setEffect(seg.effect, seg.effectAmount, localUs)
         // This provider serves the main track only; its surface ignores alpha.
         out.opaque = 1f
         out.lutBitmap = seg.lutBitmap
@@ -503,6 +502,12 @@ class FxSegment(
     val grain: Float,
     val vignette: Float,
     val brightness: Float,
+    /**
+     * Timeline time per unit of this segment's source time: 1 for any clip
+     * whose frames are its own, and hold / frame for a freeze, whose one
+     * source frame is exported as real frames over the whole hold.
+     */
+    val timeScale: Float = 1f,
     val contrast: Float,
     val saturation: Float,
     val temperature: Float,

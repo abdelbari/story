@@ -2,13 +2,17 @@ package com.kinetic.editor.core.mvi
 
 import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.ClipModel
+import com.kinetic.editor.core.model.ClipMotion
 import com.kinetic.editor.core.model.MaskSpec
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TransformSpec
 import com.kinetic.editor.core.model.Track
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.snapToFrame
+import com.kinetic.editor.core.model.sourceToTimelineMs
+import com.kinetic.editor.core.model.timelineToSourceMs
 import kotlinx.collections.immutable.mutate
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
 import kotlin.math.roundToLong
 
@@ -25,6 +29,8 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
     }
     is EditorIntent.MoveClip -> reduceMove(state, intent)
     is EditorIntent.TrimClip -> replaceClip(state, intent.clipId) { c ->
+        // A freeze is one frame; its length is its hold, not a trim.
+        if (c.freezeMs > 0L) return@replaceClip c
         // fps <= 0 (audio-only media, voiceovers): no frame grid to snap to —
         // snapToFrame passes through and a small fixed minimum span applies.
         val fps = c.media.fps
@@ -39,14 +45,23 @@ fun reduce(state: TimelineState, intent: EditorIntent): TimelineState = when (in
             startMs = intent.startMs ?: c.startMs,
             // Envelope times are clip-relative; clamp any keyframe the trim orphaned.
             volumeKeyframes = c.volumeKeyframes
-                .map { kf -> kf.copy(atMs = kf.atMs.coerceAtMost(((tout - tin) / c.speed).toLong())) }
+                .map { kf ->
+                    kf.copy(atMs = kf.atMs.coerceAtMost(c.copy(trimInMs = tin, trimOutMs = tout).durationMs))
+                }
                 .toPersistentList(),
         )
     }
     is EditorIntent.SplitClip -> reduceSplit(state, intent)
     is EditorIntent.SetSpeed -> replaceClip(state, intent.clipId) {
-        it.copy(speed = intent.speed.coerceIn(0.1f, 8f))
+        if (it.freezeMs > 0L) it else it.copy(speed = intent.speed.coerceIn(0.1f, 8f))
     }
+    is EditorIntent.SetSpeedCurve -> replaceClip(state, intent.clipId) {
+        if (it.freezeMs > 0L) it else it.copy(curve = intent.curve)
+    }
+    is EditorIntent.SetFreezeHold -> replaceClip(state, intent.clipId) {
+        if (it.freezeMs <= 0L) it else it.copy(freezeMs = intent.holdMs.coerceIn(MIN_HOLD_MS, MAX_HOLD_MS))
+    }
+    is EditorIntent.FreezeFrame -> reduceFreeze(state, intent)
     is EditorIntent.SetGrade -> replaceClip(state, intent.clipId) { it.copy(grade = intent.grade) }
     is EditorIntent.SetLut -> replaceClip(state, intent.clipId) { it.copy(lut = intent.lut) }
     is EditorIntent.ApplyFilter -> replaceClip(state, intent.clipId) {
@@ -191,6 +206,8 @@ private fun reduceMove(state: TimelineState, intent: EditorIntent.MoveClip): Tim
 private fun reduceSplit(state: TimelineState, intent: EditorIntent.SplitClip): TimelineState {
     val (track, placed) = state.findPlaced(intent.clipId) ?: return state
     val clip = placed.clip
+    // One frame has no inside to cut.
+    if (clip.freezeMs > 0L) return state
     val fps = clip.media.fps.takeIf { it > 0f } ?: 30f
     val frameMs = (1000f / fps).roundToLong().coerceAtLeast(1L)
 
@@ -203,26 +220,10 @@ private fun reduceSplit(state: TimelineState, intent: EditorIntent.SplitClip): T
     if (offsetTimelineMs < frameMs || offsetTimelineMs > clip.durationMs - frameMs) return state
 
     // Map the timeline split point back into the source domain, on the frame grid.
-    val splitSourceMs = (clip.trimInMs + offsetTimelineMs * clip.speed.toDouble())
-        .roundToLong()
+    val splitSourceMs = (clip.trimInMs + clip.timelineToSourceMs(offsetTimelineMs))
         .snapToFrame(fps)
         .coerceIn(clip.trimInMs + frameMs, clip.trimOutMs - frameMs)
-    val splitAtTimeline = ((splitSourceMs - clip.trimInMs) / clip.speed.toDouble()).roundToLong()
-
-    val first = clip.copy(
-        trimOutMs = splitSourceMs,
-        transitionOut = null,
-        volumeKeyframes = clip.volumeKeyframes.filter { it.atMs < splitAtTimeline }.toPersistentList(),
-    )
-    val second = clip.copy(
-        id = ClipId.random(),
-        trimInMs = splitSourceMs,
-        startMs = if (track.type == TrackType.VIDEO_MAIN) 0L else placed.startMs + splitAtTimeline,
-        volumeKeyframes = clip.volumeKeyframes
-            .filter { it.atMs >= splitAtTimeline }
-            .map { it.copy(atMs = it.atMs - splitAtTimeline) }
-            .toPersistentList(),
-    )
+    val (first, second) = splitAtSource(clip, splitSourceMs, track.type, placed.startMs)
 
     return mapTracks(state) { t ->
         if (t.id != track.id) t
@@ -232,6 +233,97 @@ private fun reduceSplit(state: TimelineState, intent: EditorIntent.SplitClip): T
                 if (idx >= 0) {
                     list[idx] = first
                     list.add(idx + 1, second)
+                }
+            },
+        )
+    }
+}
+
+/**
+ * The two clips a cut at [splitSourceMs] leaves, each playing exactly as its
+ * part of the original did: the envelope is rebased, and a speed curve is
+ * sliced so the rate on either side of the cut is the rate that was there.
+ */
+private fun splitAtSource(
+    clip: ClipModel,
+    splitSourceMs: Long,
+    trackType: TrackType,
+    startMs: Long,
+): Pair<ClipModel, ClipModel> {
+    val splitAtTimeline = clip.sourceToTimelineMs(splitSourceMs - clip.trimInMs)
+    val t = (splitSourceMs - clip.trimInMs).toFloat() / clip.sourceSpanMs
+    val first = clip.copy(
+        trimOutMs = splitSourceMs,
+        transitionOut = null,
+        volumeKeyframes = clip.volumeKeyframes.filter { it.atMs < splitAtTimeline }.toPersistentList(),
+        curve = clip.curve?.slice(0f, t),
+    )
+    val second = clip.copy(
+        id = ClipId.random(),
+        trimInMs = splitSourceMs,
+        startMs = if (trackType == TrackType.VIDEO_MAIN) 0L else startMs + splitAtTimeline,
+        volumeKeyframes = clip.volumeKeyframes
+            .filter { it.atMs >= splitAtTimeline }
+            .map { it.copy(atMs = it.atMs - splitAtTimeline) }
+            .toPersistentList(),
+        curve = clip.curve?.slice(t, 1f),
+    )
+    return first to second
+}
+
+private const val MIN_HOLD_MS = 100L
+private const val MAX_HOLD_MS = 15_000L
+
+/**
+ * A freeze frame: the frame under the playhead becomes a clip of its own, one
+ * source frame long and [EditorIntent.FreezeFrame.holdMs] on the timeline,
+ * between the two halves of the clip it came from. The frame belongs to the
+ * second half, so the picture resumes from the very frame it held on.
+ *
+ * Main track only: the export renders a freeze as an image item, and only the
+ * main sequence builds those.
+ */
+private fun reduceFreeze(state: TimelineState, intent: EditorIntent.FreezeFrame): TimelineState {
+    val (track, placed) = state.findPlaced(intent.clipId) ?: return state
+    val clip = placed.clip
+    if (track.type != TrackType.VIDEO_MAIN || !clip.media.hasVideo || clip.freezeMs > 0L) return state
+    val fps = clip.media.fps.takeIf { it > 0f } ?: 30f
+    val frameMs = (1000f / fps).roundToLong().coerceAtLeast(1L)
+    if (clip.sourceSpanMs < frameMs) return state
+
+    val offsetMs = (intent.atTimelineMs - placed.startMs).coerceIn(0L, clip.durationMs)
+    val frameSourceMs = (clip.trimInMs + clip.timelineToSourceMs(offsetMs))
+        .snapToFrame(fps)
+        .coerceIn(clip.trimInMs, (clip.trimOutMs - frameMs).coerceAtLeast(clip.trimInMs))
+
+    val hold = clip.copy(
+        id = ClipId.random(),
+        trimInMs = frameSourceMs,
+        trimOutMs = frameSourceMs + frameMs,
+        freezeMs = intent.holdMs.coerceIn(MIN_HOLD_MS, MAX_HOLD_MS),
+        speed = 1f,
+        curve = null,
+        transitionOut = null,
+        volumeKeyframes = persistentListOf(),
+        // A held frame has no span for a move to run across.
+        motion = ClipMotion.NONE,
+        transformEnd = null,
+    )
+    val pieces = if (frameSourceMs - clip.trimInMs < frameMs) {
+        // At the clip's first frame: the hold goes in front of the whole clip.
+        listOf(hold, clip)
+    } else {
+        val (before, after) = splitAtSource(clip, frameSourceMs, track.type, placed.startMs)
+        listOf(before, hold, after)
+    }
+    return mapTracks(state) { t ->
+        if (t.id != track.id) t
+        else t.copy(
+            clips = t.clips.mutate { list ->
+                val idx = list.indexOfFirst { it.id == clip.id }
+                if (idx >= 0) {
+                    list.removeAt(idx)
+                    list.addAll(idx, pieces)
                 }
             },
         )

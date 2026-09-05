@@ -37,6 +37,7 @@ import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.Track
 import com.kinetic.editor.core.model.TrackType
+import com.kinetic.editor.core.model.timelineToSourceMs
 import com.kinetic.editor.engine.ThumbnailEngine
 import com.kinetic.editor.engine.WaveformEngine
 import kotlinx.collections.immutable.toPersistentList
@@ -294,11 +295,13 @@ private fun DrawScope.drawClip(
             clipRect(rect.left, rect.top, rect.right, rect.bottom) {
                 val slotW = geometry.thumbSlotWidthPx
                 val slots = ceil(rect.width / slotW).toInt()
-                val slotSourceMs = (geometry.pxToMs(slotW) * clip.speed).toLong()
+                // Each slot is a moment on the TIMELINE; the clip's own mapping
+                // says which source frame plays there, curve or freeze included.
+                val slotTimelineMs = geometry.pxToMs(slotW).toLong()
                 for (i in 0 until slots) {
                     val x = rect.left + i * slotW
                     if (x + slotW < 0f || x > size.width) continue
-                    val sourceMs = clip.trimInMs + i * slotSourceMs
+                    val sourceMs = clip.trimInMs + clip.timelineToSourceMs(i * slotTimelineMs)
                     val bmp = thumbnails.peek(clip.media.uri, sourceMs)
                     if (bmp != null) {
                         drawImage(
@@ -311,8 +314,14 @@ private fun DrawScope.drawClip(
                         )
                     }
                 }
-                if (clip.speed != 1f) {
-                    val layout = cachedLabel(cache, measurer, "${clip.speed}x")
+                val badge = when {
+                    clip.freezeMs > 0L -> "hold"
+                    clip.curve != null -> "curve"
+                    clip.speed != 1f -> "${clip.speed}x"
+                    else -> null
+                }
+                if (badge != null) {
+                    val layout = cachedLabel(cache, measurer, badge)
                     drawText(layout, Palette.label, topLeft = Offset(rect.left + 6f, rect.top + 4f))
                 }
             }
@@ -454,14 +463,16 @@ private fun prefetchVisible(
             val clip = placed.clip
             when (track.type) {
                 TrackType.VIDEO_MAIN, TrackType.VIDEO_OVERLAY -> {
-                    val slotSourceMs =
-                        (geometry.pxToMs(geometry.thumbSlotWidthPx) * clip.speed).toLong()
-                            .coerceAtLeast(50L)
-                    var sourceMs = clip.trimInMs
+                    val slotTimelineMs =
+                        geometry.pxToMs(geometry.thumbSlotWidthPx).toLong().coerceAtLeast(50L)
+                    var timelineMs = 0L
                     var guard = 0
-                    while (sourceMs < clip.trimOutMs && guard++ < 64) {
-                        thumbnails.request(clip.media.uri, sourceMs)
-                        sourceMs += slotSourceMs
+                    while (timelineMs < clip.durationMs && guard++ < 64) {
+                        thumbnails.request(
+                            clip.media.uri,
+                            clip.trimInMs + clip.timelineToSourceMs(timelineMs),
+                        )
+                        timelineMs += slotTimelineMs
                     }
                 }
                 TrackType.AUDIO -> waveforms.request(clip.media.uri)

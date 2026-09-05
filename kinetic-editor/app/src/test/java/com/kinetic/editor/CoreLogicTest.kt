@@ -22,7 +22,16 @@ import com.kinetic.editor.core.model.fadeKeyframes
 import com.kinetic.editor.core.model.readFades
 import com.kinetic.editor.core.model.PlacedClip
 import com.kinetic.editor.core.model.ProjectCodec
+import com.kinetic.editor.core.model.SpeedCurve
+import com.kinetic.editor.core.model.SpeedPoint
+import com.kinetic.editor.core.model.SpeedPreset
+import com.kinetic.editor.core.model.SpeedRun
+import com.kinetic.editor.core.model.SpeedRunLookup
 import com.kinetic.editor.core.model.StickerSpec
+import com.kinetic.editor.core.model.sourceToTimelineMs
+import com.kinetic.editor.core.model.speedAtSourceMs
+import com.kinetic.editor.core.model.speedRuns
+import com.kinetic.editor.core.model.timelineToSourceMs
 import com.kinetic.editor.core.model.OverlayAnim
 import com.kinetic.editor.core.model.TextFont
 import com.kinetic.editor.core.model.TextSpec
@@ -976,8 +985,8 @@ class CoreLogicTest {
         val b = clip("b", 3_000)
         val segs = PreviewSegments(
             listOf(
-                Segment(0, 2_000, 0, 4_000, 2f, a),
-                Segment(2_000, 5_000, 4_000, 7_000, 1f, b),
+                Segment(0, 2_000, 0, 4_000, a),
+                Segment(2_000, 5_000, 4_000, 7_000, b),
             ),
         )
         assertEquals(2_000L, segs.timelineToPreviewMs(1_000))
@@ -1247,6 +1256,160 @@ class CoreLogicTest {
         // A change of effects, not of media: the concatenated source must
         // not be rebuilt for it.
         assertEquals(s0.videoStructureHash(), blurred.videoStructureHash())
+    }
+
+
+    @Test
+    fun aConstantSpeedIsOneRunAndACurveIsStepsThatAddUp() {
+        val plain = clip("a", 8_000, speed = 2f)
+        assertEquals(listOf(SpeedRun(0, 8_000, 2f)), plain.speedRuns())
+
+        val curved = plain.copy(curve = SpeedPreset.HERO.curve)
+        val runs = curved.speedRuns()
+        assertEquals(SpeedCurve.RUNS, runs.size)
+        assertEquals(0L, runs.first().sourceStartMs)
+        assertEquals(8_000L, runs.last().sourceEndMs)
+        for (i in 1 until runs.size) assertEquals(runs[i - 1].sourceEndMs, runs[i].sourceStartMs)
+        // The clip's duration is the runs' timeline spans added up — the sum
+        // media3 makes from the very same runs.
+        assertEquals(runs.sumOf { it.timelineSpanMs }, curved.durationMs.toDouble(), 1.0)
+        assertEquals(curved.durationMs, curved.sourceToTimelineMs(8_000))
+        assertNotEquals(plain.durationMs, curved.durationMs)
+        // The curve sits on top of the clip's own speed.
+        assertEquals(2f * SpeedPreset.HERO.curve.speedAt(0.5f / SpeedCurve.RUNS), runs.first().speed, 1e-4f)
+    }
+
+    @Test
+    fun timelineAndSourceMapBothWaysThroughACurve() {
+        val c = clip("a", 6_000).copy(curve = SpeedPreset.FLASH_IN.curve)
+        assertEquals(0L, c.timelineToSourceMs(0))
+        assertEquals(6_000L, c.timelineToSourceMs(c.durationMs))
+        assertEquals(0L, c.sourceToTimelineMs(0))
+        var lastSource = -1L
+        for (tl in 0..c.durationMs step 50) {
+            val source = c.timelineToSourceMs(tl)
+            assertTrue("not monotonic at $tl", source >= lastSource)
+            lastSource = source
+            // Round trip, within the rounding of a run.
+            assertTrue("round trip off at $tl", abs(c.sourceToTimelineMs(source) - tl) <= 2)
+        }
+        // Flash-in is fast first: the first half of the timeline covers more
+        // than half of the source.
+        assertTrue(c.timelineToSourceMs(c.durationMs / 2) > 3_000L)
+        assertEquals(4f, c.speedAtSourceMs(100), 1e-3f)
+        assertEquals(1f, c.speedAtSourceMs(5_900), 1e-3f)
+        // Log interpolation: halfway between 1x and 4x is 2x, not 2.5x.
+        assertEquals(2f, SpeedCurve(listOf(SpeedPoint(0f, 1f), SpeedPoint(1f, 4f))).speedAt(0.5f), 1e-4f)
+    }
+
+    @Test
+    fun aSplitCurvedClipKeepsPlayingAsItDidWithItsCurveSliced() {
+        val c = clip("a", 10_000).copy(curve = SpeedPreset.MONTAGE.curve)
+        val cut = reduce(stateWith(listOf(c)), EditorIntent.SplitClip(c.id, c.durationMs / 2)).mainTrack.clips
+        assertEquals(2, cut.size)
+        assertEquals(cut[0].trimOutMs, cut[1].trimInMs)
+        // Each half's curve is the original's over that half: the rate at the
+        // cut is the same seen from either side, and the far ends are kept.
+        val t = cut[0].trimOutMs / 10_000f
+        val whole = c.curve!!
+        assertEquals(whole.speedAt(t), cut[0].curve!!.speedAt(1f), 1e-4f)
+        assertEquals(whole.speedAt(t), cut[1].curve!!.speedAt(0f), 1e-4f)
+        assertEquals(whole.speedAt(0f), cut[0].curve!!.speedAt(0f), 1e-4f)
+        assertEquals(whole.speedAt(1f), cut[1].curve!!.speedAt(1f), 1e-4f)
+        // Re-quantised into finer steps, the halves add up to the whole within a step.
+        val drift = abs(cut[0].durationMs + cut[1].durationMs - c.durationMs)
+        assertTrue("halves drift by ${drift}ms", drift <= c.durationMs / 50 + 2)
+    }
+
+    @Test
+    fun aFreezeHoldsOneFrameForItsHoldAndSplitsTheClipAroundIt() {
+        val c = clip("a", 10_000)
+        val s = reduce(stateWith(listOf(c)), EditorIntent.FreezeFrame(c.id, 4_000, holdMs = 2_000))
+        val clips = s.mainTrack.clips
+        assertEquals(3, clips.size)
+        val (before, hold, after) = clips
+        assertEquals(4_000L, before.trimOutMs)
+        assertEquals(4_000L, hold.trimInMs)
+        assertEquals(hold.trimInMs + 33L, hold.trimOutMs)
+        assertEquals(2_000L, hold.freezeMs)
+        assertEquals(2_000L, hold.durationMs)
+        // The picture resumes from the very frame it held on.
+        assertEquals(4_000L, after.trimInMs)
+        assertEquals(12_000L, s.durationMs)
+        // One very slow run, so a pipeline without the extracted frame still
+        // holds; and no transition, because its export frames are not source frames.
+        val run = hold.speedRuns().single()
+        assertEquals(33f / 2_000f, run.speed, 1e-6f)
+        val wiped = hold.copy(transitionOut = TransitionSpec(TransitionType.WIPE_LEFT, 500))
+        assertEquals(0L, transitionWindowsUs(wiped, null).outHalfUs)
+        assertEquals(0L, transitionWindowsUs(hold, TransitionSpec(TransitionType.WIPE_LEFT, 500)).inHalfUs)
+
+        // Not twice, not split, not trimmed; the hold is its only timing.
+        assertSame(s, reduce(s, EditorIntent.FreezeFrame(hold.id, 5_000)))
+        assertSame(s, reduce(s, EditorIntent.SplitClip(hold.id, 5_000)))
+        assertSame(s, reduce(s, EditorIntent.TrimClip(hold.id, 4_000, 5_000)))
+        assertEquals(1_500L, reduce(s, EditorIntent.SetFreezeHold(hold.id, 1_500)).mainTrack.clips[1].freezeMs)
+        assertSame(s, reduce(s, EditorIntent.SetFreezeHold(before.id, 1_500)))
+
+        // At the very start, the hold goes in front of the whole clip, which keeps its identity.
+        val front = reduce(stateWith(listOf(c)), EditorIntent.FreezeFrame(c.id, 0)).mainTrack.clips
+        assertEquals(2, front.size)
+        assertTrue(front[0].freezeMs > 0L)
+        assertEquals(c.id, front[1].id)
+        assertEquals(10_000L + 1_500L, front[0].durationMs + front[1].durationMs)
+    }
+
+    @Test
+    fun speedRunLookupSpeaksMedia3sBoundaryRule() {
+        val runs = listOf(SpeedRun(0, 1_000, 1f), SpeedRun(1_000, 2_000, 2f), SpeedRun(2_000, 3_000, 0.5f))
+        val lookup = SpeedRunLookup(runs)
+        assertEquals(1f, lookup.speedAtUs(999_999), 0f)
+        assertEquals(2f, lookup.speedAtUs(1_000_000), 0f)
+        assertEquals(0.5f, lookup.speedAtUs(9_000_000), 0f)
+        // Strictly after: media3 loops while next <= now, and an equal answer never ends.
+        assertEquals(1_000_000L, lookup.nextChangeUs(0))
+        assertEquals(2_000_000L, lookup.nextChangeUs(1_000_000))
+        assertEquals(-1L, lookup.nextChangeUs(2_000_000))
+        // A head-trimmed item starts partway into the clip.
+        val trimmed = SpeedRunLookup(runs, headOffsetMs = 1_500)
+        assertEquals(2f, trimmed.speedAtUs(0), 0f)
+        assertEquals(500_000L, trimmed.nextChangeUs(0))
+        assertEquals(0.5f, trimmed.speedAtUs(500_000), 0f)
+
+        // The duration media3 derives by walking these answers is the clip's own.
+        val c = clip("a", 3_000).copy(curve = SpeedCurve(listOf(SpeedPoint(0f, 1f), SpeedPoint(1f, 4f))))
+        val own = SpeedRunLookup(c.speedRuns())
+        var t = 0L
+        var out = 0.0
+        val end = 3_000_000L
+        while (t < end) {
+            var next = own.nextChangeUs(t)
+            if (next < 0) next = Long.MAX_VALUE
+            out += (minOf(next, end) - t) / own.speedAtUs(t).toDouble()
+            t = next
+        }
+        assertEquals(c.durationMs.toDouble(), out / 1000.0, 1.0)
+    }
+
+    @Test
+    fun curvesAndFreezesRoundTripAndDefaultOff() {
+        val c = clip("a", 5_000)
+        val s0 = stateWith(listOf(c))
+        val json = ProjectCodec.encode(s0)
+        assertFalse(json.contains("curve"))
+        assertFalse(json.contains("freezeMs"))
+        val curved = reduce(s0, EditorIntent.SetSpeedCurve(c.id, SpeedPreset.BULLET.curve))
+        val back = ProjectCodec.decode(ProjectCodec.encode(curved))!!.mainTrack.clips[0]
+        assertEquals(SpeedPreset.BULLET.curve, back.curve)
+        assertEquals(curved.mainTrack.clips[0].durationMs, back.durationMs)
+        // A curve retimes the same source: no rebuild of the concatenated player.
+        assertEquals(s0.videoStructureHash(), curved.videoStructureHash())
+        // The head-trimmed plan of a curved overlay covers exactly what is left of it.
+        val late = clip("y", 4_000, start = 1_000).copy(curve = SpeedPreset.FLASH_OUT.curve)
+        val plans = planSequence(listOf(PlacedClip(clip("x", 2_000), 0), PlacedClip(late, 1_000)))
+        assertEquals(2_000L, plans[1].startMs)
+        assertEquals(late.timelineToSourceMs(1_000), plans[1].trimInMs)
+        assertTrue(abs(plans[1].timelineDurationMs - (late.durationMs - 1_000L)) <= 2L)
     }
 
     @Test

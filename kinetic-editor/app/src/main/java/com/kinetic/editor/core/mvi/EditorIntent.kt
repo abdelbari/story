@@ -11,6 +11,7 @@ import com.kinetic.editor.core.model.LutSpec
 import com.kinetic.editor.core.model.MaskSpec
 import com.kinetic.editor.core.model.MediaRef
 import com.kinetic.editor.core.model.PipSpec
+import com.kinetic.editor.core.model.SpeedCurve
 import com.kinetic.editor.core.model.StickerSpec
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TextSpec
@@ -74,6 +75,24 @@ sealed interface EditorIntent {
     data class SetSpeed(val clipId: ClipId, val speed: Float) : EditorIntent {
         override val coalesceKey get() = "speed:${clipId.value}"
     }
+
+    /** A speed that changes across the clip, or null for a constant one. */
+    data class SetSpeedCurve(val clipId: ClipId, val curve: SpeedCurve?) : EditorIntent
+
+    /** How long a freeze frame holds. Ignored on a clip that is not one. */
+    data class SetFreezeHold(val clipId: ClipId, val holdMs: Long) : EditorIntent {
+        override val coalesceKey get() = "hold:${clipId.value}"
+    }
+
+    /**
+     * Holds the frame under the playhead for [holdMs], as a clip of its own
+     * between the two halves of the clip it came from.
+     */
+    data class FreezeFrame(
+        val clipId: ClipId,
+        val atTimelineMs: Long,
+        val holdMs: Long = 1_500L,
+    ) : EditorIntent
 
     data class SetGrade(val clipId: ClipId, val grade: ColorGradeSpec) : EditorIntent {
         override val coalesceKey get() = "grade:${clipId.value}"
