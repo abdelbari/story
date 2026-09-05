@@ -27,6 +27,7 @@ class EditorPageTest {
             Table(listOf(TableRow(listOf(TableCell(listOf(Paragraph(listOf(TextRun("cell"))))))))),
             Paragraph(listOf(TextRun("last one")), ParagraphStyle(kind = ParagraphKind.HEADING_2)),
             Paragraph(listOf(TextRun("Name:\tvalue")), ParagraphStyle(tabStopsPt = listOf(100f))),
+            ImageBlock(java.util.Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"), "image/png", 1, 1, widthPt = 40f, heightPt = 40f),
         ),
         comments = listOf(Comment(1, "a remark")),
     )

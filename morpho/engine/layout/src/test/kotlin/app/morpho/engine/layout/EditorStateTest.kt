@@ -309,6 +309,51 @@ class EditorStateTest {
     }
 
     @Test
+    fun `a picture is described and sized, and a block that is not one is left alone`() {
+        val wide = ImageBlock(ByteArray(4), "image/png", 200, 100)
+        val state = EditorState.open(doc(p("text"), wide))
+        val described = state.describeImage(1, "  the seal of the faculty ")
+        assertEquals("the seal of the faculty", (described.document.blocks[1] as ImageBlock).description, "trimmed")
+        assertNull((described.describeImage(1, "   ").document.blocks[1] as ImageBlock).description, "blank is none")
+        assertSame(state, state.describeImage(0, "x"), "a paragraph is not described")
+        assertSame(state, state.describeImage(1, null))
+        val sized = state.resizeImage(1, 100f, null)
+        assertEquals(listOf(100f, 50f), (sized.document.blocks[1] as ImageBlock).let { listOf(it.widthPt, it.heightPt) }, "one side given keeps the shape")
+        assertEquals(listOf(300f, 150f), (state.resizeImage(1, null, 150f).document.blocks[1] as ImageBlock).let { listOf(it.widthPt, it.heightPt) })
+        assertEquals(listOf(30f, 40f), (state.resizeImage(1, 30f, 40f).document.blocks[1] as ImageBlock).let { listOf(it.widthPt, it.heightPt) }, "both given are both taken")
+        assertEquals(listOf(null, null), (sized.resizeImage(1, null, null).document.blocks[1] as ImageBlock).let { listOf(it.widthPt, it.heightPt) }, "neither is the writer's choice again")
+        assertEquals(state.document, sized.undo().document)
+        assertEquals(setOf(1), sized.modified)
+    }
+
+    @Test
+    fun `a link is put on the selection, or typed with its words, as one step`() {
+        val state = EditorState.open(doc(p("see the site now"))).over(0, 4, 0, 12)
+        val linked = state.link("https://x")
+        assertEquals(listOf("see " to null, "the site" to "https://x", " now" to null), (linked.document.blocks[0] as Paragraph).runs.map { it.text to it.link })
+        assertEquals(listOf("see the site now" to null), (linked.link(null).document.blocks[0] as Paragraph).runs.map { it.text to it.link }, "and taken off")
+        val typed = EditorState.open(doc(p("see  now"))).at(0, 4).link("https://x", "the site")
+        assertEquals(listOf("see " to null, "the site" to "https://x", " now" to null), (typed.document.blocks[0] as Paragraph).runs.map { it.text to it.link })
+        assertEquals(Selection.at(0, 12), typed.selection, "the caret after the words typed")
+        assertEquals(1, typed.undoDepth)
+        val bare = EditorState.open(doc(p(""))).link("https://x")
+        assertEquals(listOf("https://x" to "https://x"), (bare.document.blocks[0] as Paragraph).runs.map { it.text to it.link }, "no words: the address is the words")
+        val nothing = EditorState.open(doc(p("a"))).at(0, 1)
+        assertSame(nothing, nothing.link(null), "nothing selected, nothing to link, nothing to take off")
+    }
+
+    @Test
+    fun `how much a document says is counted the way Word counts`() {
+        val state = EditorState.open(doc(p("The form  arrives"), grid(listOf("a b", "")), p(r("x"), TextRun("1", superscript = true, note = listOf(p("a note of five words"))))))
+        val count = state.count()
+        assertEquals(6, count.words, "three, two in the cells, one — the note not counted")
+        assertEquals(17 + 3 + 0 + 2, count.characters)
+        assertEquals(14 + 2 + 0 + 2, count.charactersWithoutSpaces)
+        assertEquals(4, count.paragraphs, "the cells' too")
+        assertEquals(1, EditorState.open(doc(p("عَرَبِيّ"))).count().words, "an Arabic word with its vowels is one word")
+    }
+
+    @Test
     fun `how a selection is set is what every run of it shares`() {
         val state = EditorState.open(doc(p(r("plain "), r("bold", bold = true), r("", link = "https://x").copy(image = picture())), p(r("also bold", bold = true, link = "https://x"))))
         assertTrue(state.lookOf(Selection(Caret(0, 6), Caret(0, 10))).bold, "bold alone")

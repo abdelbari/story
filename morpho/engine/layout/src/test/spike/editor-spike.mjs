@@ -151,6 +151,25 @@ await p.keyboard.press('Enter'); await p.keyboard.type('item two'); await check(
   assert.equal(jumped, arabic);
   assert.deepEqual((await truth()).selection, [[arabic, 0], [arabic, 0]]);
 }
+// A picture tapped is told to the app; described and sized over the bridge; a link typed at the caret; the count.
+{
+  await p.evaluate(() => { window.Morpho = { tapped: j => { window.__tapped = JSON.parse(j); } }; });
+  await p.click('p.image img'); await settled();
+  const tapped = await p.evaluate(() => window.__tapped);
+  const image = (await truth()).texts.length - 1;
+  assert.deepEqual(tapped, { kind: 'image', block: image, alt: '' }, 'the tap names the block');
+  await p.evaluate(i => window.morphoEditor.describeImage(i, 'the seal'), image); await check('a picture described');
+  assert.equal(await p.evaluate(() => document.querySelector('p.image img').getAttribute('alt')), 'the seal');
+  await p.evaluate(i => window.morphoEditor.resizeImage(i, 80, null), image); await check('a picture sized');
+  assert.equal(await p.evaluate(() => document.querySelector('p.image img').style.width), '80pt');
+  await p.evaluate(() => { delete window.Morpho; });
+  const first = (await truth()).texts.findIndex(t => typeof t === 'string');
+  await select([first, 0]); await p.evaluate(() => window.morphoEditor.link('https://x', 'Link ')); const linked = await check('a link typed at the caret');
+  assert.deepEqual(linked.selection, [[first, 5], [first, 5]]);
+  assert.equal(await p.evaluate(i => document.querySelectorAll('[data-block]')[i].querySelector('a').getAttribute('href'), first), 'https://x');
+  const count = await p.evaluate(() => window.morphoEditor.count());
+  assert.ok(count.words > 10 && count.paragraphs > 5, 'counted: ' + JSON.stringify(count));
+}
 // Timing: two hundred keystrokes, one round trip each.
 const started = Date.now();
 await p.keyboard.type('abcdefghij'.repeat(20)); await settled();

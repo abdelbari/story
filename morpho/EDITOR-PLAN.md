@@ -280,10 +280,13 @@ Most of this is model → HTML → model plumbing once Stage 1 stands, because
 - The editor's markup keeps every tab a tab stop places, out of sight,
   so a caret in a form's `Name:<tab>value` line is counted right; the
   preview's markup is as it was.
-- Insert an image, resize it, give it alt text — the model has alt text
-  already, and it is the accessibility feature competitors mostly skip.
-  The bytes are the app's to supply, so the operation is the app's to
-  add to the grammar.
+- **Resize an image and give it alt text — done 5 September** in the
+  engine and the page (`describeImage`, `resizeImage`; a tap on a
+  picture is told to the app as `Morpho.tapped`, since a caret cannot
+  stand in one, and the app owns the sheet). Inserting one is still the
+  app's: the bytes are the app's to supply, and `insertBlock` takes an
+  `ImageBlock` in Kotlin without a base64 round trip over the bridge.
+  Links at the caret (`link`) and a word count (`count`) came with it.
 - Keep a table's ruling and column widths through an edit, since the
   reading works hard to recover them: held now for rows and columns.
 

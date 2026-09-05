@@ -46,6 +46,8 @@ class EditorProtocolTest {
             },
             """{"op":"removeBlock","block":3}""" to { it.removeBlock(3) },
             """{"op":"tab"}""" to { it.tab(back = false) },
+            """{"op":"link","url":"https://y","text":"there"}""" to { it.link("https://y", "there") },
+            """{"op":"link","url":null}""" to { it.link(null) },
             """{"op":"tab","back":true}""" to { it.tab(back = true) },
             """{"op":"undo"}""" to { it.undo() },
             """{"op":"redo"}""" to { it.redo() },
@@ -137,6 +139,21 @@ class EditorProtocolTest {
         assertTrue(html.startsWith("""<p data-block="1" data-band="medium">"""), "the band on the block's element: $html")
         assertTrue((reply(EditorProtocol.opening(state))["body"] as String).contains("""<p data-block="0">"""), "and none on a block read for certain")
         assertTrue(!HtmlWriter.write(state.document).contains("data-band"), "the preview says nothing of it")
+    }
+
+    @Test
+    fun `a picture is described and sized over the bridge, and the document counted`() {
+        val state = open(p("one two"), ImageBlock(ByteArray(2), "image/png", 4, 2))
+        val described = EditorProtocol.step(state, """{"op":"describeImage","block":1,"description":"a seal"}""")
+        assertEquals("a seal", (described.state.document.blocks[1] as ImageBlock).description)
+        assertTrue(((reply(described.reply)["splice"] as Map<*, *>)["blocks"] as List<*>).single().toString().contains("""alt="a seal""""))
+        val sized = EditorProtocol.step(state, """{"op":"resizeImage","block":1,"widthPt":100}""")
+        assertEquals(listOf(100f, 50f), (sized.state.document.blocks[1] as ImageBlock).let { listOf(it.widthPt, it.heightPt) })
+        assertNull(EditorProtocol.operation("""{"op":"resizeImage","block":1,"widthPt":-1}"""))
+        assertNull(EditorProtocol.operation("""{"op":"describeImage","block":"1"}"""))
+        val counted = EditorProtocol.step(state, """{"op":"count"}""")
+        assertSame(state, counted.state)
+        assertEquals(mapOf("words" to 2.0, "characters" to 7.0, "charactersWithoutSpaces" to 6.0, "paragraphs" to 1.0), reply(counted.reply)["count"])
     }
 
     @Test
@@ -250,7 +267,13 @@ class EditorProtocolTest {
     private fun operation(random: Random, state: EditorState): String {
         val n = state.document.blocks.size
         return when (random.nextInt(23)) {
-            20 -> """{"op":"tab","back":${random.nextBoolean()}}"""
+            20 -> listOf(
+                """{"op":"tab","back":${random.nextBoolean()}}""",
+                """{"op":"link","url":"https://z","text":"here"}""",
+                """{"op":"describeImage","block":${random.nextInt(n)},"description":"seen"}""",
+                """{"op":"resizeImage","block":${random.nextInt(n)},"widthPt":50}""",
+                """{"op":"count"}""",
+            )[random.nextInt(5)]
             21 -> """{"op":"mergeCells"}"""
             22 -> """{"op":"splitCell"}"""
             14 -> """{"op":"select","anchor":[${random.nextInt(n)},${random.nextInt(4)},${random.nextInt(-1, 3)},${random.nextInt(-1, 3)},${random.nextInt(-1, 2)}],"focus":[${random.nextInt(n)},${random.nextInt(4)},${random.nextInt(3)},${random.nextInt(3)},0]}"""

@@ -955,6 +955,78 @@ class EditorState private constructor(
         }
 
     /**
+     * The picture at [index] given [description] — what it shows, in
+     * words, for a reader who cannot see it — or the description taken
+     * off with null. A block that is not a picture is left alone.
+     */
+    fun describeImage(index: Int, description: String?): EditorState {
+        val image = document.blocks.getOrNull(index) as? ImageBlock ?: return this
+        val described = description?.takeIf { it.isNotBlank() }?.trim()
+        if (described == image.description) return this
+        return committed(Change(document.replacing(index, image.copy(description = described)), origins, selection))
+    }
+
+    /**
+     * The picture at [index] shown [widthPt] by [heightPt] on the page,
+     * or, with both null, at the writer's own choice of size again. A
+     * size given on one side only keeps the picture's shape.
+     */
+    fun resizeImage(index: Int, widthPt: Float?, heightPt: Float?): EditorState {
+        val image = document.blocks.getOrNull(index) as? ImageBlock ?: return this
+        val ratio = if (image.widthPx > 0 && image.heightPx > 0) image.heightPx.toFloat() / image.widthPx else 1f
+        val width = widthPt?.takeIf { it > 0f } ?: heightPt?.takeIf { it > 0f }?.let { it / ratio }
+        val height = heightPt?.takeIf { it > 0f } ?: widthPt?.takeIf { it > 0f }?.let { it * ratio }
+        if (width == image.widthPt && height == image.heightPt) return this
+        return committed(Change(document.replacing(index, image.copy(widthPt = width, heightPt = height)), origins, selection))
+    }
+
+    /**
+     * The selection made a link to [url], or its link taken off with
+     * null — and, with nothing selected, [text] typed and linked, or the
+     * address itself where there is no text, since a link has to have
+     * words to sit on. One step to undo either way.
+     */
+    fun link(url: String?, text: String? = null): EditorState {
+        if (!selection.collapsed) return format(RunChange(link = Put(url)))
+        val words = text?.ifEmpty { null } ?: url ?: return this
+        val at = normalised(selection.start)
+        val typed = type(words)
+        val linked = typed.select(Selection(at, at.copy(offset = at.offset + words.length))).format(RunChange(link = Put(url)))
+        return asOneStep(linked.select(typed.selection))
+    }
+
+    /** How much a document says, for the count at the foot of every word processor's window. */
+    data class Count(val words: Int, val characters: Int, val charactersWithoutSpaces: Int, val paragraphs: Int)
+
+    /**
+     * How much the document says: its words, its characters with and
+     * without the spaces, and its paragraphs, the cells of its tables
+     * included and its notes not, which is how Word counts by default.
+     */
+    fun count(): Count {
+        var words = 0
+        var characters = 0
+        var withoutSpaces = 0
+        var paragraphs = 0
+        fun add(paragraph: Paragraph) {
+            val text = paragraph.text
+            paragraphs++
+            characters += text.codePointCount(0, text.length)
+            withoutSpaces += text.codePoints().filter { !Character.isWhitespace(it) }.count().toInt()
+            words += text.split(Regex("\\s+")).count { it.isNotEmpty() }
+        }
+        fun walk(blocks: List<Block>) {
+            for (block in blocks) when (block) {
+                is Paragraph -> add(block)
+                is Table -> for (row in block.rows) for (cell in row.cells) walk(cell.blocks)
+                is ImageBlock -> {}
+            }
+        }
+        walk(document.blocks)
+        return Count(words, characters, withoutSpaces, paragraphs)
+    }
+
+    /**
      * The block at [index] taken out — the way a table or a picture is
      * deleted, since a caret cannot stand in one to select it.
      */

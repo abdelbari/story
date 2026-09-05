@@ -235,7 +235,7 @@
     queue = queue.then(function () { return send(json); }).then(function (r) {
       var reply;
       try { reply = JSON.parse(r); } catch (e) { return null; }
-      paint(reply, o.op === 'select' || o.op === 'find' || o.op === 'doubtful');
+      paint(reply, o.op === 'select' || o.op === 'find' || o.op === 'doubtful' || o.op === 'count');
       return reply;
     });
     return queue;
@@ -297,6 +297,17 @@
     }
   });
 
+  // A picture tapped is told to the app, which has the sheet for what
+  // it shows and how big it is; a caret cannot stand in one.
+  doc.addEventListener('click', function (ev) {
+    var img = ev.target && ev.target.tagName === 'IMG' ? ev.target : null;
+    var el = img ? blockOf(img) : null;
+    if (!el || !el.classList.contains('image')) return;
+    if (window.Morpho && typeof window.Morpho.tapped === 'function') {
+      window.Morpho.tapped(JSON.stringify({ kind: 'image', block: Number(el.getAttribute('data-block')), alt: img.getAttribute('alt') || '' }));
+    }
+  });
+
   // A keyboard with modifier keys, for a tablet or a desk. Tab is the
   // engine's — between cells, into a list, or a tab — and never the
   // browser's, which would move the focus out of the page.
@@ -329,6 +340,10 @@
     deleteColumn: function () { return op({ op: 'deleteColumn' }); },
     removeBlock: function (block) { return op({ op: 'removeBlock', block: block }); },
     tab: function (back) { return op({ op: 'tab', back: !!back }); },
+    describeImage: function (block, description) { return op({ op: 'describeImage', block: block, description: description == null ? null : String(description) }); },
+    resizeImage: function (block, widthPt, heightPt) { return op({ op: 'resizeImage', block: block, widthPt: widthPt == null ? null : widthPt, heightPt: heightPt == null ? null : heightPt }); },
+    link: function (url, text) { return op({ op: 'link', url: url == null ? null : String(url), text: text == null ? null : String(text) }); },
+    count: function () { return op({ op: 'count' }).then(function (r) { return r && r.count ? r.count : null; }); },
     mergeCells: function () { return op({ op: 'mergeCells' }); },
     splitCell: function () { return op({ op: 'splitCell' }); },
     find: function (query, ignoreCase) {

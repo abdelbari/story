@@ -57,6 +57,10 @@ object EditorProtocol {
         data class InsertColumn(val after: Boolean) : Operation
         data object DeleteColumn : Operation
         data class RemoveBlock(val block: Int) : Operation
+        data class DescribeImage(val block: Int, val description: String?) : Operation
+        data class ResizeImage(val block: Int, val widthPt: Float?, val heightPt: Float?) : Operation
+        data class Link(val url: String?, val text: String?) : Operation
+        data object Count : Operation
         data class Tab(val back: Boolean) : Operation
         data object MergeCells : Operation
         data object SplitCell : Operation
@@ -128,6 +132,20 @@ object EditorProtocol {
                 "insertColumn" -> Operation.InsertColumn(flag(map, "after") ?: true)
                 "deleteColumn" -> Operation.DeleteColumn
                 "removeBlock" -> Operation.RemoveBlock(whole(map["block"] as? Double ?: return null, 0, Int.MAX_VALUE))
+                "describeImage" -> Operation.DescribeImage(
+                    whole(map["block"] as? Double ?: return null, 0, Int.MAX_VALUE),
+                    map["description"]?.let { it as? String ?: return null }?.also { if (it.length > MOST_TYPED) return null },
+                )
+                "resizeImage" -> Operation.ResizeImage(
+                    whole(map["block"] as? Double ?: return null, 0, Int.MAX_VALUE),
+                    map["widthPt"]?.let { size(it) },
+                    map["heightPt"]?.let { size(it) },
+                )
+                "link" -> Operation.Link(
+                    map["url"]?.let { it as? String ?: return null }?.also { if (it.length > MOST_TYPED) return null },
+                    map["text"]?.let { it as? String ?: return null }?.also { if (it.length > MOST_TYPED) return null },
+                )
+                "count" -> Operation.Count
                 "tab" -> Operation.Tab(flag(map, "back") ?: false)
                 "mergeCells" -> Operation.MergeCells
                 "splitCell" -> Operation.SplitCell
@@ -163,6 +181,10 @@ object EditorProtocol {
         is Operation.InsertColumn -> state.insertColumn(operation.after)
         Operation.DeleteColumn -> state.deleteColumn()
         is Operation.RemoveBlock -> state.removeBlock(operation.block)
+        is Operation.DescribeImage -> state.describeImage(operation.block, operation.description)
+        is Operation.ResizeImage -> state.resizeImage(operation.block, operation.widthPt, operation.heightPt)
+        is Operation.Link -> state.link(operation.url, operation.text)
+        Operation.Count -> state
         is Operation.Tab -> state.tab(operation.back)
         Operation.MergeCells -> state.mergeCells()
         Operation.SplitCell -> state.splitCell()
@@ -182,13 +204,16 @@ object EditorProtocol {
      */
     fun step(state: EditorState, json: String): Step {
         val operation = operation(json) ?: return Step(state, Json.write(mapOf("error" to "refused")))
-        if (operation is Operation.Find || operation is Operation.Doubtful) {
+        if (operation is Operation.Find || operation is Operation.Doubtful || operation is Operation.Count) {
             // A question, not an edit: nothing to paint, and what was
             // asked for — the places a word is written, each as a
             // selection the screen can hand back, or the blocks to doubt.
             val painting = mapOf("all" to false, "splice" to mapOf("from" to state.document.blocks.size, "to" to state.document.blocks.size, "blocks" to emptyList<String>()))
             val answer = when (operation) {
                 is Operation.Find -> mapOf("matches" to state.find(operation.query, operation.ignoreCase).take(MOST_MATCHES).map { listOf(caretJson(it.start), caretJson(it.end)) })
+                is Operation.Count -> state.count().let {
+                    mapOf("count" to mapOf("words" to it.words, "characters" to it.characters, "charactersWithoutSpaces" to it.charactersWithoutSpaces, "paragraphs" to it.paragraphs))
+                }
                 else -> mapOf("blocks" to state.doubtful())
             }
             return Step(state, Json.write(status(state) + painting + answer))
