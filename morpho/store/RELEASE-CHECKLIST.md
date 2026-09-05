@@ -263,7 +263,12 @@ Work through, in this order — each exercises a path nothing else covers:
       save the corrected file, confirm the change is in the output.
 - [ ] **Share sheet and Open-with** from Files, Gmail, WhatsApp.
 - [ ] **Rotate the screen** during a conversion and while the save dialog is
-      open. (Process death during the save dialog is a known, documented gap.)
+      open.
+- [ ] **Kill the app behind the save dialog** (Developer options → "Don't
+      keep activities", or swipe it away with the dialog open), then open
+      it again: the conversion must come back converted and waiting to be
+      saved, corrections included; save it, and it must not come back a
+      second time.
 - [ ] **Each of the five languages**, with Arabic checked for full RTL layout.
 - [ ] **Converting part of a document.** "Convert only some pages…" on a
       picked PDF, and again after one is refused as too large: a range like

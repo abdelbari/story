@@ -6,6 +6,7 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.morpho.engine.layout.Autosave
 import app.morpho.engine.layout.DocumentFormats
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.FidelityReport
@@ -23,10 +24,12 @@ import app.morpho.pdf.AndroidOcrReader
 import app.morpho.pdf.AndroidPdfReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -390,6 +393,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             report, now.corrected, now.removed, now.joinable, now.restorable,
             now.splittable, now.splitBlocks,
         )
+        keep()
     }
 
     /**
@@ -489,6 +493,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         // cancelling OCR stops minutes of work nobody is waiting for.
         pickEpoch++
         cancelled.set(true)
+        forget()
         lastReport = null
         edits = null
         lastPreviewHtml = ""
@@ -711,6 +716,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         publish(epoch, ConvertUiState.Converted(outputName, mimeType, output, needsReview(), lastPreviewHtml, lastPreviewPdf))
+        keep()
     }
 
     /**
@@ -998,6 +1004,7 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                     .openOutputStream(target, "wt")
                     ?.use { it.write(bytes) } != null
             }.getOrDefault(false)
+            if (ok) forget()
             _state.value = if (ok) {
                 ConvertUiState.Saved(
                     fileName = pending.suggestedName,
@@ -1007,6 +1014,109 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
                 ConvertUiState.Failed(FailReason.WRITE_ERROR)
             }
         }
+    }
+
+    // ---- the last conversion, kept against the death of the process ----
+
+    /**
+     * Where the last conversion is kept — the app's own files, which
+     * nothing else reads — so that a three-minute recognition is not lost
+     * to the save dialog being open when Android reclaims the app behind
+     * it, which used to be this app's one known and deliberate limitation.
+     */
+    private val kept: File
+        get() = File(getApplication<Application>().filesDir, "autosave.json")
+
+    private var keeping: Job? = null
+    private var keepEpoch = 0
+
+    /**
+     * The last conversion as it stands after the reader's corrections,
+     * written where the process's death does not reach. Corrections come
+     * in runs, and only the last of a run is worth writing.
+     */
+    private fun keep() {
+        val model = edits?.asWritten ?: return
+        val name = outputName
+        val mime = lastMimeType
+        val epoch = ++keepEpoch
+        keeping?.cancel()
+        keeping = viewModelScope.launch(Dispatchers.IO) {
+            delay(400)
+            if (epoch != keepEpoch) return@launch
+            val text = Autosave.write(name, mime, model) ?: return@launch
+            runCatching {
+                // Whole or not at all: written beside, then put in place.
+                val beside = File(kept.path + ".tmp")
+                beside.writeText(text)
+                if (!beside.renameTo(kept)) {
+                    kept.delete()
+                    beside.renameTo(kept)
+                }
+            }
+        }
+    }
+
+    /** Nothing to put back any more: the reader has their file, or a new document. */
+    private fun forget() {
+        keepEpoch++
+        keeping?.cancel()
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                kept.delete()
+                File(kept.path + ".tmp").delete()
+            }
+        }
+    }
+
+    /**
+     * The conversion the last run of the app kept, put back where it was:
+     * converted, previewed, waiting to be saved. Written out again from
+     * the document rather than kept as bytes, since the document is the
+     * truth and a corrected one has to be written again anyway. A file
+     * that is not a conversion this app can read is let go.
+     */
+    private fun restoreKept() {
+        val epoch = pickEpoch
+        lastOperation = ::restoreKept
+        _state.value = ConvertUiState.Converting()
+        viewModelScope.launch(Dispatchers.IO) {
+            val restored = runCatching { Autosave.read(kept.readText()) }.getOrNull()
+            if (restored == null) {
+                runCatching { kept.delete() }
+                publish(epoch, ConvertUiState.Idle)
+                return@launch
+            }
+            // A document shared in while this was read owns the screen now.
+            if (epoch != pickEpoch) return@launch
+            val model = restored.document
+            val markdown = restored.mimeType == MARKDOWN_MIME
+            val write: (DocumentModel) -> ByteArray = { m ->
+                if (markdown) MarkdownWriter.write(m).toByteArray(Charsets.UTF_8) else DocxWriter.toByteArray(m)
+            }
+            outputName = restored.name
+            wantsMarkdown = markdown
+            edits = DocumentEdit(model)
+            lastPreviewHtml = HtmlWriter.write(model, outputName)
+            lastPreviewPdf = previewPages(model)
+            lastWriter = write
+            lastMimeType = restored.mimeType
+            lastReport = FidelityReport.of(model)
+            correctedSinceWrite = false
+            previewIsStale = false
+            val output = runCatching { write(model) }.getOrNull()
+            if (output == null) {
+                publish(epoch, ConvertUiState.Failed(FailReason.WRITE_ERROR))
+                return@launch
+            }
+            publish(epoch, ConvertUiState.Converted(outputName, restored.mimeType, output, needsReview(), lastPreviewHtml, lastPreviewPdf))
+        }
+    }
+
+    init {
+        // Last, after every field above has its value. Whether there is
+        // anything to put back is one cheap question of the file system.
+        if (kept.exists()) restoreKept()
     }
 
     companion object {

@@ -32,8 +32,13 @@ object Json {
     private val LINE_SEPARATOR: Char = 0x2028.toChar()
     private val PARAGRAPH_SEPARATOR: Char = 0x2029.toChar()
 
-    fun parse(text: String): Any? {
-        if (text.length > MOST_LENGTH) throw Malformed("too long")
+    /**
+     * [text] as the value it writes, refused past [mostLength] — the
+     * bound for anything from outside; what the app itself kept may be
+     * read with a wider one.
+     */
+    fun parse(text: String, mostLength: Int = MOST_LENGTH): Any? {
+        if (text.length > mostLength) throw Malformed("too long")
         val reader = Reader(text)
         val value = reader.value(0)
         reader.skipSpace()
