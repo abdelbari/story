@@ -412,3 +412,75 @@ caret where the reply says. Nothing it holds is the document.
 Then hold at the gate and decide between routes A and B on what the two
 spikes actually measured, rather than on what this document expects them
 to.
+
+On route A's fallback, the cheap Stage 0 question — whether a Compose
+rich-text library covers inline styling well enough: as far as is known
+without a device, the libraries in that space (MohamedRejeb's
+`compose-rich-editor`, Halilibo's `richeditor-compose`) hold the whole
+document as one annotated string in one field, which gives selection
+across paragraphs for free and bold, italic, underline, lists and links
+over it — but none holds a table, and a form of merged cells is this
+app's commonest document. So route A's fallback is a lesser editor for
+prose and no editor for the documents the app is for. To be verified on
+Saturday with the libraries' current releases before it is relied on.
+
+## The bridge, exactly
+
+What the app gives the page, and what crosses it. Held by
+`EditorPageTest`: the script asks for exactly these three and reaches
+for nothing else.
+
+- `Morpho.send(json: String): String` — one operation in, its reply
+  out, on the same call. The reply is what `EditorProtocol.step`
+  returns: `EditorProtocol.opening(state)` gives the page its first
+  body, and after that `step(state, json)` for each call, the state kept
+  by the app between calls.
+- `Morpho.status(json: String)` — after every reply, the state at the
+  caret for the toolbar: `look` (bold, italic, underline, strikethrough,
+  superscript, subscript, fontFamily, fontSizePt, colorRgb, highlightRgb,
+  link), `paragraph` (kind, alignment, direction, listMarker,
+  listLevel), `canUndo`, `canRedo`, `modified` (a count), `cells` (the
+  cells selected together, as `[row, column]`), `canMerge`, `canSplit`,
+  `table` (ruled, headRow, shadingRgb, columnWidthPt; null outside one),
+  `comments` (id, text, author; the notes at the caret).
+- `Morpho.tapped(json: String)` — a picture tapped: `{kind: "image",
+  block, alt}`, for the app's sheet.
+
+Every operation is `{"op": name, ...}`; anything else, or any field of
+the wrong kind or past its bound, is refused with `{"error":"refused"}`
+and the document exactly as it was. A caret is `[block, offset]` or, in
+a cell, `[block, offset, row, column, paragraph]`; offsets are UTF-16.
+
+| op | fields |
+|---|---|
+| `select` | `anchor`, `focus` (carets) |
+| `type` | `text` (≤ 200 000 chars) |
+| `paste` | `text`, optional `html` (≤ 2 000 000 chars; read as blocks where it reads as any) |
+| `erase`, `eraseForward`, `split`, `undo`, `redo`, `tab` (`back`?) | — |
+| `format` | any of `bold`, `italic`, `underline`, `strikethrough`, `superscript`, `subscript` (booleans); `fontFamily`, `fontSizePt`, `colorRgb`, `highlightRgb`, `link`, `language` (present-and-null clears) |
+| `restyle` | any of `kind`, `alignment`, `direction`, `listMarker`, `listLevel` (0–8), `listFormat`, the indents and spacings in points, `pageBreakBefore` |
+| `insertTable` | `rows`, `columns` (1–64) |
+| `insertRow` (`below`?), `deleteRow`, `insertColumn` (`after`?), `deleteColumn`, `mergeCells`, `splitCell` | — |
+| `shadeCells` | `rgb` or null |
+| `ruleTable` | `ruled` |
+| `headRow` | `header` |
+| `setColumnWidth` | `widthPt` |
+| `removeBlock` | `block` |
+| `describeImage` | `block`, `description` or null |
+| `resizeImage` | `block`, `widthPt`?, `heightPt`? |
+| `link` | `url` or null, `text`? |
+| `comment` | `text`, `author`? |
+| `uncomment` | `id` |
+| `find` | `query`, `ignoreCase`? — answers `matches`, paints nothing |
+| `replaceAll` | `query`, `replacement`, `ignoreCase`? |
+| `doubtful` | — answers `blocks`, paints nothing |
+| `count` | — answers `count` (words, characters, charactersWithoutSpaces, paragraphs), paints nothing |
+| `setPage` | `widthPt`, `heightPt`, `marginTopPt`, `marginBottomPt`, `marginLeftPt`, `marginRightPt` |
+| `describeDocument` | any of `title`, `author`, `subject`, `keywords` (present-and-null clears) |
+
+A reply carries the status above, plus either `all: true` with `body`
+(the whole body, where a list, a sheet or a note is involved) or
+`splice: {from, to, blocks}` (the blocks from `from` up to `to`
+replaced by `blocks`, rendered), `selection`, and `changed` (the blocks
+the reader has touched). The page's own API on top of all this is
+`window.morphoEditor`, which is what a toolbar calls and a test reads.
