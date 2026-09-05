@@ -5,6 +5,8 @@ import android.view.SurfaceView
 import android.view.TextureView
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,10 +18,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -37,7 +41,11 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.kinetic.editor.core.model.CanvasFit
+import com.kinetic.editor.core.model.ClipId
 import com.kinetic.editor.core.model.PipSpec
+import com.kinetic.editor.core.model.canvasScales
+import com.kinetic.editor.core.mvi.EditorIntent
 import com.kinetic.editor.core.model.TimelineState
 import com.kinetic.editor.core.model.TrackType
 import com.kinetic.editor.core.model.layoutKey
@@ -72,15 +80,36 @@ fun PreviewSurface(
     engine: PreviewEngine,
     state: TimelineState,
     viewport: TimelineViewportState,
+    selection: ClipId?,
+    dispatch: (EditorIntent) -> Unit,
+    onSelect: (ClipId?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val canvasAspect = state.outputWidth.toFloat() / state.outputHeight.toFloat()
+    // Read inside the gesture handlers, which must not restart on every commit
+    // a drag makes: a restart mid-drag would end the drag.
+    val latestState by rememberUpdatedState(state)
+    val latestSelection by rememberUpdatedState(selection)
 
     Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         Box(
             Modifier
                 .aspectRatio(canvasAspect)
-                .align(Alignment.Center),
+                .align(Alignment.Center)
+                // Direct manipulation: drag, pinch and twist the selected
+                // thing on the picture itself. Each event is a small edit,
+                // coalesced by the store into one undo step per gesture.
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, pan, zoom, rotation ->
+                        val id = latestSelection ?: return@detectTransformGestures
+                        manipulate(latestState, id, pan, zoom, rotation, size, dispatch)
+                    }
+                }
+                .pointerInput(Unit) {
+                    detectTapGestures { tap ->
+                        onSelect(overlayAt(latestState, viewport.playheadMs, tap, size))
+                    }
+                },
         ) {
             AndroidView(
                 factory = { ctx -> SurfaceView(ctx).also(engine::attachSurface) },
@@ -296,4 +325,150 @@ private fun PreviewOverlayLayer(
             }
         }
     }
+}
+
+/* ---------------------------- direct manipulation --------------------------- */
+
+/**
+ * Applies one gesture increment to the selected clip: overlays move, scale and
+ * turn about their anchor; a main-track clip's transform pans, zooms and
+ * rotates the picture. Pan is converted from canvas pixels to the NDC the
+ * specs use, y up, and for a transform on into the source frame's own NDC, so
+ * the picture follows the finger exactly however it is fitted.
+ */
+private fun manipulate(
+    state: TimelineState,
+    id: ClipId,
+    pan: Offset,
+    zoom: Float,
+    rotation: Float,
+    size: IntSize,
+    dispatch: (EditorIntent) -> Unit,
+) {
+    val (track, clip) = state.findClip(id) ?: return
+    if (size.width == 0 || size.height == 0) return
+    val dx = pan.x / size.width * 2f
+    val dy = -pan.y / size.height * 2f
+    // Compose reports rotation clockwise-positive; the specs are counter-clockwise.
+    val turn = -rotation
+    clip.text?.let { t ->
+        dispatch(
+            EditorIntent.SetText(
+                id,
+                t.copy(
+                    anchorX = t.anchorX + dx,
+                    anchorY = t.anchorY + dy,
+                    textSizePx = (t.textSizePx * zoom).coerceIn(8f, 400f),
+                ),
+            ),
+        )
+        return
+    }
+    clip.sticker?.let { st ->
+        dispatch(
+            EditorIntent.SetSticker(
+                id,
+                st.copy(
+                    anchorX = st.anchorX + dx,
+                    anchorY = st.anchorY + dy,
+                    scale = st.scale * zoom,
+                    rotationDeg = st.rotationDeg + turn,
+                ),
+            ),
+        )
+        return
+    }
+    clip.pip?.let { pip ->
+        dispatch(
+            EditorIntent.SetPip(
+                id,
+                pip.copy(
+                    anchorX = pip.anchorX + dx,
+                    anchorY = pip.anchorY + dy,
+                    scale = pip.scale * zoom,
+                    rotationDeg = pip.rotationDeg + turn,
+                ),
+            ),
+        )
+        return
+    }
+    if (track.type == TrackType.VIDEO_MAIN && clip.media.hasVideo) {
+        // Canvas NDC -> source-frame NDC: a picture letterboxed to a third of
+        // the canvas's height must move three times as far in its own frame
+        // to keep up with the finger.
+        val scales = canvasScales(clip.media.width, clip.media.height, state.outputWidth, state.outputHeight)
+        val (sx, sy) = when (state.canvasFit) {
+            CanvasFit.FIT -> scales.fitX to scales.fitY
+            CanvasFit.FILL -> scales.fillX to scales.fillY
+            CanvasFit.STRETCH -> 1f to 1f
+        }
+        val t = clip.transform
+        dispatch(
+            EditorIntent.SetTransform(
+                id,
+                t.copy(
+                    offsetX = t.offsetX + dx * sx,
+                    offsetY = t.offsetY + dy * sy,
+                    scale = t.scale * zoom,
+                    rotationDeg = wrapDegrees(t.rotationDeg + turn),
+                ),
+            ),
+        )
+    }
+}
+
+/** Keeps a twist that passes 180 going, where the reducer's clamp would pin it. */
+private fun wrapDegrees(deg: Float): Float {
+    var d = deg % 360f
+    if (d > 180f) d -= 360f
+    if (d < -180f) d += 360f
+    return d
+}
+
+/**
+ * The overlay under a tap, topmost first, or null for the picture. Boxes are
+ * the ones the layer above draws, with a caption's measured by a rule of
+ * thumb: hit-testing wants a generous target, not a typographer's.
+ */
+private fun overlayAt(state: TimelineState, timeMs: Long, tap: Offset, size: IntSize): ClipId? {
+    val w = size.width.toFloat()
+    val h = size.height.toFloat()
+    if (w <= 0f || h <= 0f) return null
+    val scale = w / state.outputWidth
+    fun hit(anchorX: Float, anchorY: Float, boxW: Float, boxH: Float): Boolean {
+        val cx = (anchorX * 0.5f + 0.5f) * w
+        val cy = (-anchorY * 0.5f + 0.5f) * h
+        return kotlin.math.abs(tap.x - cx) <= boxW / 2f && kotlin.math.abs(tap.y - cy) <= boxH / 2f
+    }
+    // Text and stickers sit above picture-in-picture, so they are asked first.
+    for (type in listOf(TrackType.TEXT, TrackType.STICKER, TrackType.VIDEO_OVERLAY)) {
+        for (track in state.tracks) {
+            if (track.type != type) continue
+            for (p in state.placements(track).asReversed()) {
+                if (timeMs !in p) continue
+                val clip = p.clip
+                val found = when {
+                    clip.text != null -> {
+                        val lines = clip.text.text.split('\n')
+                        val em = clip.text.textSizePx * scale
+                        hit(
+                            clip.text.anchorX, clip.text.anchorY,
+                            em * 0.6f * (lines.maxOfOrNull { it.length } ?: 1).coerceAtLeast(1),
+                            em * 1.3f * lines.size,
+                        )
+                    }
+                    clip.sticker != null ->
+                        hit(clip.sticker.anchorX, clip.sticker.anchorY, w * clip.sticker.scale, w * clip.sticker.scale)
+                    clip.pip != null -> {
+                        val boxW = w * clip.pip.scale
+                        val aspect = clip.media.width.toFloat() / clip.media.height.coerceAtLeast(1)
+                        hit(clip.pip.anchorX, clip.pip.anchorY, boxW, if (aspect > 0f) boxW / aspect else h * clip.pip.scale)
+                    }
+                    else -> false
+                }
+                if (found) return clip.id
+            }
+        }
+    }
+    return null
 }

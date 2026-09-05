@@ -71,7 +71,12 @@ data class LutSpec(
     val intensity: Float = 1f,   // [0, 1]
 )
 
-enum class TransitionType { NONE, DIP_TO_BLACK, WIPE_LEFT, ZOOM_PUNCH }
+/**
+ * The cuts. Ordinals are the shader's transition ids, so new ones go on the
+ * end; every one is single-stream (see Shaders.kt), so it works inside one
+ * sequence with no second decoder.
+ */
+enum class TransitionType { NONE, DIP_TO_BLACK, WIPE_LEFT, ZOOM_PUNCH, DIP_TO_WHITE, BLUR, SPIN, PUSH, GLITCH }
 
 @Serializable
 @Immutable

@@ -216,7 +216,15 @@ fun EditorScreen(vm: EditorViewModel = viewModel()) {
             // this the bottom tool row sits under the navigation bar.
             .windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
-        PreviewSurface(vm.preview, state, viewport, Modifier.fillMaxWidth().weight(1f))
+        PreviewSurface(
+            engine = vm.preview,
+            state = state,
+            viewport = viewport,
+            selection = selection,
+            dispatch = vm.store::dispatch,
+            onSelect = vm.store::select,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+        )
 
         (playbackError ?: notice)?.let { message ->
             Text(

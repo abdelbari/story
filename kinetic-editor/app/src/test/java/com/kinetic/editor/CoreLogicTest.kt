@@ -1003,6 +1003,15 @@ class CoreLogicTest {
         assertEquals(1, TransitionType.DIP_TO_BLACK.ordinal)
         assertEquals(2, TransitionType.WIPE_LEFT.ordinal)
         assertEquals(3, TransitionType.ZOOM_PUNCH.ordinal)
+        assertEquals(8, TransitionType.GLITCH.ordinal)
+        // Every cut but NONE has a branch keyed on its ordinal; a type added
+        // to the enum without one would silently render as a plain cut.
+        for (type in TransitionType.entries.drop(1)) {
+            assertTrue(
+                "${type.name} has no shader branch",
+                EditorShaders.FRAGMENT.contains("abs(tr - ${type.ordinal}.0)"),
+            )
+        }
 
         val buf = GradeUniformsBuffer()
         val p = exportProvider(opaque = true, grade = ColorGradeSpec(brightness = 0.2f))

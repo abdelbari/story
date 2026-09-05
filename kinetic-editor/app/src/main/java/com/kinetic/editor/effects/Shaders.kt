@@ -27,8 +27,9 @@ void main() {
 }
 """
 
-    // Transition type ids, mirrored in Kotlin (TransitionType.ordinal).
-    // 0 = none, 1 = dip-to-black, 2 = wipe-left, 3 = zoom-punch.
+    // Transition type ids, mirrored in Kotlin (TransitionType.ordinal):
+    // 0 none, 1 dip to black, 2 wipe left, 3 zoom punch, 4 dip to white,
+    // 5 blur, 6 spin, 7 push, 8 glitch.
     // Effect ids mirror ClipEffect.ordinal; mask ids are MaskShape.ordinal + 1.
     const val FRAGMENT = """
 // highp where the device offers it: the LUT's tile coordinates are the one
@@ -168,22 +169,65 @@ void main() {
   // it is the source that flips, and a pan still goes the way it is dragged.
   uv = 0.5 + (q * uFlip);
 
-  // Zoom-punch warps sampling coords: scale peaks at the cut point (p = 0.5).
-  if (uTransType > 2.5) {
-    float bump = 1.0 - abs(1.0 - 2.0 * p);      // 0 -> 1 -> 0
+  // Transitions warp the frame around the cut. bump runs 0 -> 1 -> 0 across
+  // the two halves, peaking at the cut itself; it is 0 with no transition.
+  float bump = 1.0 - abs(1.0 - 2.0 * p);
+  float tr = uTransType;
+  if (abs(tr - 3.0) < 0.5) {
+    // Zoom punch: scale peaks at the cut.
     float s = 1.0 + 0.8 * bump * bump;
     uv = 0.5 + (uv - 0.5) / s;
+  } else if (abs(tr - 6.0) < 0.5) {
+    // Spin: the outgoing half turns one way and the incoming half arrives
+    // turned the other, so the spin reads as continuous through the cut;
+    // zoomed in so the turn never shows a corner of the source.
+    float dir = p < 0.5 ? 1.0 : -1.0;
+    float ang = dir * bump * 1.2;
+    float zs = 1.0 + 0.5 * bump;
+    vec2 r = (uv - 0.5) * vec2(uAspect, 1.0) / zs;
+    float rc = cos(ang);
+    float rs = sin(ang);
+    r = vec2(r.x * rc - r.y * rs, r.x * rs + r.y * rc);
+    uv = 0.5 + r / vec2(uAspect, 1.0);
+  } else if (abs(tr - 7.0) < 0.5) {
+    // Push: the outgoing frame slides off to the left and the incoming one
+    // slides in from the right; what it uncovers is the surround.
+    uv.x += p < 0.5 ? 2.0 * p : -2.0 * (1.0 - p);
+  } else if (abs(tr - 8.0) < 0.5) {
+    // Glitch: bands torn sideways, hardest at the cut, seeded per frame.
+    float f = uGrainSeed;
+    float band = floor(uv.y * 16.0 + hashi(vec2(f, 5.0)) * 16.0);
+    float tear = (hashi(vec2(band, f)) - 0.5) * step(0.4, hashi(vec2(band + 11.0, f)));
+    uv.x += tear * 0.25 * bump * bump;
   }
 
-  vec4 texel = texture2D(uTexSampler, uv);
+  vec4 texel;
+  if (abs(tr - 5.0) < 0.5 && bump > 0.0) {
+    // Blur: a radial smear that peaks at the cut, six taps toward the centre.
+    vec2 dir = (uv - 0.5) * 0.18 * bump;
+    texel = vec4(0.0);
+    for (int i = 0; i < 6; i++) {
+      texel += texture2D(uTexSampler, uv - dir * (float(i) / 5.0));
+    }
+    texel /= 6.0;
+  } else {
+    texel = texture2D(uTexSampler, uv);
+  }
   vec3 c = texel.rgb;
 
-  // Chromatic fringe, and the milder version the glitch and tape looks share:
-  // red and blue sampled a little either side of green.
+  // Chromatic fringe: red and blue sampled a little either side of green.
+  // The chromatic effect's, the milder one the glitch and tape looks share,
+  // or the glitch cut's, whichever is on.
+  float fringe = 0.0;
   if (fx > 0.5 && fx < 3.5) {
-    float split = amt * (fx < 1.5 ? 0.012 : (fx < 2.5 ? 0.008 : 0.004));
-    c.r = texture2D(uTexSampler, uv + vec2(split, 0.0)).r;
-    c.b = texture2D(uTexSampler, uv - vec2(split, 0.0)).b;
+    fringe = amt * (fx < 1.5 ? 0.012 : (fx < 2.5 ? 0.008 : 0.004));
+  }
+  if (abs(tr - 8.0) < 0.5) {
+    fringe = max(fringe, 0.02 * bump);
+  }
+  if (fringe > 0.0) {
+    c.r = texture2D(uTexSampler, uv + vec2(fringe, 0.0)).r;
+    c.b = texture2D(uTexSampler, uv - vec2(fringe, 0.0)).b;
   }
 
   // Glow: a soft haze lifted from the brightest parts, four wide taps.
@@ -215,21 +259,23 @@ void main() {
     c = mix(c, applyLut(c), uLutIntensity);
   }
 
-  if (uTransType > 0.5 && uTransType < 1.5) {
+  if (abs(tr - 1.0) < 0.5) {
     // Dip to black: fully dark at the cut point.
-    c *= abs(1.0 - 2.0 * p);
-  } else if (uTransType > 1.5 && uTransType < 2.5) {
+    c *= 1.0 - bump;
+  } else if (abs(tr - 2.0) < 0.5) {
     // Wipe: a soft black curtain sweeps in over A, sweeps off B.
     // The edge travels from just off the left of the frame to just off the
     // right, so at both ends of the transition the frame is untouched. Mapping
     // it to [0, 1] instead would darken a strip of the left edge on the very
     // first frame, before the wipe has visibly begun.
-    float coverage = 1.0 - abs(1.0 - 2.0 * p);  // 0 -> 1 -> 0
-    float edge = mix(-0.07, 1.07, coverage);
+    float edge = mix(-0.07, 1.07, bump);
     c *= smoothstep(edge - 0.06, edge + 0.06, uv.x);
-  } else if (uTransType > 2.5) {
+  } else if (abs(tr - 3.0) < 0.5) {
     // Zoom-punch adds a subtle exposure dip so the warp reads as intentional.
-    c *= 1.0 - 0.25 * (1.0 - abs(1.0 - 2.0 * p));
+    c *= 1.0 - 0.25 * bump;
+  } else if (abs(tr - 4.0) < 0.5) {
+    // Dip to white: the flash cut.
+    c = mix(c, vec3(1.0), bump);
   }
 
   // Tape: scanlines, a wash of the colour, and noise that never sits still.

@@ -330,11 +330,12 @@ the exporter — the model, the preview and the export path agree on all three.
 |---|---|
 | Timeline | pinch zoom, momentum scrub, trim, split at playhead, drag-reorder, delete |
 | Clips | speed presets (0.5–4x) and six **speed curves** (Montage, Hero, Bullet, Jump cut, Flash in, Flash out) on top of them; **freeze frame** at the playhead with an adjustable hold; per-clip brightness/contrast/saturation, film LUT toggle |
-| Transitions | dip-to-black, wipe, zoom-punch on any clip boundary |
+| Transitions | dip to black, dip to white, wipe, zoom punch, blur, spin, push and glitch on any clip boundary — all single-stream, so no second decoder |
 | Audio | music and voiceover lanes, per-clip volume, fade in/out, track mute |
 | Text | editable content (multi-line), four type faces, bold, italic, eight colours, size, position, five entrance animations (cut, fade, pop, rise, type-on), and outline / shadow / backing box for legibility over footage |
 | Stickers | seven shapes, swappable from the inspector, with size, position, rotation and the same animations text uses |
 | Overlays | picture-in-picture (size, position, rotation, opacity) — every control is the number the export consumes |
+| Direct manipulation | drag, pinch and twist the selected clip, caption, sticker or picture-in-picture on the preview itself; tap an overlay to select it |
 | Looks | ten one-tap filters, plus brightness, contrast, saturation, warmth, **film grain** and **vignette** — a preset is a starting point rather than a mode, because it sets the same fields the sliders edit |
 | Canvas | 9:16, 16:9, 1:1 and 4:5 presets, each fitted, filled (cropped) or stretched — applied by the same `Presentation` in preview and export; letterbox bars black, white, or **the clip itself blurred** behind the picture |
 | Editing | trim, split, move, reorder, duplicate, delete, per-clip speed, freeze frame, detach audio |
@@ -531,6 +532,39 @@ project's rate for the whole hold — so captions animate across it and a
 picture-in-picture keeps moving, as they do on screen. The effect clock and a
 move's progress are scaled by the hold on the preview side so the two agree
 about time. If the frame cannot be read, the slow run renders instead.
+
+### Eight cuts, one stream
+
+Every transition is single-stream: the outgoing clip animates through the
+shader's phase [0, 0.5] over its last half-window, the incoming clip through
+[0.5, 1] over its first, and `bump` — 0 → 1 → 0 across the two — is the one
+number each cut is shaped by. Five joined the original three: dip to white,
+a radial blur (six taps toward the centre, only while `bump` is above zero),
+a spin (the outgoing half turns one way and the incoming half arrives turned
+the other, so it reads as one continuous turn through the cut), a push (the
+frame slides off and the next slides in, uncovering the surround), and a
+glitch (bands torn sideways with a chromatic fringe, seeded per frame from the
+grain clock). Each branch is keyed on the enum's ordinal, and a test walks
+`TransitionType` to check the shader has a branch for every one, because a
+type added without one would silently render as a plain cut.
+
+### The picture is the control surface
+
+Sliders are for precision; a finger on the picture is how a clip actually gets
+placed. The preview takes drag, pinch and twist (`detectTransformGestures`)
+and applies each increment to the selection: a caption or sticker moves,
+scales and turns about its anchor, a picture-in-picture likewise, and a
+main-track clip's transform pans, zooms and rotates the picture. Pan is
+converted from canvas pixels to the specs' NDC, and for a transform on into the
+source frame's own NDC through `canvasScales` — a picture letterboxed to a
+third of the canvas's height has to move three times as far in its own frame to
+keep up with the finger. Each event is one small intent, coalesced by the
+store into one undo step per gesture. A tap hit-tests the overlays, topmost
+first, and selects what it lands on, or nothing.
+
+The handlers read the latest state through `rememberUpdatedState` rather than
+keying the pointer input on it: a drag commits on every event, and a pointer
+input that restarted on each commit would end the drag it was serving.
 
 ## 5b. Lifecycle
 
