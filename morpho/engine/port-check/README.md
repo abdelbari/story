@@ -19,7 +19,8 @@ How it stands up:
   `Matrix`, the geometry — are stubbed here in `src/main/java`, far enough
   to load and run text extraction, which draws nothing;
 - so are the few the app's own readers touch — a `Context`, its
-  `AssetManager`, and `TessBaseAPI` — far enough to compile against and no
+  `AssetManager`, `TessBaseAPI`, and the `ExifInterface` that reads which
+  way up a photograph goes — far enough to compile against and no
   further;
 - the Android readers themselves are compiled from where they live,
   `../../android/pdf/src/main/kotlin`, so this module tests the shipped
