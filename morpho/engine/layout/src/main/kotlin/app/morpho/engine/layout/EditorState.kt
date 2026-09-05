@@ -393,39 +393,90 @@ class EditorState private constructor(
     fun paste(text: String): EditorState {
         val lines = text.split("\r\n", "\r", "\n")
         if (lines.size == 1) return type(text)
-        // Built in one pass rather than typed and split a line at a time,
-        // since a book pasted in is ten thousand lines and each split
-        // copies the document's blocks.
+        val at = normalised(selection.start)
+        val look = ParagraphEdit.plain(lookIn(document.paragraphAt(at).runs, at.offset)).let { pending?.applyTo(it) ?: it }
+        return pasteBlocks(lines.map { Paragraph(listOf(look.copy(text = it))) }, keepStyles = false)
+    }
+
+    /**
+     * [blocks] pasted at the caret, in place of whatever was selected —
+     * what rich text from another app becomes, read by [HtmlReader] —
+     * as one step to undo. Word's rule for what a paste joins: the first
+     * block's words join the paragraph the caret is in, as its own; the
+     * last's take the rest of that paragraph after them, and are set as
+     * it is; every block between stands as it came, a heading a heading
+     * and a table a table — or, without [keepStyles], as the paragraph
+     * pasted into is set, which is what plain text gets. A caret cannot
+     * stand in a table or a picture, so a paste that ends with one has a
+     * paragraph after it to stand in.
+     *
+     * Built in one pass rather than typed and split a block at a time,
+     * since a book pasted in is ten thousand blocks and each split would
+     * copy the document's.
+     */
+    fun pasteBlocks(blocks: List<Block>, keepStyles: Boolean = true): EditorState {
+        if (blocks.isEmpty()) return this
         val cleared = deletion(selection)
         val doc = cleared?.document ?: document
         val at = cleared?.selection?.start ?: normalised(selection.start)
         val paragraph = doc.paragraphAt(at)
         val length = paragraph.text.length
         val look = ParagraphEdit.plain(lookIn(paragraph.runs, at.offset)).let { pending?.applyTo(it) ?: it }
-        fun typed(line: String) = if (line.isEmpty()) emptyList() else listOf(look.copy(text = line))
-        val style = paragraph.style.copy(pageBreakBefore = false, sectionSetup = null, ruleAbove = false, ruleBelow = false)
-        val first = paragraph.copy(
-            runs = ParagraphEdit.merged(ParagraphEdit.slice(paragraph.runs, 0, at.offset) + typed(lines.first())).ifEmpty { emptied(look) },
-            style = paragraph.style.copy(ruleBelow = false),
-        )
-        val middle = lines.subList(1, lines.lastIndex).map { Paragraph(typed(it).ifEmpty { emptied(look) }, style, paragraph.confidence) }
-        val last = Paragraph(
-            runs = ParagraphEdit.merged(typed(lines.last()) + ParagraphEdit.slice(paragraph.runs, at.offset, length)).ifEmpty { emptied(look) },
-            style = style.copy(ruleBelow = paragraph.style.ruleBelow),
-            confidence = paragraph.confidence,
-        )
-        val pasted = listOf(first) + middle + last
+        val head = ParagraphEdit.slice(paragraph.runs, 0, at.offset)
+        val tail = ParagraphEdit.slice(paragraph.runs, at.offset, length)
+        val inner = paragraph.style.copy(pageBreakBefore = false, sectionSetup = null, ruleAbove = false, ruleBelow = false)
+        val out = mutableListOf<Block>()
+        var fromCaret = false
+        var landing: Pair<Int, Int>? = null
+        val first = blocks.first()
+        val single = blocks.size == 1
+        if (single && first is Paragraph) {
+            out += paragraph.copy(runs = ParagraphEdit.merged(head + first.runs + tail).ifEmpty { emptied(look) })
+            fromCaret = true
+            landing = 0 to at.offset + first.text.length
+        } else {
+            if (first is Paragraph) {
+                out += paragraph.copy(runs = ParagraphEdit.merged(head + first.runs).ifEmpty { emptied(look) }, style = paragraph.style.copy(ruleBelow = false))
+                fromCaret = true
+            } else {
+                if (head.isNotEmpty()) {
+                    out += paragraph.copy(runs = ParagraphEdit.merged(head), style = paragraph.style.copy(ruleBelow = false))
+                    fromCaret = true
+                }
+                out += first
+            }
+            if (!single) {
+                for (block in blocks.subList(1, blocks.lastIndex)) {
+                    out += if (block is Paragraph && !keepStyles) block.copy(runs = block.runs.ifEmpty { emptied(look) }, style = inner) else block
+                }
+            }
+            // What ends the paste: the last block where there is more than one, and the rest of the paragraph after it.
+            val ending = if (single) null else blocks.last()
+            if (ending is Paragraph) {
+                out += paragraph.copy(
+                    runs = ParagraphEdit.merged(ending.runs + tail).ifEmpty { emptied(look) },
+                    style = inner.copy(ruleBelow = paragraph.style.ruleBelow),
+                )
+                landing = out.lastIndex to ending.text.length
+            } else {
+                if (ending != null) out += ending
+                out += paragraph.copy(runs = ParagraphEdit.merged(tail).ifEmpty { emptied(look) }, style = inner.copy(ruleBelow = paragraph.style.ruleBelow))
+                landing = out.lastIndex to 0
+            }
+        }
+        val (landingIndex, landingOffset) = landing!!
         val cell = at.cell
         if (cell != null) {
             val held = doc.cellBlocksAt(at)
-            val blocks = held.take(cell.paragraph) + pasted + held.drop(cell.paragraph + 1)
-            val landing = at.copy(offset = lines.last().length, cell = cell.copy(paragraph = cell.paragraph + lines.lastIndex))
-            return committed(Change(doc.replacingCellBlocks(at, blocks), cleared?.origins ?: origins, Selection(landing)))
+            val cellBlocks = held.take(cell.paragraph) + out + held.drop(cell.paragraph + 1)
+            val there = at.copy(offset = landingOffset, cell = cell.copy(paragraph = cell.paragraph + landingIndex))
+            return committed(Change(doc.replacingCellBlocks(at, cellBlocks), cleared?.origins ?: origins, Selection(there)))
         }
         val origins = cleared?.origins ?: origins
-        val blocks = doc.blocks.take(at.block) + pasted + doc.blocks.drop(at.block + 1)
-        val nextOrigins = origins.take(at.block) + origins[at.block] + List(lines.lastIndex) { null } + origins.drop(at.block + 1)
-        return committed(Change(doc.copy(blocks = blocks), nextOrigins, Selection(Caret(at.block + lines.lastIndex, lines.last().length))))
+        val nextOrigins = origins.take(at.block) + (if (fromCaret) origins[at.block] else null) + List(out.size - 1) { null } + origins.drop(at.block + 1)
+        val document = withParagraphsToStandIn(doc.copy(blocks = doc.blocks.take(at.block) + out + doc.blocks.drop(at.block + 1)))
+        val nextOriginsPadded = if (document.blocks.size > nextOrigins.size) nextOrigins + List(document.blocks.size - nextOrigins.size) { null } else nextOrigins
+        return committed(Change(document, nextOriginsPadded, Selection(Caret(at.block + landingIndex, landingOffset))))
     }
 
     /**

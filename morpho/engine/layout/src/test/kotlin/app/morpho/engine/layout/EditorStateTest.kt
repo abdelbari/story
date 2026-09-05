@@ -391,6 +391,35 @@ class EditorStateTest {
     }
 
     @Test
+    fun `blocks pasted join the paragraph at both ends and stand as they came between`() {
+        val state = EditorState.open(doc(p("one two"), p("after"))).at(0, 4)
+        val pasted = state.pasteBlocks(listOf(p(r("A", bold = true)), p("Head", ParagraphKind.HEADING_2), table(), p("Z")))
+        assertEquals(listOf("one A", "Head", "<Table>", "Ztwo", "after"), texts(pasted))
+        assertEquals(ParagraphKind.HEADING_2, (pasted.document.blocks[1] as Paragraph).style.kind, "a heading between stands as it came")
+        assertEquals(ParagraphKind.BODY, (pasted.document.blocks[3] as Paragraph).style.kind, "the last takes the paragraph pasted into")
+        assertTrue(runs(pasted, 0)[1].second, "the first's words keep their own look")
+        assertEquals(Selection.at(3, 1), pasted.selection)
+        assertEquals(1, pasted.undoDepth)
+        assertEquals(state.document, pasted.undo().document)
+        assertEquals(setOf(0, 1, 2, 3), pasted.modified)
+        val one = state.pasteBlocks(listOf(p(r("X", italic = true))))
+        assertEquals(listOf("one Xtwo", "after"), texts(one))
+        assertEquals(Selection.at(0, 5), one.selection)
+        val ending = state.pasteBlocks(listOf(p("A"), picture()))
+        assertEquals(listOf("one A", "<ImageBlock>", "two", "after"), texts(ending), "a paste ending in a picture has the rest of the paragraph after it")
+        assertEquals(Selection.at(2, 0), ending.selection)
+        val starting = EditorState.open(doc(p("one two"))).at(0, 0).pasteBlocks(listOf(table(), p("B")))
+        assertEquals(listOf("<Table>", "Bone two"), texts(starting), "at the head of a paragraph a table goes before it, and no empty paragraph is left")
+        val atEnd = EditorState.open(doc(p("one"))).at(0, 3).pasteBlocks(listOf(table()))
+        assertEquals(listOf("one", "<Table>", ""), texts(atEnd), "a table at the end has a paragraph to stand in after it")
+        assertEquals(Selection.at(2, 0), atEnd.selection)
+        val inCell = EditorState.open(doc(grid(listOf("ab")))).inCell(0, 0, 0, 0, 1).pasteBlocks(listOf(p("1"), p("2")))
+        assertEquals(listOf(listOf(listOf("a1", "2b"))), cells(inCell, 0))
+        assertEquals(Caret(0, 1, Cell(0, 0, 1)), inCell.selection.anchor)
+        assertSame(state, state.pasteBlocks(emptyList()))
+    }
+
+    @Test
     fun `a table's cells are filled, its rules drawn or not, its head set, and a column made a width`() {
         val state = EditorState.open(doc(grid(listOf("a", "b"), listOf("c", "d")), p("after")))
         val shaded = state.select(Selection(Caret(0, 0, Cell(0, 0, 0)), Caret(0, 0, Cell(0, 1, 0)))).shadeCells(0xFFEE88)

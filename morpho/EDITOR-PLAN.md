@@ -153,8 +153,12 @@ own. Nothing in it is truth, and everything that decides what an edit
 does runs in the JVM suite in seconds.
 
 That engine half is what Stage 0 needed and it is built: see Stage 0.
-An `HtmlReader` is still worth having — for pasting rich text in from
-another app — and that is Stage 4's, not Stage 0's.
+An `HtmlReader` was still worth having — for pasting rich text in from
+another app — and it exists since 5 September, for that alone: the
+clipboard's `text/html` goes over the bridge with the plain text, is
+read as blocks, and is pasted with Word's rule for what joins what. It
+is a reader of pasted text, not of documents, and nothing of the DOM is
+ever read back through it.
 
 ## Stage 0 — decide, by measurement, before building
 

@@ -170,6 +170,24 @@ await p.keyboard.press('Enter'); await p.keyboard.type('item two'); await check(
   const count = await p.evaluate(() => window.morphoEditor.count());
   assert.ok(count.words > 10 && count.paragraphs > 5, 'counted: ' + JSON.stringify(count));
 }
+// Rich text pasted keeps its bold, its heading and its table.
+{
+  const first = (await truth()).texts.findIndex(t => typeof t === 'string');
+  await select([first, 0]);
+  await p.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', 'Rich\nHead\nc');
+    dt.setData('text/html', '<meta charset="utf-8"><p><b>Rich</b> words</p><h2>Head</h2><table><tr><td>c</td></tr></table>');
+    document.getElementById('doc').dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertFromPaste', dataTransfer: dt, bubbles: true, cancelable: true }));
+  });
+  const pasted = await check('rich text pasted');
+  assert.ok(pasted.texts[first].startsWith('Rich words'), 'the first paragraph joined');
+  assert.equal(pasted.runs[first][0][1], true, 'and its bold kept');
+  assert.equal(pasted.texts[first + 1], 'Head');
+  assert.ok(Array.isArray(pasted.texts[first + 2]), 'the table is a table');
+  assert.equal(await p.evaluate(i => document.querySelectorAll('[data-block]')[i].tagName, first + 1), 'H2');
+  await p.keyboard.press('Control+z'); await check('a rich paste undone is one step');
+}
 // A table's cells are filled, its rules taken off, its head set, and a column made a width.
 {
   const tb = (await truth()).texts.findIndex(t => Array.isArray(t) && t.length >= 2);

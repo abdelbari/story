@@ -41,11 +41,14 @@ object EditorProtocol {
     /** The most characters one typing may carry; a paste is many of them. */
     const val MOST_TYPED = 200_000
 
+    /** The most markup one paste may carry beside its text, markup being the longer. */
+    const val MOST_HTML = HtmlReader.MOST_LENGTH
+
     /** What the screen's script says the reader did. */
     sealed interface Operation {
         data class Select(val selection: Selection) : Operation
         data class Type(val text: String) : Operation
-        data class Paste(val text: String) : Operation
+        data class Paste(val text: String, val html: String?) : Operation
         data object Erase : Operation
         data object EraseForward : Operation
         data object Split : Operation
@@ -90,7 +93,10 @@ object EditorProtocol {
                     if (text.length > MOST_TYPED) return null
                     Operation.Type(text)
                 }
-                "paste" -> Operation.Paste(typed(map, "text") ?: return null)
+                "paste" -> Operation.Paste(
+                    typed(map, "text") ?: return null,
+                    map["html"]?.let { (it as? String ?: return null).also { html -> if (html.length > MOST_HTML) return null } },
+                )
                 "erase" -> Operation.Erase
                 "eraseForward" -> Operation.EraseForward
                 "split" -> Operation.Split
@@ -177,7 +183,12 @@ object EditorProtocol {
     fun apply(state: EditorState, operation: Operation): EditorState = when (operation) {
         is Operation.Select -> state.select(operation.selection)
         is Operation.Type -> state.type(operation.text)
-        is Operation.Paste -> state.paste(operation.text)
+        is Operation.Paste -> {
+            // Rich text where the clipboard carries it and it reads as
+            // something; the plain text otherwise.
+            val blocks = operation.html?.let { HtmlReader.read(it) }.orEmpty()
+            if (blocks.isNotEmpty()) state.pasteBlocks(blocks) else state.paste(operation.text)
+        }
         Operation.Erase -> state.erase()
         Operation.EraseForward -> state.eraseForward()
         Operation.Split -> state.splitParagraph()

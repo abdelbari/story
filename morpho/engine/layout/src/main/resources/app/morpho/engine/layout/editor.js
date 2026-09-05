@@ -260,6 +260,7 @@
     if (composing) return;
     ev.preventDefault();
     var pasted = ev.dataTransfer ? ev.dataTransfer.getData('text/plain') : '';
+    var rich = ev.dataTransfer ? ev.dataTransfer.getData('text/html') : '';
     switch (ev.inputType) {
       case 'insertText': op({ op: 'type', text: ev.data || '' }); break;
       case 'insertParagraph': op({ op: 'split' }); break;
@@ -271,8 +272,10 @@
       // A cut is a copy the browser has already made and a deletion it
       // has not; a drag out of the page the same.
       case 'deleteByCut': case 'deleteByDrag': op({ op: 'erase' }); break;
+      // What the clipboard carries beside the text goes too, for the
+      // engine to read as paragraphs, headings, tables, pictures.
       case 'insertFromPaste': case 'insertFromDrop': case 'insertReplacementText':
-        if (pasted) op({ op: 'paste', text: pasted }); break;
+        if (pasted || rich) op(rich ? { op: 'paste', text: pasted, html: rich } : { op: 'paste', text: pasted }); break;
       case 'historyUndo': op({ op: 'undo' }); break;
       case 'historyRedo': op({ op: 'redo' }); break;
       case 'formatBold': op({ op: 'format', bold: !look.bold }); break;

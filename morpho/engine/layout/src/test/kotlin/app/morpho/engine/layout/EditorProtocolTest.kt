@@ -34,6 +34,8 @@ class EditorProtocolTest {
             """{"op":"select","anchor":[0,1],"focus":[2,2]}""" to { it.select(Selection(Caret(0, 1), Caret(2, 2))) },
             """{"op":"type","text":"whole "}""" to { it.type("whole ") },
             """{"op":"paste","text":"two\nlines"}""" to { it.paste("two\nlines") },
+            """{"op":"paste","text":"rich","html":"<p><b>rich</b></p><h2>head</h2>"}""" to { it.pasteBlocks(HtmlReader.read("<p><b>rich</b></p><h2>head</h2>")) },
+            """{"op":"paste","text":"plain","html":"<script>x</script>"}""" to { it.paste("plain") },
             """{"op":"erase"}""" to { it.erase() },
             """{"op":"eraseForward"}""" to { it.eraseForward() },
             """{"op":"split"}""" to { it.splitParagraph() },
@@ -189,6 +191,7 @@ class EditorProtocolTest {
             """{"op":"select","anchor":[0,1,2],"focus":[0,1]}""", """{"op":"select","anchor":[0,"a"],"focus":[0,1]}""",
             """{"op":"removeBlock","block":-1}""", """{"op":"type","text":"${"x".repeat(EditorProtocol.MOST_TYPED + 1)}"}""",
             """{"op":"paste","text":["a"]}""", """{"op":"paste","text":"${"y".repeat(EditorProtocol.MOST_TYPED + 1)}"}""",
+            """{"op":"paste","text":"a","html":7}""", """{"op":"paste","text":"a","html":"${"<p>".repeat(EditorProtocol.MOST_HTML / 3 + 1)}"}""",
             """{"op":"tab","back":1}""", """{"op":"find","query":""}""".replace("\"query\":\"\"", "\"query\":null"),
             """{"op":"link","url":7}""", """{"op":"link","url":"https://x","text":false}""",
             """{"op":"describeImage","block":1.5,"description":"x"}""", """{"op":"describeImage","block":0,"description":["x"]}""",
@@ -322,7 +325,8 @@ class EditorProtocolTest {
             19 -> """{"op":"replaceAll","query":${Json.write(words[random.nextInt(words.size)])},"replacement":${Json.write(words[random.nextInt(words.size)])}}"""
             0 -> """{"op":"select","anchor":[${random.nextInt(-1, n + 1)},${random.nextInt(-1, 9)}],"focus":[${random.nextInt(n)},${random.nextInt(9)}]}"""
             1 -> """{"op":"type","text":${Json.write(words[random.nextInt(words.size)])}}"""
-            2 -> """{"op":"paste","text":${Json.write(words[random.nextInt(words.size)] + "\n" + words[random.nextInt(words.size)])}}"""
+            2 -> if (random.nextBoolean()) """{"op":"paste","text":${Json.write(words[random.nextInt(words.size)] + "\n" + words[random.nextInt(words.size)])}}"""
+            else """{"op":"paste","text":"t","html":${Json.write(listOf("<p><b>x</b></p><p>y</p>", "<table><tr><td>c</td></tr></table>", "<ul><li>i</li></ul>", "<img src=\"data:image/png;base64,AQID\">", "<p>")[random.nextInt(5)])}}"""
             3 -> """{"op":"erase"}"""
             4 -> """{"op":"eraseForward"}"""
             5 -> """{"op":"split"}"""
