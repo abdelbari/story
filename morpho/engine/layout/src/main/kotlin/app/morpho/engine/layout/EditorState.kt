@@ -393,12 +393,39 @@ class EditorState private constructor(
     fun paste(text: String): EditorState {
         val lines = text.split("\r\n", "\r", "\n")
         if (lines.size == 1) return type(text)
-        var worked: EditorState = this
-        for ((index, line) in lines.withIndex()) {
-            if (line.isNotEmpty()) worked = worked.type(line)
-            if (index < lines.lastIndex) worked = worked.splitParagraph()
+        // Built in one pass rather than typed and split a line at a time,
+        // since a book pasted in is ten thousand lines and each split
+        // copies the document's blocks.
+        val cleared = deletion(selection)
+        val doc = cleared?.document ?: document
+        val at = cleared?.selection?.start ?: normalised(selection.start)
+        val paragraph = doc.paragraphAt(at)
+        val length = paragraph.text.length
+        val look = ParagraphEdit.plain(lookIn(paragraph.runs, at.offset)).let { pending?.applyTo(it) ?: it }
+        fun typed(line: String) = if (line.isEmpty()) emptyList() else listOf(look.copy(text = line))
+        val style = paragraph.style.copy(pageBreakBefore = false, sectionSetup = null, ruleAbove = false, ruleBelow = false)
+        val first = paragraph.copy(
+            runs = ParagraphEdit.merged(ParagraphEdit.slice(paragraph.runs, 0, at.offset) + typed(lines.first())).ifEmpty { emptied(look) },
+            style = paragraph.style.copy(ruleBelow = false),
+        )
+        val middle = lines.subList(1, lines.lastIndex).map { Paragraph(typed(it).ifEmpty { emptied(look) }, style, paragraph.confidence) }
+        val last = Paragraph(
+            runs = ParagraphEdit.merged(typed(lines.last()) + ParagraphEdit.slice(paragraph.runs, at.offset, length)).ifEmpty { emptied(look) },
+            style = style.copy(ruleBelow = paragraph.style.ruleBelow),
+            confidence = paragraph.confidence,
+        )
+        val pasted = listOf(first) + middle + last
+        val cell = at.cell
+        if (cell != null) {
+            val held = doc.cellBlocksAt(at)
+            val blocks = held.take(cell.paragraph) + pasted + held.drop(cell.paragraph + 1)
+            val landing = at.copy(offset = lines.last().length, cell = cell.copy(paragraph = cell.paragraph + lines.lastIndex))
+            return committed(Change(doc.replacingCellBlocks(at, blocks), cleared?.origins ?: origins, Selection(landing)))
         }
-        return asOneStep(worked)
+        val origins = cleared?.origins ?: origins
+        val blocks = doc.blocks.take(at.block) + pasted + doc.blocks.drop(at.block + 1)
+        val nextOrigins = origins.take(at.block) + origins[at.block] + List(lines.lastIndex) { null } + origins.drop(at.block + 1)
+        return committed(Change(doc.copy(blocks = blocks), nextOrigins, Selection(Caret(at.block + lines.lastIndex, lines.last().length))))
     }
 
     /**
@@ -833,6 +860,83 @@ class EditorState private constructor(
         val landing = landingIn(shrunk, rectangle.top, rectangle.left)
         return committed(Change(document.replacing(at.block, shrunk), origins, Selection(Caret(at.block, 0, landing))))
     }
+
+    /** The cells selected, or the caret's, filled with [rgb], or with nothing again. */
+    fun shadeCells(rgb: Int?): EditorState {
+        val at = normalised(selection.start)
+        val cell = at.cell ?: return this
+        val table = document.blocks[at.block] as Table
+        val chosen = (selectedCellsOf(selection)?.cells ?: listOf(Cell(cell.row, cell.column))).map { it.row to it.column }.toSet()
+        val rows = table.rows.mapIndexed { row, held ->
+            held.copy(cells = held.cells.mapIndexed { column, c -> if ((row to column) in chosen && c.shadingRgb != rgb) c.copy(shadingRgb = rgb) else c })
+        }
+        if (rows == table.rows) return this
+        return committed(Change(document.replacing(at.block, table.copy(rows = rows)), origins, selection))
+    }
+
+    /** The caret's table drawn with rules round its cells, or without them. */
+    fun ruleTable(ruled: Boolean): EditorState {
+        val at = normalised(selection.start)
+        if (at.cell == null) return this
+        val table = document.blocks[at.block] as Table
+        if (table.ruled == ruled) return this
+        return committed(Change(document.replacing(at.block, table.copy(ruled = ruled)), origins, selection))
+    }
+
+    /**
+     * The caret's row made part of its table's head, drawn again at the
+     * top of every page the table runs onto — and every row above it,
+     * since a head is a run of rows from the top and nothing else — or
+     * taken out of the head, with every row below it.
+     */
+    fun headRow(header: Boolean): EditorState {
+        val at = normalised(selection.start)
+        val cell = at.cell ?: return this
+        val table = document.blocks[at.block] as Table
+        val rows = table.rows.mapIndexed { row, held ->
+            val flag = if (header) held.repeatsAsHeader || row <= cell.row else held.repeatsAsHeader && row < cell.row
+            if (flag == held.repeatsAsHeader) held else held.copy(repeatsAsHeader = flag)
+        }
+        if (rows == table.rows) return this
+        return committed(Change(document.replacing(at.block, table.copy(rows = rows)), origins, selection))
+    }
+
+    /**
+     * The column the caret's cell begins in made [widthPt] wide, the
+     * table's other columns as they were — or, where the table never
+     * knew its widths, the text width of a page shared out equally
+     * first, so that one column set is one column set and not the whole
+     * table guessed at.
+     */
+    fun setColumnWidth(widthPt: Float): EditorState {
+        val at = normalised(selection.start)
+        val cell = at.cell ?: return this
+        val table = document.blocks[at.block] as Table
+        val rectangle = Places(table).rectangleOf(cell.row, cell.column) ?: return this
+        val columns = TableGrid.of(table).columns
+        val widths = (table.columnWidthsPt?.takeIf { it.size == columns } ?: List(columns) { TEXT_WIDTH_PT / columns }).toMutableList()
+        widths[rectangle.left] = widthPt.coerceIn(1f, 10_000f)
+        if (widths == table.columnWidthsPt) return this
+        return committed(Change(document.replacing(at.block, table.copy(columnWidthsPt = widths)), origins, selection))
+    }
+
+    /** What a toolbar shows of the caret's table: its rules, its head, the caret's cell's fill and its column's width; or nothing outside one. */
+    fun tableAt(caret: Caret): TableLook? {
+        val at = normalised(caret)
+        val cell = at.cell ?: return null
+        val table = document.blocks[at.block] as Table
+        val held = table.rows[cell.row].cells[cell.column]
+        val left = Places(table).rectangleOf(cell.row, cell.column)?.left
+        return TableLook(
+            ruled = table.ruled,
+            headRow = table.rows[cell.row].repeatsAsHeader,
+            shadingRgb = held.shadingRgb,
+            columnWidthPt = left?.let { table.columnWidthsPt?.getOrNull(it) },
+        )
+    }
+
+    /** See [tableAt]. */
+    data class TableLook(val ruled: Boolean, val headRow: Boolean, val shadingRgb: Int?, val columnWidthPt: Float?)
 
     /**
      * Where the caret lands in [table] after rows or columns went: the
@@ -1382,6 +1486,9 @@ class EditorState private constructor(
 
         /** The deepest an item of a list is moved in, which is as deep as Word lets one go. */
         const val MOST_LIST_LEVEL = 8
+
+        /** The width of the text on a Letter page with inch margins, for a table that never knew its widths. */
+        const val TEXT_WIDTH_PT = 468f
 
         /**
          * A session [saved] earlier, as it was — with nothing to undo,

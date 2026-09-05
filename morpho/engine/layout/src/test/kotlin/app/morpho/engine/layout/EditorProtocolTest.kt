@@ -104,6 +104,18 @@ class EditorProtocolTest {
         assertTrue(html.contains("<tr></tr>"), "the covered row is still a row of the page: $html")
         val split = EditorProtocol.step(merged.state, """{"op":"splitCell"}""")
         assertEquals(listOf(2, 2), (split.state.document.blocks[1] as Table).rows.map { it.cells.size })
+        val shaded = EditorProtocol.step(split.state, """{"op":"shadeCells","rgb":16777130}""")
+        assertEquals(0xFFFFAA, (shaded.state.document.blocks[1] as Table).rows[0].cells[0].shadingRgb)
+        assertEquals(mapOf("ruled" to true, "headRow" to false, "shadingRgb" to 16777130.0, "columnWidthPt" to null), reply(shaded.reply)["table"], "the table for the toolbar")
+        val unruled = EditorProtocol.step(shaded.state, """{"op":"ruleTable","ruled":false}""")
+        assertEquals(false, (reply(unruled.reply)["table"] as Map<*, *>)["ruled"])
+        val headed = EditorProtocol.step(unruled.state, """{"op":"headRow","header":true}""")
+        assertTrue((headed.state.document.blocks[1] as Table).rows[0].repeatsAsHeader)
+        val widened = EditorProtocol.step(headed.state, """{"op":"setColumnWidth","widthPt":120}""")
+        assertEquals(120.0, (reply(widened.reply)["table"] as Map<*, *>)["columnWidthPt"])
+        assertNull(reply(EditorProtocol.reply(state, state))["table"], "nothing outside a table")
+        assertNull(EditorProtocol.operation("""{"op":"headRow"}"""))
+        assertNull(EditorProtocol.operation("""{"op":"setColumnWidth","widthPt":"wide"}"""))
         val tabbed = EditorProtocol.step(split.state, """{"op":"tab"}""")
         assertEquals(Selection(Caret(1, 0, Cell(0, 1, 0)), Caret(1, 0, Cell(0, 1, 0))), tabbed.state.selection, "Tab to the next cell, which is empty now")
         assertNull(EditorProtocol.operation("""{"op":"tab","back":"yes"}"""))
@@ -273,7 +285,11 @@ class EditorProtocolTest {
                 """{"op":"describeImage","block":${random.nextInt(n)},"description":"seen"}""",
                 """{"op":"resizeImage","block":${random.nextInt(n)},"widthPt":50}""",
                 """{"op":"count"}""",
-            )[random.nextInt(5)]
+                """{"op":"shadeCells","rgb":${if (random.nextBoolean()) "null" else "255"}}""",
+                """{"op":"ruleTable","ruled":${random.nextBoolean()}}""",
+                """{"op":"headRow","header":${random.nextBoolean()}}""",
+                """{"op":"setColumnWidth","widthPt":${random.nextInt(1, 300)}}""",
+            )[random.nextInt(9)]
             21 -> """{"op":"mergeCells"}"""
             22 -> """{"op":"splitCell"}"""
             14 -> """{"op":"select","anchor":[${random.nextInt(n)},${random.nextInt(4)},${random.nextInt(-1, 3)},${random.nextInt(-1, 3)},${random.nextInt(-1, 2)}],"focus":[${random.nextInt(n)},${random.nextInt(4)},${random.nextInt(3)},${random.nextInt(3)},0]}"""

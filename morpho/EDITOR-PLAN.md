@@ -34,6 +34,24 @@ reader cannot see the document while editing it, cannot put a caret
 anywhere, cannot select across two paragraphs, and cannot apply
 formatting.
 
+## Where it stands, 5 September
+
+Everything of Stages 0 to 4 that a machine can do is done, in the engine
+and in the page, and driven in headless Chromium against the real engine
+after every action — the sections below say what, stage by stage. The
+editor exists; what does not exist yet is the screen that shows it. What
+is left needs either a device or a decision only the owner can make:
+
+- **The JavaScript posture** (Price one below): whether the editor's
+  WebView may run script at all. Nothing of the editor has been wired
+  into the app until that is decided.
+- **On a phone:** an input method composing Arabic, touch selection
+  handles, the keyboard showing and hiding, and the true round trip
+  through the bridge.
+- **The app's own half:** the editing screen, the bridge object, the
+  formatting sheet, autosave on every edit, a button for the doubtful
+  jump, and inserting a picture from the device's own bytes.
+
 ## The honest size of this
 
 This is not a feature. It is the largest single subsystem in the app —
@@ -357,8 +375,9 @@ Most of this is model → HTML → model plumbing once Stage 1 stands, because
 
 ## What to do first on Saturday
 
-Everything of Stage 0 and Stage 1 that a machine can do is done, the
-page and its script included; what is left needs a device:
+Everything of every stage that a machine can do is done, the page and
+its script included (see *Where it stands* at the top); what is left
+needs a device:
 
 1. The JavaScript posture decision (Price one above), and the page on a
    real phone: an input method composing Arabic, touch selection, the

@@ -170,6 +170,19 @@ await p.keyboard.press('Enter'); await p.keyboard.type('item two'); await check(
   const count = await p.evaluate(() => window.morphoEditor.count());
   assert.ok(count.words > 10 && count.paragraphs > 5, 'counted: ' + JSON.stringify(count));
 }
+// A table's cells are filled, its rules taken off, its head set, and a column made a width.
+{
+  const tb = (await truth()).texts.findIndex(t => Array.isArray(t) && t.length >= 2);
+  await select([tb, 0, 0, 0, 0], [tb, 0, 0, 1, 0]); await p.evaluate(() => window.morphoEditor.shadeCells(0xFFEE88)); await check('cells filled');
+  const fill = await p.evaluate(i => document.querySelectorAll('[data-block]')[i].rows[0].cells[0].style.backgroundColor, tb);
+  assert.equal(fill, 'rgb(255, 238, 136)');
+  await p.evaluate(() => window.morphoEditor.ruleTable(false)); await check('rules taken off');
+  assert.equal(await p.evaluate(i => document.querySelectorAll('[data-block]')[i].rows[1].cells[0].style.border, tb), '0px');
+  await p.evaluate(() => window.morphoEditor.headRow(true)); await check('a head row');
+  assert.ok(await p.evaluate(i => !!document.querySelectorAll('[data-block]')[i].tHead, tb), 'the head is a thead');
+  await p.evaluate(() => window.morphoEditor.setColumnWidth(150)); await check('a column made a width');
+  assert.equal(await p.evaluate(i => document.querySelectorAll('[data-block]')[i].querySelector('col').style.width, tb), '150pt');
+}
 // Timing: two hundred keystrokes, one round trip each.
 const started = Date.now();
 await p.keyboard.type('abcdefghij'.repeat(20)); await settled();

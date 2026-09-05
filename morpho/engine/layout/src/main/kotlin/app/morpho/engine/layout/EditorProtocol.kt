@@ -60,6 +60,10 @@ object EditorProtocol {
         data class DescribeImage(val block: Int, val description: String?) : Operation
         data class ResizeImage(val block: Int, val widthPt: Float?, val heightPt: Float?) : Operation
         data class Link(val url: String?, val text: String?) : Operation
+        data class ShadeCells(val rgb: Int?) : Operation
+        data class RuleTable(val ruled: Boolean) : Operation
+        data class HeadRow(val header: Boolean) : Operation
+        data class SetColumnWidth(val widthPt: Float) : Operation
         data object Count : Operation
         data class Tab(val back: Boolean) : Operation
         data object MergeCells : Operation
@@ -146,6 +150,10 @@ object EditorProtocol {
                     map["text"]?.let { it as? String ?: return null }?.also { if (it.length > MOST_TYPED) return null },
                 )
                 "count" -> Operation.Count
+                "shadeCells" -> Operation.ShadeCells(map["rgb"]?.let { rgb(it) })
+                "ruleTable" -> Operation.RuleTable(flag(map, "ruled") ?: return null)
+                "headRow" -> Operation.HeadRow(flag(map, "header") ?: return null)
+                "setColumnWidth" -> Operation.SetColumnWidth(size(map["widthPt"] ?: return null))
                 "tab" -> Operation.Tab(flag(map, "back") ?: false)
                 "mergeCells" -> Operation.MergeCells
                 "splitCell" -> Operation.SplitCell
@@ -185,6 +193,10 @@ object EditorProtocol {
         is Operation.ResizeImage -> state.resizeImage(operation.block, operation.widthPt, operation.heightPt)
         is Operation.Link -> state.link(operation.url, operation.text)
         Operation.Count -> state
+        is Operation.ShadeCells -> state.shadeCells(operation.rgb)
+        is Operation.RuleTable -> state.ruleTable(operation.ruled)
+        is Operation.HeadRow -> state.headRow(operation.header)
+        is Operation.SetColumnWidth -> state.setColumnWidth(operation.widthPt)
         is Operation.Tab -> state.tab(operation.back)
         Operation.MergeCells -> state.mergeCells()
         Operation.SplitCell -> state.splitCell()
@@ -289,6 +301,9 @@ object EditorProtocol {
             "cells" to state.selectedCells().map { listOf(it.row, it.column) },
             "canMerge" to state.canMergeCells,
             "canSplit" to state.canSplitCell,
+            "table" to state.tableAt(state.selection.start)?.let {
+                mapOf("ruled" to it.ruled, "headRow" to it.headRow, "shadingRgb" to it.shadingRgb, "columnWidthPt" to it.columnWidthPt)
+            },
             "look" to mapOf(
                 "bold" to look.bold,
                 "italic" to look.italic,

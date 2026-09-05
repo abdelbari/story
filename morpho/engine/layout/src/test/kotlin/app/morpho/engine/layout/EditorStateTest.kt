@@ -381,6 +381,36 @@ class EditorStateTest {
         assertEquals(listOf("p", "qter"), texts(over), "in place of what was selected")
         val styled = EditorState.open(doc(p(r("ab", bold = true)))).at(0, 1).paste("x\ny")
         assertTrue(runs(styled, 1).all { it.second }, "each line set as the character it was typed after")
+        val heading = EditorState.open(doc(p("Title", ParagraphKind.HEADING_1))).at(0, 5).paste("\nsecond\nthird")
+        assertTrue((heading.document.blocks[2] as Paragraph).style.kind == ParagraphKind.HEADING_1, "each line is a paragraph like the one pasted into")
+        val inCell = EditorState.open(doc(grid(listOf("ab")))).inCell(0, 0, 0, 0, 1).paste("1\n2")
+        assertEquals(listOf(listOf(listOf("a1", "2b"))), cells(inCell, 0))
+        assertEquals(Caret(0, 1, Cell(0, 0, 1)), inCell.selection.anchor)
+        val book = EditorState.open(doc(p(""))).paste((1..20_000).joinToString("\n") { "line $it" })
+        assertEquals(20_000, book.document.blocks.size, "a book pasted in, in a pass")
+    }
+
+    @Test
+    fun `a table's cells are filled, its rules drawn or not, its head set, and a column made a width`() {
+        val state = EditorState.open(doc(grid(listOf("a", "b"), listOf("c", "d")), p("after")))
+        val shaded = state.select(Selection(Caret(0, 0, Cell(0, 0, 0)), Caret(0, 0, Cell(0, 1, 0)))).shadeCells(0xFFEE88)
+        assertEquals(listOf(listOf(0xFFEE88, 0xFFEE88), listOf(null, null)), (shaded.document.blocks[0] as Table).rows.map { r -> r.cells.map { it.shadingRgb } })
+        assertEquals(listOf(listOf(0xFFEE88, null), listOf(null, null)), (shaded.inCell(0, 0, 1, 0, 0).shadeCells(null).document.blocks[0] as Table).rows.map { r -> r.cells.map { it.shadingRgb } }, "the caret's alone, emptied")
+        assertSame(state, state.at(1, 0).shadeCells(1), "not in a table")
+        val unruled = state.inCell(0, 0, 0, 0, 0).ruleTable(false)
+        assertFalse((unruled.document.blocks[0] as Table).ruled)
+        assertSame(unruled, unruled.ruleTable(false))
+        val headed = state.inCell(0, 1, 0, 0, 0).headRow(true)
+        assertEquals(listOf(true, true), (headed.document.blocks[0] as Table).rows.map { it.repeatsAsHeader }, "the row and every row above it")
+        assertEquals(listOf(true, false), (headed.inCell(0, 1, 0, 0, 0).headRow(false).document.blocks[0] as Table).rows.map { it.repeatsAsHeader })
+        assertEquals(listOf(false, false), (headed.inCell(0, 0, 0, 0, 0).headRow(false).document.blocks[0] as Table).rows.map { it.repeatsAsHeader }, "and every row below")
+        val widened = state.inCell(0, 0, 1, 0, 0).setColumnWidth(300f)
+        assertEquals(listOf(234f, 300f), (widened.document.blocks[0] as Table).columnWidthsPt, "the rest shared out first")
+        assertEquals(listOf(50f, 300f), (widened.inCell(0, 0, 0, 0, 0).setColumnWidth(50f).document.blocks[0] as Table).columnWidthsPt)
+        val look = widened.inCell(0, 1, 1, 0, 0).tableAt(widened.selection.start)
+        assertEquals(EditorState.TableLook(ruled = true, headRow = false, shadingRgb = null, columnWidthPt = 300f), widened.tableAt(Caret(0, 0, Cell(1, 1, 0))))
+        assertNull(widened.tableAt(Caret(1, 0)))
+        assertTrue(look != null)
     }
 
     @Test

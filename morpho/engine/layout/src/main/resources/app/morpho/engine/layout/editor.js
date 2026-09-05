@@ -206,7 +206,7 @@
     if (window.Morpho && typeof window.Morpho.status === 'function') {
       window.Morpho.status(JSON.stringify({
         look: reply.look, paragraph: reply.paragraph, canUndo: reply.canUndo, canRedo: reply.canRedo, modified: reply.modified,
-        cells: reply.cells, canMerge: reply.canMerge, canSplit: reply.canSplit,
+        cells: reply.cells, canMerge: reply.canMerge, canSplit: reply.canSplit, table: reply.table,
       }));
     }
   }
@@ -346,6 +346,10 @@
     count: function () { return op({ op: 'count' }).then(function (r) { return r && r.count ? r.count : null; }); },
     mergeCells: function () { return op({ op: 'mergeCells' }); },
     splitCell: function () { return op({ op: 'splitCell' }); },
+    shadeCells: function (rgb) { return op({ op: 'shadeCells', rgb: rgb == null ? null : rgb }); },
+    ruleTable: function (ruled) { return op({ op: 'ruleTable', ruled: !!ruled }); },
+    headRow: function (header) { return op({ op: 'headRow', header: !!header }); },
+    setColumnWidth: function (widthPt) { return op({ op: 'setColumnWidth', widthPt: widthPt }); },
     find: function (query, ignoreCase) {
       return op({ op: 'find', query: query, ignoreCase: !!ignoreCase }).then(function (r) { return r && r.matches ? r.matches : []; });
     },
