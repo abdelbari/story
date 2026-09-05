@@ -324,12 +324,36 @@
     }
     if (!(ev.ctrlKey || ev.metaKey)) return;
     var k = ev.key.toLowerCase();
-    if (k === 'b') { ev.preventDefault(); op({ op: 'format', bold: !look.bold }); }
-    else if (k === 'i') { ev.preventDefault(); op({ op: 'format', italic: !look.italic }); }
-    else if (k === 'u') { ev.preventDefault(); op({ op: 'format', underline: !look.underline }); }
-    else if (k === 'z' && ev.shiftKey) { ev.preventDefault(); op({ op: 'redo' }); }
-    else if (k === 'z') { ev.preventDefault(); op({ op: 'undo' }); }
-    else if (k === 'y') { ev.preventDefault(); op({ op: 'redo' }); }
+    var o = null;
+    // Word's and Docs' shortcuts, the ones both have: the looks, the
+    // ranging, the lists, the headings, the size of the type, undo.
+    if (ev.altKey) {
+      if (k === '0') o = { op: 'restyle', kind: 'BODY' };
+      else if (k === '1') o = { op: 'restyle', kind: 'HEADING_1' };
+      else if (k === '2') o = { op: 'restyle', kind: 'HEADING_2' };
+      else if (k === '3') o = { op: 'restyle', kind: 'HEADING_3' };
+    } else if (ev.shiftKey) {
+      if (k === 'z') o = { op: 'redo' };
+      else if (k === '8' || k === '*') o = { op: 'restyle', listMarker: paragraph.listMarker === 'BULLET' ? null : 'BULLET' };
+      else if (k === '7' || k === '&') o = { op: 'restyle', listMarker: paragraph.listMarker === 'NUMBERED' ? null : 'NUMBERED' };
+      else if (k === '.' || k === '>') o = { op: 'format', fontSizePt: (look.fontSizePt || 12) + 1 };
+      else if (k === ',' || k === '<') o = { op: 'format', fontSizePt: Math.max(1, (look.fontSizePt || 12) - 1) };
+      else if (k === '=' || k === '+') o = { op: 'format', superscript: !look.superscript };
+    } else {
+      if (k === 'b') o = { op: 'format', bold: !look.bold };
+      else if (k === 'i') o = { op: 'format', italic: !look.italic };
+      else if (k === 'u') o = { op: 'format', underline: !look.underline };
+      else if (k === 'z') o = { op: 'undo' };
+      else if (k === 'y') o = { op: 'redo' };
+      else if (k === 'e') o = { op: 'restyle', alignment: paragraph.alignment === 'CENTER' ? null : 'CENTER' };
+      else if (k === 'l') o = { op: 'restyle', alignment: 'START' };
+      else if (k === 'r') o = { op: 'restyle', alignment: 'END' };
+      else if (k === 'j') o = { op: 'restyle', alignment: paragraph.alignment === 'JUSTIFY' ? null : 'JUSTIFY' };
+      else if (k === '=') o = { op: 'format', subscript: !look.subscript };
+    }
+    if (!o) return;
+    ev.preventDefault();
+    op(o);
   });
 
   // What the app's own toolbar calls, and what a test reads.

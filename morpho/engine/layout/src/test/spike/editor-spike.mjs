@@ -215,6 +215,27 @@ await p.keyboard.press('Enter'); await p.keyboard.type('item two'); await check(
   await p.evaluate(() => window.morphoEditor.setColumnWidth(150)); await check('a column made a width');
   assert.equal(await p.evaluate(i => document.querySelectorAll('[data-block]')[i].querySelector('col').style.width, tb), '150pt');
 }
+// A keyboard's shortcuts: the ranging, a list, a heading, the size of the type.
+{
+  const first = (await truth()).texts.findIndex(t => typeof t === 'string');
+  await select([first, 1]);
+  await p.keyboard.press('Control+e'); await check('centred with Ctrl+E');
+  assert.equal(await p.evaluate(() => window.morphoEditor.paragraph().alignment), 'CENTER');
+  await p.keyboard.press('Control+e'); await check('and centred no more');
+  assert.equal(await p.evaluate(() => window.morphoEditor.paragraph().alignment), null);
+  await p.keyboard.press('Control+Shift+8'); await check('a bullet with Ctrl+Shift+8');
+  assert.equal(await p.evaluate(() => window.morphoEditor.paragraph().listMarker), 'BULLET');
+  await p.keyboard.press('Control+Shift+8'); await check('and a paragraph again');
+  assert.equal(await p.evaluate(() => window.morphoEditor.paragraph().listMarker), null);
+  await p.keyboard.press('Control+Alt+2'); await check('a heading with Ctrl+Alt+2');
+  assert.equal(await p.evaluate(() => window.morphoEditor.paragraph().kind), 'HEADING_2');
+  await p.keyboard.press('Control+Alt+0'); await check('body again');
+  await select([first, 0], [first, 4]); await p.keyboard.press('Control+Shift+.'); await check('the type a point larger');
+  assert.equal(await p.evaluate(() => window.morphoEditor.look().fontSizePt), 13);
+  await p.keyboard.press('Control+Shift+,'); await check('and back');
+  assert.equal(await p.evaluate(() => window.morphoEditor.look().fontSizePt), 12);
+  await select([first, 0]);
+}
 // Timing: two hundred keystrokes, one round trip each.
 const started = Date.now();
 await p.keyboard.type('abcdefghij'.repeat(20)); await settled();

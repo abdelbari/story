@@ -278,6 +278,26 @@ class EditorProtocolTest {
     }
 
     @Test
+    fun `a keystroke in a document of five thousand blocks repaints one block, and the reply is small`() {
+        // The cost of a keystroke must not grow with the document, or a
+        // book is unusable: one block repainted, a reply of a few hundred
+        // bytes, whatever the document's size.
+        val big = EditorState.open(DocumentModel(List(5_000) { Paragraph(listOf(TextRun("paragraph $it of a long document"))) })).at(2_500, 5)
+        var state = big
+        for (letter in "typed") {
+            val step = EditorProtocol.step(state, """{"op":"type","text":"$letter"}""")
+            state = step.state
+            val splice = reply(step.reply)["splice"] as Map<*, *>
+            assertEquals(listOf(2500.0, 2501.0), listOf(splice["from"], splice["to"]), "one block repainted")
+            assertTrue(step.reply.length < 1_000, "a reply of ${step.reply.length} characters for one keystroke")
+        }
+        assertEquals("parag" + "typed" + "raph 2500 of a long document", texts(state)[2_500])
+        val split = EditorProtocol.step(state, """{"op":"split"}""")
+        assertEquals(listOf(2500.0, 2501.0), (reply(split.reply)["splice"] as Map<*, *>).let { listOf(it["from"], it["to"]) }, "Return repaints the paragraph broken and puts one in")
+        assertEquals(2, ((reply(split.reply)["splice"] as Map<*, *>)["blocks"] as List<*>).size)
+    }
+
+    @Test
     fun `an edit to an item of a list paints the whole body, since the list is not the item's`() {
         val state = open(p("head"), item("first"), item("second")).at(1, 5)
         val step = EditorProtocol.step(state, """{"op":"split"}""")
