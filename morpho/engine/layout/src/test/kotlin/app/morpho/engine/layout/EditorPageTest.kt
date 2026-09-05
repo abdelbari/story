@@ -49,6 +49,27 @@ class EditorPageTest {
      * SKIPPED where there is no browser to drive. See `src/test/spike`.
      */
     @Test
+    fun `the page's script asks the app for three things and reaches for nothing else`() {
+        // The plan's price for script in a WebView: one bridge object with a
+        // few narrowly typed methods, and a script that cannot fetch, frame,
+        // evaluate, or follow anything out. Held here so that the bridge the
+        // app writes has exactly this to provide, and a script that grew a
+        // fourth call or a fetch would fail before it reached a device.
+        val script = HtmlWriter::class.java.getResourceAsStream("/app/morpho/engine/layout/editor.js")!!.use { it.readBytes().toString(Charsets.UTF_8) }
+        val asked = Regex("""window\.Morpho\.(\w+)""").findAll(script).map { it.groupValues[1] }.toSet()
+        assertEquals(setOf("send", "status", "tapped"), asked, "what the script asks of the bridge")
+        for (forbidden in listOf("fetch(", "XMLHttpRequest", "WebSocket", "import(", "eval(", "new Function", "document.write", "location.", "window.open", "postMessage", "localStorage", "indexedDB", "navigator.", "<script", "srcdoc")) {
+            assertFalse(script.contains(forbidden), "the script reaches for $forbidden")
+        }
+        // Markup goes into the page from the engine's reply and from nowhere else.
+        val sinks = Regex("""\.innerHTML\s*=\s*([^;]+);""").findAll(script).map { it.groupValues[1].trim() }.toSet()
+        assertEquals(setOf("reply.body", "s.blocks.join('')"), sinks, "what is written into the page as markup")
+        val html = HtmlWriter.writeEditor(document())
+        assertTrue(html.contains("default-src 'none'"), "the page's policy allows no source at all")
+        assertFalse(html.contains("http://") || html.contains("https://"), "and the page names no address: $html")
+    }
+
+    @Test
     fun `the page worked in Chromium agrees with the engine after every action`() {
         val spike = File("src/test/spike")
         val script = File(spike, "editor-spike.mjs")
