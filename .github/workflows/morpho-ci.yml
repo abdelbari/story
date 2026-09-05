@@ -154,3 +154,24 @@ jobs:
             exit 1
           fi
           echo "No network permissions in the merged manifest — the Zero-Upload guarantee holds."
+
+      # The editor's plan (morpho/EDITOR-PLAN.md, "Price one") says script in
+      # a WebView is a posture change to be decided by the owner, not acquired
+      # by a commit. Until it is decided, no WebView in the app may run script
+      # or carry a bridge, and none may read the device's files; when it is,
+      # this guard is what changes — to exactly one file — rather than what is
+      # skipped.
+      - name: Script posture guard — no WebView runs script or reads files
+        working-directory: morpho/android
+        run: |
+          set -uo pipefail
+          sources=$(find app/src/main -name '*.kt' 2>/dev/null || true)
+          if [ -z "$sources" ]; then
+            echo "::error::Script posture guard found no sources to inspect. The layout changed — fix the guard, never skip it."
+            exit 1
+          fi
+          if grep -Hn -E 'javaScriptEnabled\s*=\s*true|addJavascriptInterface|allowFileAccess\s*=\s*true|allowContentAccess\s*=\s*true|allowFileAccessFromFileURLs\s*=\s*true|allowUniversalAccessFromFileURLs\s*=\s*true' $sources; then
+            echo "::error::A WebView in the app runs script, carries a bridge, or reads files. The editor's WebView is a decision recorded in morpho/EDITOR-PLAN.md (Price one); when it is taken, allow it here for that one file and keep everything else refused."
+            exit 1
+          fi
+          echo "No WebView runs script, carries a bridge, or reads files — the script posture holds."

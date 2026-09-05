@@ -120,7 +120,13 @@ not being weakened. What remains is local, and is handled by construction:
   narrowly typed methods, each validating its input as if it came from a
   hostile document — because it may have.
 - A CI guard, beside the Zero-Upload one, asserting the settings above and
-  that no second bridge has appeared.
+  that no second bridge has appeared. **Its first form is in place since 5
+  September**: the guard refuses any WebView in the app that runs script,
+  carries a bridge, or reads files — which is the posture today — and
+  when the decision is taken it is the guard that changes, to allow
+  exactly one file, rather than the guard that is skipped. The page's
+  own side is held by `EditorPageTest`: three calls on the bridge and
+  nothing else.
 
 This is a posture change and should be confirmed before Stage 1 starts,
 the way the `INTERNET` question was.
