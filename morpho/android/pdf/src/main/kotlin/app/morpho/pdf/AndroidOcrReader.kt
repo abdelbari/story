@@ -3,6 +3,8 @@ package app.morpho.pdf
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import app.morpho.engine.layout.Block
 import app.morpho.engine.layout.DocumentModel
 import app.morpho.engine.layout.ImageBlock
@@ -21,6 +23,7 @@ import com.googlecode.tesseract.android.TessBaseAPI
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import com.tom_roush.pdfbox.rendering.PDFRenderer
+import java.io.ByteArrayInputStream
 import java.io.File
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -238,8 +241,37 @@ class AndroidOcrReader(private val context: Context) {
      *
      * Null where nothing on the device decodes the file: a TIFF, a
      * truncated download, something named `.jpg` that is not one.
+     *
+     * Turned the way the camera said. A phone held upright stores the
+     * photograph on its side and a note saying which way up it goes, and
+     * every viewer turns it; a decoder does not, and a page recognised on
+     * its side is a page of nothing. So the note is read and the picture
+     * turned before recognition sees it, mirrored ones included.
      */
     private fun decoded(bytes: ByteArray): Bitmap? {
+        val upright = decodedAsStored(bytes) ?: return null
+        val orientation = runCatching {
+            ExifInterface(ByteArrayInputStream(bytes)).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+        }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.postRotate(90f); matrix.postScale(-1f, 1f) }
+            ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.postRotate(270f); matrix.postScale(-1f, 1f) }
+            else -> return upright
+        }
+        val turned = runCatching { Bitmap.createBitmap(upright, 0, 0, upright.width, upright.height, matrix, true) }.getOrNull()
+            ?: return upright
+        if (turned !== upright) upright.recycle()
+        return turned
+    }
+
+    /** [bytes] decoded as they are stored, within the budget; see [decoded]. */
+    private fun decodedAsStored(bytes: ByteArray): Bitmap? {
         val measuring = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, measuring)
         val wide = measuring.outWidth
